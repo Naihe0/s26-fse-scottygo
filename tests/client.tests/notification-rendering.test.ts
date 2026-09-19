@@ -239,6 +239,45 @@ describe('notification center rendering and refresh ownership', () => {
     ).toBe(false);
   });
 
+  test.each(['/notifications/alerts', '/notifications/notifications'])(
+    'does not claim all sources are empty when %s fails on first load',
+    async (failingPath) => {
+      mockFetch.mockImplementation((url: string) =>
+        Promise.resolve(
+          url === failingPath ? { ok: false, status: 503 } : result([])
+        )
+      );
+      await import('../../client/scripts/notification');
+      await flush();
+      expect(document.getElementById('notif-empty')?.textContent).toBe(
+        'No updates in the available results. Some updates could not load. Try Refresh to check all sources.'
+      );
+      changeSearch('71C');
+      expect(document.getElementById('notif-empty')?.textContent).toBe(
+        'No updates match “71C” in the available results. Some updates could not load. Try Refresh to check all sources.'
+      );
+    }
+  );
+
+  test('a healthy empty Live view remains specific to rider updates when agency alerts cannot load', async () => {
+    history.replaceState(null, '', '/notifications?type=live');
+    mockFetch.mockImplementation((url: string) =>
+      Promise.resolve(
+        url === '/notifications/alerts'
+          ? { ok: false, status: 503 }
+          : result([])
+      )
+    );
+    await import('../../client/scripts/notification');
+    await flush();
+    expect(document.getElementById('notif-empty')?.textContent).toBe(
+      'No rider updates in the last 30 minutes. Follow routes to receive new reports while using ScottyGo.'
+    );
+    expect(document.getElementById('notif-status')?.textContent).toContain(
+      'Service alerts could not refresh'
+    );
+  });
+
   test('a newer socket refresh owns the list even if an older request finishes later', async () => {
     let completeOld!: (value: unknown) => void;
     let alertRequests = 0;

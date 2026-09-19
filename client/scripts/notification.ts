@@ -172,6 +172,10 @@ function render(): void {
   } else if (allFailed) {
     emptyEl.textContent =
       'Updates are unavailable right now. Try Refresh to reconnect.';
+  } else if (relevant.some((source) => source.failed)) {
+    emptyEl.textContent = query
+      ? `No updates match “${query}” in the available results. Some updates could not load. Try Refresh to check all sources.`
+      : 'No updates in the available results. Some updates could not load. Try Refresh to check all sources.';
   } else if (query) {
     emptyEl.textContent = `No updates match “${query}”. Try a route, bus number, or another keyword.`;
   } else if (view === 'live') {
