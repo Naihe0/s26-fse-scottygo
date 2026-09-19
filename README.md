@@ -78,6 +78,8 @@ npm run test:server      # unit + integration + REST
 
 ## Documentation
 
+For a separate hosted deployment, see [Render and MongoDB Atlas setup](docs/RenderAtlasDeployment.md).
+
 Additional design and operations documentation lives in [`docs/`](docs/), including the architecture overview, REST API specifications, the CMU Shuttle integration notes, and a memory-monitoring runbook.
 
 ## Development practices
