@@ -1,9 +1,12 @@
 .content {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 32px 16px 24px;
+  padding: clamp(28px, 6vh, 48px) max(20px, env(safe-area-inset-right, 0px))
+    max(32px, env(safe-area-inset-bottom, 0px))
+    max(20px, env(safe-area-inset-left, 0px));
   overflow-y: auto;
 }
 
@@ -11,7 +14,7 @@
 .subscription-list {
   list-style: none;
   width: 100%;
-  max-width: 480px;
+  max-width: 520px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -20,25 +23,26 @@
 
 /* Card */
 .subscription-card {
-  background: #fff;
-  border-radius: 16px;
-  padding: 14px 14px;
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  padding: 16px;
   display: flex;
   align-items: center;
   gap: 12px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--app-shadow);
 }
 
 .card-icon-circle {
   flex-shrink: 0;
   width: 46px;
   height: 46px;
-  border-radius: 50%;
-  background: #e8eaf6;
+  border-radius: 14px;
+  background: var(--app-brand-soft);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #3f51b5;
+  color: var(--app-brand);
 }
 
 .card-info {
@@ -51,9 +55,12 @@
   align-items: center;
   gap: 3px;
   text-decoration: none;
-  color: #111;
-  font-size: 17px;
+  color: var(--app-text);
+  font-size: 16px;
   font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  min-height: 32px;
 }
 
 .card-route-link svg {
@@ -62,8 +69,9 @@
 
 .card-last-updated {
   font-size: 12px;
-  color: #888;
+  color: var(--app-muted);
   margin-top: 2px;
+  line-height: 1.5;
 }
 
 .card-actions {
@@ -74,16 +82,16 @@
 }
 
 .card-bell {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: #eeeeee;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--app-canvas);
   border: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #888;
+  color: var(--app-muted);
   padding: 0;
 }
 
@@ -92,20 +100,20 @@
 }
 
 .card-bell.muted {
-  color: #c41230;
+  color: var(--app-brand);
 }
 
 .card-remove {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: #eeeeee;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--app-canvas);
   border: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #555;
+  color: var(--app-muted);
   padding: 0;
 }
 
@@ -119,7 +127,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  background: #c41230;
+  background: var(--app-brand);
   color: white;
   border: none;
   border-radius: 999px;
@@ -127,11 +135,13 @@
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
-  margin-top: auto;
+  margin-top: 8px;
+  flex-shrink: 0;
+  box-shadow: 0 3px 8px rgb(134 20 43 / 14%);
 }
 
 .add-route-btn:hover {
-  background: #a50f28;
+  background: var(--app-brand-strong);
 }
 
 .add-route-btn.is-disabled {
@@ -152,8 +162,9 @@
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.3);
-  z-index: 10;
+  background: rgb(29 36 51 / 34%);
+  backdrop-filter: blur(2px);
+  z-index: 2000;
 }
 
 .sheet-overlay.is-active {
@@ -164,21 +175,26 @@
 .bottom-sheet {
   position: fixed;
   bottom: 0;
-  left: 0;
-  right: 0;
-  background: #fff;
+  left: 50%;
+  width: min(100%, 560px);
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  box-shadow: 0 -8px 36px rgb(29 36 51 / 12%);
   border-radius: 20px 20px 0 0;
-  padding: 12px 20px 32px;
-  z-index: 11;
-  transform: translateY(100%);
+  padding: 12px max(20px, env(safe-area-inset-right, 0px))
+    max(32px, env(safe-area-inset-bottom, 0px))
+    max(20px, env(safe-area-inset-left, 0px));
+  z-index: 2001;
+  transform: translate(-50%, 100%);
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   max-height: 80vh;
+  max-height: 80dvh;
   display: flex;
   flex-direction: column;
 }
 
 .bottom-sheet.is-active {
-  transform: translateY(0);
+  transform: translate(-50%, 0);
 }
 
 .sheet-handle {
@@ -192,37 +208,47 @@
 .sheet-title {
   font-size: 20px;
   font-weight: 700;
-  color: #111;
+  color: var(--app-text);
   margin-bottom: 14px;
+  padding-right: 60px;
 }
 
 .sheet-search {
   display: flex;
   align-items: center;
-  background: #f5f5f5;
+  background: var(--app-canvas);
+  border: 1px solid var(--app-border);
   border-radius: 10px;
   padding: 10px 14px;
   gap: 8px;
   margin-bottom: 12px;
-  color: #888;
+  color: var(--app-muted);
+  flex-shrink: 0;
+}
+
+.sheet-search:focus-within {
+  border-color: var(--app-brand);
+  box-shadow: 0 0 0 3px var(--app-brand-soft);
 }
 
 #route-search-input {
   flex: 1;
+  min-width: 0;
   border: none;
   background: none;
-  font-size: 15px;
-  color: #333;
+  font-size: 16px;
+  color: var(--app-text);
   outline: none;
 }
 
 #route-search-input::placeholder {
-  color: #aaa;
+  color: #727b8a;
 }
 
 .sheet-results {
   list-style: none;
   overflow-y: auto;
+  min-height: 0;
   flex: 1;
 }
 
@@ -231,7 +257,7 @@
   align-items: center;
   gap: 14px;
   padding: 12px 0;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--app-border);
 }
 
 .sheet-result-item:last-child {
@@ -242,12 +268,12 @@
   flex-shrink: 0;
   width: 42px;
   height: 42px;
-  border-radius: 50%;
-  background: #e8eaf6;
+  border-radius: 12px;
+  background: var(--app-brand-soft);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #3f51b5;
+  color: var(--app-brand);
 }
 
 .result-info {
@@ -258,26 +284,28 @@
 .result-name {
   font-size: 15px;
   font-weight: 700;
-  color: #111;
+  color: var(--app-text);
+  overflow-wrap: anywhere;
 }
 
 .result-destination {
   font-size: 12px;
-  color: #888;
+  color: var(--app-muted);
   margin-top: 1px;
+  line-height: 1.5;
 }
 
 .result-add-btn {
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
-  border: 2px solid #ccc;
+  border: 1px solid var(--app-border);
   background: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #aaa;
+  color: var(--app-muted);
   font-size: 18px;
   line-height: 1;
   flex-shrink: 0;
@@ -288,13 +316,13 @@
 }
 
 .result-add-btn.subscribed {
-  background: #c41230;
-  border-color: #c41230;
+  background: var(--app-brand);
+  border-color: var(--app-brand);
   color: white;
 }
 .sheet-close {
   position: absolute;
-  top: 16px;
+  top: 10px;
   right: 16px;
   border: 0;
   border-radius: 6px;
@@ -303,4 +331,47 @@
   color: inherit;
   font: inherit;
   cursor: pointer;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.sheet-close:hover {
+  background: var(--app-canvas);
+}
+
+.subscription-empty {
+  max-width: 360px;
+  margin: 12px 0 28px;
+  color: var(--app-muted);
+  font-size: 14px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.card-bell:disabled,
+.card-remove:disabled,
+.result-add-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+@media (max-width: 360px) {
+  .subscription-card {
+    gap: 8px;
+    padding: 12px;
+  }
+  .card-icon-circle {
+    width: 36px;
+    height: 36px;
+  }
+  .card-actions {
+    gap: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bottom-sheet,
+  .result-add-btn {
+    transition: none;
+  }
 }

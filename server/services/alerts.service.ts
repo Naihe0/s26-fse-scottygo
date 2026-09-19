@@ -145,16 +145,74 @@ class AlertsService {
 
     const alert = entity.alert;
 
-    const headerText = alert.headerText?.translation?.[0]?.text ?? '';
-    const descriptionText = alert.descriptionText?.translation?.[0]?.text ?? '';
+    const headerText = this.translatedText(alert.headerText);
+    const descriptionText = this.translatedText(alert.descriptionText);
+    const url = this.alertUrl(this.translatedText(alert.url));
+    const effect = this.enumValue(
+      alert,
+      'effect',
+      transit_realtime.Alert.Effect
+    );
+    const cause = this.enumValue(alert, 'cause', transit_realtime.Alert.Cause);
+    const severity = this.enumValue(
+      alert,
+      'severityLevel',
+      transit_realtime.Alert.SeverityLevel
+    );
 
     return {
       id: entity.id,
       headerText,
       descriptionText,
       routeIds: this.decodeRouteIds(alert),
-      activePeriods: this.decodeActivePeriods(alert)
+      activePeriods: this.decodeActivePeriods(alert),
+      ...(url ? { url } : {}),
+      ...(effect ? { effect } : {}),
+      ...(cause ? { cause } : {}),
+      ...(['INFO', 'WARNING', 'SEVERE'].includes(severity ?? '')
+        ? { severityLevel: severity as IServiceAlert['severityLevel'] }
+        : {})
     };
+  }
+
+  private translatedText(
+    value?: transit_realtime.ITranslatedString | null
+  ): string {
+    const translations =
+      value?.translation?.filter((item) => item.text?.trim()) ?? [];
+    return (
+      (
+        translations.find((item) => /^en(?:-|$)/i.test(item.language ?? '')) ??
+        translations.find((item) => !item.language) ??
+        translations[0]
+      )?.text?.trim() ?? ''
+    );
+  }
+
+  private alertUrl(value: string): string | undefined {
+    if (!/^https?:\/\//i.test(value) || /[\s<>]/.test(value)) return undefined;
+    try {
+      const url = new URL(value);
+      return url.username || url.password ? undefined : url.href;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private enumValue(
+    alert: transit_realtime.IAlert,
+    key: 'effect' | 'cause' | 'severityLevel',
+    values: Record<string, string | number>
+  ): string | undefined {
+    // Protobuf defaults are inherited even when the agency omitted the field.
+    if (!Object.prototype.hasOwnProperty.call(alert, key)) return undefined;
+    const value = alert[key];
+    const name = typeof value === 'number' ? values[value] : undefined;
+    return typeof name === 'string' &&
+      !name.startsWith('UNKNOWN_') &&
+      !name.startsWith('OTHER_')
+      ? name
+      : undefined;
   }
 
   private decodeRouteIds(alert: transit_realtime.IAlert): string[] {
@@ -166,7 +224,7 @@ class AlertsService {
         }
       }
     }
-    return routeIds;
+    return [...new Set(routeIds)];
   }
 
   private decodeActivePeriods(
@@ -175,15 +233,33 @@ class AlertsService {
     const activePeriods: { start: string; end: string }[] = [];
     if (alert.activePeriod) {
       for (const ap of alert.activePeriod) {
-        activePeriods.push({
-          start: ap.start
-            ? new Date(Number(ap.start) * 1000).toISOString()
-            : '',
-          end: ap.end ? new Date(Number(ap.end) * 1000).toISOString() : ''
-        });
+        const start = this.periodTime(ap, 'start');
+        const end = this.periodTime(ap, 'end');
+        // Ignore malformed ranges without losing all other alerts in the feed.
+        if (start === null || end === null || (start && end && start >= end))
+          continue;
+        activePeriods.push({ start, end });
       }
     }
     return activePeriods;
+  }
+
+  private periodTime(
+    period: transit_realtime.ITimeRange,
+    key: 'start' | 'end'
+  ): string | null {
+    if (
+      !Object.prototype.hasOwnProperty.call(period, key) ||
+      period[key] == null
+    )
+      return '';
+    const seconds = Number(period[key]);
+    const date = new Date(seconds * 1000);
+    return Number.isSafeInteger(seconds) &&
+      seconds >= 0 &&
+      Number.isFinite(date.getTime())
+      ? date.toISOString()
+      : null;
   }
 
   private applyFetchedAlerts(newAlerts: IServiceAlert[]): void {

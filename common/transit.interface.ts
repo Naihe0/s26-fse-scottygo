@@ -164,6 +164,11 @@ export interface IServiceAlert {
   descriptionText: string;
   routeIds: string[];
   activePeriods: { start: string; end: string }[];
+  /** Agency-supplied metadata; absent/unknown values are not inferred. */
+  url?: string;
+  effect?: string;
+  cause?: string;
+  severityLevel?: 'INFO' | 'WARNING' | 'SEVERE';
 }
 
 export interface ILastKnownBusStatus {

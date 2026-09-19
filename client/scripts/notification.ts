@@ -1,9 +1,5 @@
-// Export empty object to treat as module
-export {};
-
 import './components/app-header';
 import './components/live-notifications';
-import { escapeHtml } from './utils/html';
 import { io } from 'socket.io-client';
 import type {
   INotification,
@@ -19,325 +15,329 @@ import {
   matchesAlertQuery,
   matchesNotificationQuery
 } from './utils/notification-search';
+import {
+  createLiveUpdateCard,
+  createServiceAlertCard
+} from './utils/notification-card';
+import { formatNotificationTime } from './utils/alert-content';
 
-// ── Auth ───────────────────────────────────────────────────────────────────────
-
-function getToken(): string {
-  return localStorage.getItem('token') ?? '';
-}
-
-function authHeaders(): Record<string, string> {
-  return { Authorization: `Bearer ${getToken()}` };
-}
-
-// ── DOM refs ───────────────────────────────────────────────────────────────────
+type View = 'all' | 'service' | 'live';
+type Snapshot<T> = { items: T[]; loaded: boolean; failed: boolean };
 
 const list = document.getElementById('notif-list')!;
 const emptyEl = document.getElementById('notif-empty')!;
+const statusEl = document.getElementById('notif-status')!;
+const countEl = document.getElementById('notif-count')!;
 const searchInput = document.getElementById(
   'notif-search-input'
 ) as HTMLInputElement;
 const clearBtn = document.getElementById('notif-search-clear')!;
+const refreshBtn = document.getElementById(
+  'notif-refresh'
+) as HTMLButtonElement;
+const filters = [
+  ...document.querySelectorAll<HTMLButtonElement>('[data-notif-view]')
+];
 
-// ── State ──────────────────────────────────────────────────────────────────────
-
-/** true while showing live notification search results (not alerts) */
-let showingNotifications = false;
+let view: View = 'all';
+let prefillContext: { route?: string; bus?: string } | null = null;
+let alerts: Snapshot<IServiceAlert> = {
+  items: [],
+  loaded: false,
+  failed: false
+};
+let notifications: Snapshot<INotification> = {
+  items: [],
+  loaded: false,
+  failed: false
+};
 let routeDisplayById = new Map<string, IRouteDisplayMeta>();
 let requestVersion = 0;
+let loading = false;
+let disposed = false;
+let lastSuccessfulRefresh: number | null = null;
+let renderSignature = '';
+let controller: AbortController | null = null;
+let socketRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
-function resolveRouteDisplay(routeId: string): {
-  title: string;
-  subtitle: string;
-} {
-  return getRouteDisplay(routeId, routeDisplayById);
+const resolveRouteDisplay = (id: string) =>
+  getRouteDisplay(id, routeDisplayById);
+const formatMessage = (message: string) =>
+  formatNotificationMessage(message, routeDisplayById);
+
+function authHeaders(): Record<string, string> {
+  return { Authorization: `Bearer ${localStorage.getItem('token') ?? ''}` };
 }
 
-function formatMessage(message: string): string {
-  return formatNotificationMessage(message, routeDisplayById);
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-function formatTime(isoTimestamp: string): string {
-  const mins = Math.round(
-    (Date.now() - new Date(isoTimestamp).getTime()) / 60_000
-  );
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  return `${Math.floor(mins / 60)}h ago`;
-}
-
-function updateEmptyState(query?: string): void {
-  const hasItems = list.children.length > 0;
-  emptyEl.classList.toggle('is-visible', !hasItems);
-  if (!hasItems && query) {
-    emptyEl.textContent = `No notifications found for '${query}'.`;
-  } else if (!hasItems) {
-    emptyEl.textContent = 'No notifications found.';
-  }
-}
-
-// ── Notification cards ─────────────────────────────────────────────────────────
-
-const NOTIF_ICON = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-  <line x1="12" y1="9" x2="12" y2="13"></line>
-  <line x1="12" y1="17" x2="12.01" y2="17"></line>
-</svg>`;
-
-function createNotifCard(notif: INotification): HTMLLIElement {
-  const li = document.createElement('li');
-  li.className = 'notif-card';
-  const display = resolveRouteDisplay(notif.routeId);
-  const secondaryText = notif.vid ? `Bus #${notif.vid}` : display.subtitle;
-
-  li.innerHTML = `
-    <button class="notif-dismiss" aria-label="Dismiss notification">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="18" y1="6" x2="6" y2="18"></line>
-        <line x1="6" y1="6" x2="18" y2="18"></line>
-      </svg>
-    </button>
-    <div class="notif-card-header">
-      <span class="notif-icon">${NOTIF_ICON}</span>
-      <div class="notif-header-text">
-        <span class="notif-title">${escapeHtml(display.title)}</span>
-          <span class="notif-subtitle">${escapeHtml(secondaryText)}</span>
-      </div>
-    </div>
-    <p class="notif-body">${escapeHtml(formatMessage(notif.message))}</p>
-    <div class="notif-card-footer">
-      <span class="notif-tag">Live Update</span>
-      <span class="notif-time">${formatTime(notif.createdAt)}</span>
-    </div>
-  `;
-
-  li.querySelector<HTMLButtonElement>('.notif-dismiss')!.addEventListener(
-    'click',
-    () => {
-      li.remove();
-      updateEmptyState(searchInput.value.trim() || undefined);
-    }
-  );
-
-  return li;
-}
-
-async function fetchRoutesForDisplay(): Promise<void> {
-  routeDisplayById = await fetchRouteDisplayMap(authHeaders());
-}
-
-// ── Alert cards ────────────────────────────────────────────────────────────────
-
-const ALERT_ICON = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <circle cx="12" cy="12" r="10"></circle>
-  <line x1="12" y1="8" x2="12" y2="12"></line>
-  <line x1="12" y1="16" x2="12.01" y2="16"></line>
-</svg>`;
-
-function createAlertCard(alert: IServiceAlert): HTMLLIElement {
-  const li = document.createElement('li');
-  li.className = 'notif-card';
-  const routes = alert.routeIds.join(', ');
-
-  li.innerHTML = `
-    <div class="notif-card-header">
-      <span class="notif-icon">${ALERT_ICON}</span>
-      <span class="notif-title">${escapeHtml(alert.headerText)}</span>
-    </div>
-    <p class="notif-body">${escapeHtml(alert.descriptionText)}</p>
-    <div class="notif-card-footer">
-      <span class="notif-tag">Service Alert${routes ? ` · ${escapeHtml(routes)}` : ''}</span>
-    </div>
-  `;
-
-  return li;
-}
-
-// ── Data fetching ──────────────────────────────────────────────────────────────
-
-async function loadAlerts(): Promise<void> {
-  const version = ++requestVersion;
-  showingNotifications = false;
-  list.innerHTML = '';
-
-  try {
-    const res = await fetch('/notifications/alerts', {
-      headers: authHeaders()
+function renderCards(
+  visibleAlerts: IServiceAlert[],
+  visibleNotifications: INotification[]
+): void {
+  const signature = JSON.stringify([
+    visibleAlerts,
+    visibleNotifications,
+    [...routeDisplayById]
+  ]);
+  if (signature === renderSignature) {
+    list.querySelectorAll<HTMLTimeElement>('time[datetime]').forEach((time) => {
+      time.textContent = formatNotificationTime(time.dateTime);
     });
-    if (version !== requestVersion) return;
-    if (res.status === 503) {
-      emptyEl.textContent = 'Service alerts are temporarily unavailable.';
-      emptyEl.classList.add('is-visible');
-      return;
-    }
-    if (!res.ok) {
-      emptyEl.textContent = 'Failed to load service alerts.';
-      emptyEl.classList.add('is-visible');
-      return;
-    }
-    const data = await res.json();
-    if (version !== requestVersion) return;
-    const alerts: IServiceAlert[] = data.payload ?? [];
-    alerts.forEach((a) => list.appendChild(createAlertCard(a)));
-    updateEmptyState();
-  } catch {
-    if (version !== requestVersion) return;
-    emptyEl.textContent = 'Service alerts are temporarily unavailable.';
-    emptyEl.classList.add('is-visible');
-  }
-}
-
-async function searchNotifications(params: {
-  route?: string;
-  bus?: string;
-  q?: string;
-}): Promise<void> {
-  const version = ++requestVersion;
-  showingNotifications = true;
-  list.innerHTML = '';
-
-  const qs = new URLSearchParams();
-  if (params.route) qs.set('route', params.route);
-  if (params.bus) qs.set('bus', params.bus);
-
-  const query = [params.route, params.bus, params.q].filter(Boolean).join(' ');
-
-  try {
-    // Fetch both notifications and service alerts in parallel
-    const [notifRes, alertRes] = await Promise.all([
-      fetch(`/notifications/notifications?${qs}`, { headers: authHeaders() }),
-      fetch('/notifications/alerts', { headers: authHeaders() })
-    ]);
-    if (version !== requestVersion) return;
-
-    if (notifRes.ok) {
-      const notifData = await notifRes.json();
-      if (version !== requestVersion) return;
-      let notifs: INotification[] = notifData.payload ?? [];
-      if (params.q) {
-        notifs = notifs.filter((n) =>
-          matchesNotificationQuery(
-            n,
-            params.q!,
-            resolveRouteDisplay,
-            formatMessage
-          )
-        );
-      }
-      notifs.forEach((n) => list.appendChild(createNotifCard(n)));
-    }
-
-    // Filter service alerts client-side by query text
-    if (alertRes.ok) {
-      const alertData = await alertRes.json();
-      if (version !== requestVersion) return;
-      const alerts: IServiceAlert[] = alertData.payload ?? [];
-      const matched = query
-        ? alerts.filter((a) => matchesAlertQuery(a, query, resolveRouteDisplay))
-        : [];
-      matched.forEach((a) => list.appendChild(createAlertCard(a)));
-    }
-
-    updateEmptyState(query || undefined);
-  } catch {
-    if (version !== requestVersion) return;
-    emptyEl.textContent = 'Failed to load notifications.';
-    emptyEl.classList.add('is-visible');
-  }
-}
-
-// ── URL pre-fill (A14) ─────────────────────────────────────────────────────────
-
-function getPreFill(): { route?: string; bus?: string } {
-  const params = new URLSearchParams(window.location.search);
-  const route = params.get('route') ?? undefined;
-  const bus = params.get('bus') ?? undefined;
-  return { route, bus };
-}
-
-// ── Socket.io — live alertUpdate refresh ───────────────────────────────────────
-
-function connectForAlerts(): void {
-  const token = getToken();
-  if (!token) return;
-
-  const socket = io({ query: { token } });
-  socket.on('alertUpdate', () => {
-    // Refresh alert display only if we're not showing a search result
-    if (!showingNotifications) {
-      loadAlerts();
-    }
-  });
-}
-
-// ── Search bar ─────────────────────────────────────────────────────────────────
-
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-function handleSearchInput(): void {
-  requestVersion++;
-  const query = searchInput.value.trim();
-  clearBtn.classList.toggle('is-visible', query.length > 0);
-
-  if (debounceTimer) clearTimeout(debounceTimer);
-
-  if (!query) {
-    loadAlerts();
     return;
   }
-
-  debounceTimer = setTimeout(() => {
-    // Decide search strategy based on pre-fill context or detected pattern
-    const preFill = getPreFill();
-    if (preFill.route && query === preFill.route) {
-      searchNotifications({ route: query });
-    } else if (preFill.bus && query === preFill.bus) {
-      searchNotifications({ bus: query });
-    } else {
-      // General text search — server picks strategy based on content
-      searchNotifications({ q: query });
+  renderSignature = signature;
+  // Background refreshes preserve expanded descriptions and keyboard focus.
+  const expanded = new Set(
+    [...list.querySelectorAll('details[open]')].map((details) => {
+      const key = details.closest<HTMLElement>('[data-key]')?.dataset.key;
+      return `${key}:${details.querySelector<HTMLElement>('summary')?.dataset.action}`;
+    })
+  );
+  const focused = document.activeElement as HTMLElement | null;
+  const focusedKey = list.contains(focused)
+    ? focused?.closest<HTMLElement>('[data-key]')?.dataset.key
+    : undefined;
+  const focusedAction = focusedKey ? focused?.dataset.action : undefined;
+  const cards = [
+    ...visibleAlerts.map((alert) =>
+      createServiceAlertCard(alert, resolveRouteDisplay)
+    ),
+    ...visibleNotifications.map((notification) =>
+      createLiveUpdateCard(notification, resolveRouteDisplay, formatMessage)
+    )
+  ];
+  list.replaceChildren(...cards);
+  for (const card of cards) {
+    for (const details of card.querySelectorAll('details')) {
+      const action =
+        details.querySelector<HTMLElement>('summary')?.dataset.action;
+      details.open = expanded.has(`${card.dataset.key}:${action}`);
     }
-  }, 300);
+    if (focusedKey === card.dataset.key && focusedAction) {
+      [...card.querySelectorAll<HTMLElement>('[data-action]')]
+        .find((item) => item.dataset.action === focusedAction)
+        ?.focus({ preventScroll: true });
+    }
+  }
 }
 
-// ── Init ───────────────────────────────────────────────────────────────────────
+function render(): void {
+  const query = searchInput.value.trim();
+  clearBtn.classList.toggle('is-visible', query.length > 0);
+  clearBtn.setAttribute('aria-hidden', String(query.length === 0));
+  const visibleAlerts =
+    view === 'live'
+      ? []
+      : alerts.items.filter((alert) => {
+          if (prefillContext?.route)
+            return alert.routeIds.some(
+              (id) => id.toLowerCase() === prefillContext!.route!.toLowerCase()
+            );
+          if (prefillContext?.bus) return false;
+          return matchesAlertQuery(alert, query, resolveRouteDisplay);
+        });
+  const visibleNotifications =
+    view === 'service'
+      ? []
+      : notifications.items
+          .filter((notification) => {
+            if (prefillContext)
+              return (
+                (!prefillContext.route ||
+                  notification.routeId.toLowerCase() ===
+                    prefillContext.route.toLowerCase()) &&
+                (!prefillContext.bus || notification.vid === prefillContext.bus)
+              );
+            return matchesNotificationQuery(
+              notification,
+              query,
+              resolveRouteDisplay,
+              formatMessage
+            );
+          })
+          .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  renderCards(visibleAlerts, visibleNotifications);
 
-async function init(): Promise<void> {
-  const token = getToken();
+  const count = visibleAlerts.length + visibleNotifications.length;
+  countEl.textContent = `${count} ${count === 1 ? 'update' : 'updates'}${query ? ' found' : ''}`;
+  const relevant =
+    view === 'service'
+      ? [alerts]
+      : view === 'live'
+        ? [notifications]
+        : [alerts, notifications];
+  const allFailed = relevant.every((source) => source.failed && !source.loaded);
+  emptyEl.classList.toggle('is-visible', count === 0);
+  if (loading && relevant.every((source) => !source.loaded)) {
+    emptyEl.textContent = 'Gathering transit updates…';
+  } else if (allFailed) {
+    emptyEl.textContent =
+      'Updates are unavailable right now. Try Refresh to reconnect.';
+  } else if (query) {
+    emptyEl.textContent = `No updates match “${query}”. Try a route, bus number, or another keyword.`;
+  } else if (view === 'live') {
+    emptyEl.textContent =
+      'No rider updates in the last 30 minutes. Follow routes to receive new reports while using ScottyGo.';
+  } else if (view === 'service') {
+    emptyEl.textContent = 'No service alerts to show right now.';
+  } else {
+    emptyEl.textContent =
+      'No service alerts or recent rider updates to show right now.';
+  }
+
+  const failedNames = [
+    alerts.failed ? 'Service alerts' : '',
+    notifications.failed ? 'Rider updates' : ''
+  ].filter(Boolean);
+  if (loading) {
+    statusEl.textContent = 'Refreshing updates…';
+  } else if (failedNames.length) {
+    const hasSnapshot =
+      (alerts.failed && alerts.loaded) ||
+      (notifications.failed && notifications.loaded);
+    statusEl.textContent = `${failedNames.join(' and ')} could not refresh.${hasSnapshot ? ' Showing the last available updates.' : ''} Try Refresh.`;
+  } else if (lastSuccessfulRefresh) {
+    statusEl.textContent = `Updated ${new Date(lastSuccessfulRefresh).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}. Refreshes automatically while this page is open.`;
+  } else {
+    statusEl.textContent = 'Updates have not loaded yet.';
+  }
+  statusEl.classList.toggle('has-error', failedNames.length > 0 && !loading);
+  list.setAttribute('aria-busy', String(loading));
+  refreshBtn.disabled = loading;
+  refreshBtn.textContent = loading ? 'Refreshing…' : 'Refresh';
+  filters.forEach((filter) =>
+    filter.setAttribute(
+      'aria-pressed',
+      String(filter.dataset.notifView === view)
+    )
+  );
+}
+
+async function fetchSnapshot<T>(
+  path: string,
+  signal: AbortSignal
+): Promise<T[]> {
+  const response = await fetch(path, { headers: authHeaders(), signal });
+  if (!response.ok) throw new Error('Updates unavailable');
+  const data = await response.json();
+  if (!Array.isArray(data.payload)) throw new Error('Invalid update response');
+  return data.payload;
+}
+
+async function refresh(): Promise<void> {
+  if (disposed) return;
+  const version = ++requestVersion;
+  controller?.abort();
+  controller = new AbortController();
+  const requestController = controller;
+  const timeout = setTimeout(() => requestController.abort(), 20_000);
+  loading = true;
+  render();
+  const results = await Promise.allSettled([
+    fetchSnapshot<IServiceAlert>('/notifications/alerts', controller.signal),
+    fetchSnapshot<INotification>(
+      '/notifications/notifications',
+      controller.signal
+    )
+  ]);
+  clearTimeout(timeout);
+  if (disposed || version !== requestVersion) return;
+  const [alertResult, notificationResult] = results;
+  alerts =
+    alertResult.status === 'fulfilled'
+      ? { items: alertResult.value, loaded: true, failed: false }
+      : { ...alerts, failed: true };
+  notifications =
+    notificationResult.status === 'fulfilled'
+      ? { items: notificationResult.value, loaded: true, failed: false }
+      : { ...notifications, failed: true };
+  if (results.some((result) => result.status === 'fulfilled'))
+    lastSuccessfulRefresh = Date.now();
+  loading = false;
+  render();
+}
+
+function scheduleRefresh(): void {
+  if (document.hidden || disposed || socketRefreshTimer) return;
+  socketRefreshTimer = setTimeout(() => {
+    socketRefreshTimer = null;
+    void refresh();
+  }, 250);
+}
+
+function init(): void {
+  const token = localStorage.getItem('token');
   if (!token) {
     window.location.replace('/auth');
     return;
   }
-
-  connectForAlerts();
-
-  await fetchRoutesForDisplay();
-
-  const { route, bus } = getPreFill();
-
-  if (route || bus) {
-    // A14: pre-filled from external navigation
-    const displayValue = route ?? bus ?? '';
-    searchInput.value = displayValue;
-    clearBtn.classList.add('is-visible');
-    await searchNotifications({ route, bus });
-  } else {
-    // Default: show GTFS-RT alerts
-    await loadAlerts();
-  }
-
-  searchInput.addEventListener('input', handleSearchInput);
-
+  const params = new URLSearchParams(window.location.search);
+  const requestedView = params.get('type');
+  if (
+    requestedView === 'all' ||
+    requestedView === 'service' ||
+    requestedView === 'live'
+  )
+    view = requestedView;
+  searchInput.value = params.get('route') ?? params.get('bus') ?? '';
+  if (params.get('route') || params.get('bus'))
+    prefillContext = {
+      route: params.get('route') || undefined,
+      bus: params.get('bus') || undefined
+    };
+  searchInput.addEventListener('input', () => {
+    prefillContext = null;
+    render();
+  });
   clearBtn.addEventListener('click', () => {
-    if (debounceTimer) clearTimeout(debounceTimer);
     searchInput.value = '';
-    clearBtn.classList.remove('is-visible');
-    // Clear URL params without reload
+    prefillContext = null;
     history.replaceState(null, '', window.location.pathname);
-    loadAlerts();
+    render();
     searchInput.focus();
+  });
+  filters.forEach((filter) =>
+    filter.addEventListener('click', () => {
+      view = filter.dataset.notifView as View;
+      render();
+    })
+  );
+  refreshBtn.addEventListener('click', () => void refresh());
+  void fetchRouteDisplayMap(authHeaders()).then((routes) => {
+    if (disposed) return;
+    routeDisplayById = routes;
+    render();
+  });
+  void refresh();
+
+  const socket = io({ query: { token } });
+  socket.on('alertUpdate', scheduleRefresh);
+  document.addEventListener('scottygo:notification', scheduleRefresh);
+  const visibilityRefresh = () => {
+    if (!document.hidden) scheduleRefresh();
+  };
+  document.addEventListener('visibilitychange', visibilityRefresh);
+  const timer = setInterval(() => {
+    if (!document.hidden && !loading) void refresh();
+  }, 60_000);
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted && !disposed) {
+      socket.connect();
+      scheduleRefresh();
+    }
+  });
+  window.addEventListener('pagehide', (event) => {
+    socket.disconnect();
+    controller?.abort();
+    requestVersion++;
+    loading = false;
+    if (socketRefreshTimer) clearTimeout(socketRefreshTimer);
+    socketRefreshTimer = null;
+    // BFCache freezes timers; retain one set of listeners for restoration.
+    if (event.persisted) return;
+    disposed = true;
+    clearInterval(timer);
+    document.removeEventListener('scottygo:notification', scheduleRefresh);
+    document.removeEventListener('visibilitychange', visibilityRefresh);
   });
 }
 

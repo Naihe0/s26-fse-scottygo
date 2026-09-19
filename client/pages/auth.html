@@ -2,7 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#86142b" />
     <title>ScottyGo - Auth</title>
     <link rel="stylesheet" href="../styles/shared.css" />
     <link rel="stylesheet" href="../styles/auth.css" />
@@ -11,6 +15,9 @@
     <app-header back></app-header>
     <main class="content">
       <h1 class="logo">ScottyGo</h1>
+      <p class="page-intro"
+        >Your routes, live arrivals, and a smoother way around Pittsburgh.</p
+      >
       <div class="auth-card">
         <!-- LOGIN VIEW -->
         <form id="login-form" class="auth-view" data-view="login">
@@ -20,6 +27,9 @@
               type="text"
               id="login-username"
               name="username"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
               class="form-input"
               placeholder="scotty"
             />
@@ -31,6 +41,7 @@
               type="password"
               id="login-password"
               name="password"
+              autocomplete="current-password"
               class="form-input"
               placeholder="Your password"
             />
@@ -51,6 +62,9 @@
               type="text"
               id="reg-username"
               name="username"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
               class="form-input"
               placeholder="scotty"
             />
@@ -63,6 +77,9 @@
               type="email"
               id="reg-email"
               name="email"
+              autocomplete="email"
+              autocapitalize="none"
+              spellcheck="false"
               class="form-input"
               placeholder="scotty@andrew.cmu.edu"
             />
@@ -75,6 +92,7 @@
               type="password"
               id="reg-password"
               name="password"
+              autocomplete="new-password"
               class="form-input"
               placeholder="Str0ng*Passw0rd!"
             />
@@ -87,6 +105,7 @@
               type="password"
               id="reg-confirm-password"
               name="confirm-password"
+              autocomplete="new-password"
               class="form-input"
               placeholder="Re-enter password"
             />

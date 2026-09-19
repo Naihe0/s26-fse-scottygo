@@ -3,57 +3,111 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ScottyGo - Notifications</title>
+    <meta name="theme-color" content="#a70f2b" />
+    <title>ScottyGo - Transit updates</title>
     <link rel="stylesheet" href="../styles/shared.css" />
     <link rel="stylesheet" href="../styles/notifications.css" />
   </head>
   <body>
     <app-header back></app-header>
-    <main class="content">
-      <h1 class="page-title" id="page-title">Live Notifications</h1>
-      <div class="notif-search">
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
+    <main class="content" aria-labelledby="page-title">
+      <div class="notif-intro">
+        <div>
+          <p class="notif-eyebrow">Stay one step ahead</p>
+          <h1 class="page-title" id="page-title">Transit updates</h1>
+          <p class="notif-lead"
+            >Service changes and rider reports, in one place.</p
+          >
+        </div>
+        <a class="notif-manage" href="/subscriptions"
+          >Manage followed routes <span aria-hidden="true">↗</span></a
         >
-          <circle cx="11" cy="11" r="8"></circle>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-        </svg>
-        <input
-          type="text"
-          id="notif-search-input"
-          placeholder="Search bus number or route..."
-          aria-label="Search notifications by bus number or route"
-          autocomplete="off"
-        />
-        <button
-          class="notif-search-clear"
-          id="notif-search-clear"
-          aria-label="Clear search"
-        >
+      </div>
+      <div class="notif-controls">
+        <div class="notif-search">
           <svg
-            width="16"
-            height="16"
+            width="18"
+            height="18"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
-            stroke-width="2.5"
+            stroke-width="2"
             stroke-linecap="round"
             stroke-linejoin="round"
+            aria-hidden="true"
           >
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
-        </button>
+          <input
+            type="search"
+            id="notif-search-input"
+            placeholder="Route, bus number, or keyword"
+            aria-label="Search transit updates"
+            autocomplete="off"
+          />
+          <button
+            class="notif-search-clear"
+            id="notif-search-clear"
+            type="button"
+            aria-label="Clear search"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="notif-view-controls">
+          <div class="notif-filters" role="group" aria-label="Update type">
+            <button type="button" data-notif-view="all" aria-pressed="true"
+              >All updates</button
+            >
+            <button type="button" data-notif-view="service" aria-pressed="false"
+              >Service alerts</button
+            >
+            <button type="button" data-notif-view="live" aria-pressed="false"
+              >Live updates</button
+            >
+          </div>
+          <button type="button" id="notif-refresh" class="notif-refresh"
+            >Refresh</button
+          >
+        </div>
+        <p class="notif-context"
+          >Agency alerts from PRT · Rider reports from the last 30 minutes</p
+        >
       </div>
-      <ul class="notif-list" id="notif-list"></ul>
-      <p class="notif-empty" id="notif-empty">No notifications found.</p>
+      <div class="notif-results-meta">
+        <span id="notif-count">0 updates</span>
+        <p id="notif-status" role="status" aria-live="polite"
+          >Loading transit updates…</p
+        >
+      </div>
+      <ul
+        class="notif-list"
+        id="notif-list"
+        aria-label="Transit updates"
+        aria-busy="true"
+      ></ul>
+      <p class="notif-empty" id="notif-empty" role="status"
+        >Gathering transit updates…</p
+      >
+      <p class="notif-help"
+        >Agency shorthand: <abbr title="Inbound">IB</abbr> means inbound,
+        <abbr title="Outbound">OB</abbr> means outbound. Check the linked agency
+        notice for the full details.</p
+      >
     </main>
     <script type="module" src="../scripts/notification.ts"></script>
   </body>

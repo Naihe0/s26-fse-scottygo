@@ -2,7 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#86142b" />
     <title>ScottyGo - Account</title>
     <link rel="stylesheet" href="../styles/shared.css" />
     <link rel="stylesheet" href="../styles/account.css" />
@@ -12,6 +16,7 @@
     <main class="content">
       <!-- Page title: "Account" for Member, "Manage Accounts" for Admin -->
       <h1 class="page-title" id="page-title">Account</h1>
+      <p class="page-intro">Keep account details and access up to date.</p>
 
       <!-- Username selector (Admin only) -->
       <div class="form-group" id="user-selector-group" hidden>
@@ -19,6 +24,7 @@
           <input
             type="text"
             id="user-selector"
+            aria-label="Find an account by username"
             class="form-input"
             role="combobox"
             aria-autocomplete="list"
@@ -52,7 +58,11 @@
         <div class="toggle-row">
           <span class="toggle-label">Account Status</span>
           <label class="toggle-switch">
-            <input type="checkbox" id="status-toggle" />
+            <input
+              type="checkbox"
+              id="status-toggle"
+              aria-label="Account active"
+            />
             <span class="toggle-slider"></span>
           </label>
         </div>

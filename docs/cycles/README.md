@@ -1,5 +1,11 @@
 # Improvement cycles
 
+## Cycle 3 — Alerts and app polish
+
+Clickable alert sources and map actions, readable agency/community information,
+resilient live popups, and a consistent visual language. See [the use cases and
+release record](2026-09-19-alerts-polish.md), including the linked iOS assessment.
+
 ## Cycle 2 — Map design and rendering
 
 The next user-requested cycle refines bus headings, location visibility, route/stop styling, and rendering behavior. See [the use cases, implementation, and release record](2026-09-19-map-design.md).

@@ -75,11 +75,17 @@ export function formatNotificationMessage(
   message: string,
   routeLookup?: RouteLookup
 ): string {
-  return message.replace(/\bCMU-\d+\b/gi, (rawRouteId: string) => {
-    const routeId = rawRouteId.toUpperCase();
-    const title = getRouteTitle(routeId, routeLookup);
-    return title === routeId ? rawRouteId : title;
-  });
+  // Agency and rider links must retain their exact destination when route names
+  // are expanded in surrounding prose.
+  return message.replace(
+    /\bhttps?:\/\/[^\s<>"']+|\bCMU-\d+\b/gi,
+    (rawRouteId: string) => {
+      if (/^https?:\/\//i.test(rawRouteId)) return rawRouteId;
+      const routeId = rawRouteId.toUpperCase();
+      const title = getRouteTitle(routeId, routeLookup);
+      return title === routeId ? rawRouteId : title;
+    }
+  );
 }
 
 export async function fetchRouteDisplayMap(
