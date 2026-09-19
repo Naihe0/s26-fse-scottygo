@@ -5,6 +5,7 @@
 import type { Config } from 'jest';
 
 const config: Config = {
+  roots: ['<rootDir>/tests'],
   setupFiles: ['<rootDir>/tests/setup-env.ts'],
   // Suites deliberately reset a shared disposable database and bind fixed ports.
   maxWorkers: 1,

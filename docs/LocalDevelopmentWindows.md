@@ -1,5 +1,14 @@
 # Local development on Windows
 
+The audited deployment branch contains the Windows-safe wireframe names. Clone it directly:
+
+```powershell
+git clone --branch codex/render-atlas-setup https://github.com/Naihe0/s26-fse-scottygo.git
+cd s26-fse-scottygo
+```
+
+A full checkout of this branch was verified on Windows without sparse exclusions. The original `main` branch retains its historical folder names until these changes are merged there.
+
 Run these commands in PowerShell from the repository directory:
 
 ```powershell

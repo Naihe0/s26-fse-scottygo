@@ -51,7 +51,10 @@ const escapeHtml = (text: string): string =>
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
 
-export const buildServiceBannerMarkup = (issues: string[]): string => {
+export const buildServiceBannerMarkup = (
+  issues: string[],
+  title = 'Some services are currently unavailable'
+): string => {
   const issueList = issues
     .map((issue) => `<li>${escapeHtml(issue)}</li>`)
     .join('');
@@ -60,7 +63,7 @@ export const buildServiceBannerMarkup = (issues: string[]): string => {
     <div class="service-status-banner__content">
       <span class="material-icons-outlined service-status-banner__icon">cloud_off</span>
       <div class="service-status-banner__text">
-        <strong>Some services are currently unavailable</strong>
+        <strong>${escapeHtml(title)}</strong>
         <ul>${issueList}</ul>
       </div>
       <button class="service-status-banner__close" aria-label="Dismiss">&times;</button>

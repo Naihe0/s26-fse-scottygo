@@ -80,6 +80,28 @@ describe('prediction refresh contents', () => {
       .click();
     expect(mockStartDirections).toHaveBeenCalledWith(stop, [second]);
   });
+
+  test('restoring a minimized stop revokes another pending selection without leaving it stuck', async () => {
+    mockPredictions.mockResolvedValueOnce([]);
+    await controller.handleStopClick(stop);
+    document.querySelector<HTMLButtonElement>('.map-popup__minimize')!.click();
+    expect(controller.hasActiveSelection).toBe(false);
+    let finish!: (predictions: IPrediction[]) => void;
+    mockPredictions.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    const request = controller.handleStopClick({ ...stop, stopId: 'another' });
+    expect(controller.hasActiveSelection).toBe(true);
+    await controller.handleStopClick(stop);
+    expect(controller.hasActiveSelection).toBe(true);
+    document.querySelector<HTMLButtonElement>('.map-popup__minimize')!.click();
+    expect(controller.hasActiveSelection).toBe(false);
+    finish([]);
+    await request;
+    expect(controller.hasActiveSelection).toBe(false);
+  });
 });
 
 describe('stop prediction request ownership', () => {

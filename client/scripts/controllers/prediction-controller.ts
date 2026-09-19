@@ -75,6 +75,16 @@ export class PredictionController {
   /** Interval handle for 1-second countdown ticker. */
   private predictionTickerInterval: number | null = null;
   private requestVersion = 0;
+  private stopSelectionPending = false;
+
+  /** Avoid background map recovery while a stop is being selected or viewed. */
+  get hasActiveSelection(): boolean {
+    return this.stopSelectionPending || this.openPopupStopId !== null;
+  }
+
+  get sessionVersion(): number {
+    return this.requestVersion;
+  }
 
   private constructor() {
     this.stateManager = MapStateManager.getInstance();
@@ -112,7 +122,9 @@ export class PredictionController {
   async handleStopClick(stop: IStop): Promise<void> {
     if (this.directionsController.isActive) return;
     const version = ++this.requestVersion;
+    this.stopSelectionPending = false;
     if (this.restoreMinimisedPopup(stop)) return;
+    this.stopSelectionPending = true;
 
     try {
       const routeFilter =
@@ -123,6 +135,8 @@ export class PredictionController {
       this.showStopPopup(stop, predictions);
     } catch (error) {
       console.error('[PredictionController] Error handling stop click:', error);
+    } finally {
+      if (version === this.requestVersion) this.stopSelectionPending = false;
     }
   }
 
@@ -143,6 +157,7 @@ export class PredictionController {
   /** Stop prediction polling and the countdown ticker. */
   stopPolling(): void {
     this.requestVersion++;
+    this.stopSelectionPending = false;
     if (this.predictionPollInterval !== null) {
       clearInterval(this.predictionPollInterval);
       this.predictionPollInterval = null;
@@ -580,7 +595,7 @@ export class PredictionController {
       for (const direction of ['INBOUND', 'OUTBOUND']) {
         const stops = await transitApiService.getStops(routeId, direction);
         if (!isCurrent()) return;
-        if (stops.length > 0) {
+        if (stops && stops.length > 0) {
           this.routeRenderer.renderStopMarkers(
             routeId,
             stops,

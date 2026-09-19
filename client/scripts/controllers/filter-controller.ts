@@ -76,6 +76,11 @@ export class FilterController {
   }
   /** Interval handle for health polling */
   private healthPollInterval: number | null = null;
+  private healthPollEnabled = false;
+  private healthPollVersion = 0;
+  private healthRequest: AbortController | null = null;
+  private transitRecoveryPending = false;
+  private recoveryChecks = 0;
   /** Tracks whether colors were available on the last health check (for detecting recovery). */
   private colorsWereAvailable = false;
   /** Directions controller reference */
@@ -113,6 +118,10 @@ export class FilterController {
     predCtrl.setWalkTimeProvider((lat, lon) =>
       this.estimateWalkMinutes(lat, lon)
     );
+    window.addEventListener('pagehide', () => this.stopHealthPolling());
+    window.addEventListener('pageshow', (event) => {
+      if (event.persisted) this.startHealthPolling();
+    });
   }
 
   static getInstance(): FilterController {
@@ -205,6 +214,8 @@ export class FilterController {
       console.log('Fetching bulk transit data from backend...');
       const routes = await this.resolveInitialRoutes();
       this.publishInitializedRoutes(routes);
+      this.transitRecoveryPending = !this.bulkLoaded;
+      if (this.transitRecoveryPending) this.showTransitLoadingBanner();
 
       // Render initial routes based on default filters (Rule R2: PRT ON, CMU OFF)
       await this.renderFilteredRoutes();
@@ -286,8 +297,10 @@ export class FilterController {
   /**
    * Fetch all available routes from backend
    */
-  private async fetchAllRoutes(): Promise<IRoute[]> {
-    return transitApiService.getRoutes();
+  private async fetchAllRoutes(signal?: AbortSignal): Promise<IRoute[]> {
+    return signal
+      ? transitApiService.getRoutes(signal)
+      : transitApiService.getRoutes();
   }
 
   /**
@@ -295,11 +308,15 @@ export class FilterController {
    * Populates local patternCache and stopCache so subsequent render
    * operations never need additional network requests for static data.
    */
-  private async fetchBulkData(): Promise<IRoute[]> {
-    const bulk = await transitApiService.getBulkData();
+  private async fetchBulkData(
+    isCurrent: () => boolean = () => true,
+    signal?: AbortSignal
+  ): Promise<IRoute[]> {
+    const bulk = await transitApiService.getBulkData(signal);
+    if (!isCurrent()) return [];
     if (!bulk) {
       console.warn('Bulk endpoint failed, falling back to /transit/routes');
-      return this.fetchAllRoutes();
+      return this.fetchAllRoutes(signal);
     }
 
     // Populate local caches
@@ -311,7 +328,7 @@ export class FilterController {
     for (const [key, stops] of Object.entries(bulk.stops)) {
       this.stopCache.set(key, stops);
     }
-    this.bulkLoaded = true;
+    this.bulkLoaded = bulk.routes.some((route) => route.system === 'PRT');
     console.log(
       `Bulk data loaded: ${bulk.routes.length} routes, ` +
         `${this.patternCache.size} pattern sets, ` +
@@ -499,13 +516,13 @@ export class FilterController {
   async applyRouteFilter(
     routeId: string,
     isCurrent: () => boolean = () => true
-  ): Promise<void> {
-    if (!isCurrent()) return;
+  ): Promise<boolean> {
+    if (!isCurrent()) return false;
     try {
       console.log('Applying route filter:', routeId);
 
       const selectedRoute = await this.ensureRouteAvailable(routeId, isCurrent);
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
       this.prepareMapForRouteSelection();
 
       await this.renderRouteGeometryForSelection(
@@ -513,21 +530,23 @@ export class FilterController {
         selectedRoute,
         isCurrent
       );
-      if (!isCurrent()) return;
-      await this.renderRouteStopsForSelection(
+      if (!isCurrent()) return false;
+      const stopsLoaded = await this.renderRouteStopsForSelection(
         routeId,
         selectedRoute,
         isCurrent
       );
-      if (!isCurrent()) return;
+      if (!isCurrent() || !stopsLoaded) return false;
 
       await this.fetchAndShowDetours(routeId, isCurrent);
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
       this.startVehiclePollingForSelectedRoute(routeId);
 
       this.syncURLWithCurrentState();
+      return true;
     } catch (error) {
       console.error('Error applying route filter:', error);
+      return false;
     }
   }
 
@@ -589,10 +608,9 @@ export class FilterController {
     routeId: string,
     selectedRoute: IRoute | null,
     isCurrent: () => boolean
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (selectedRoute) {
-      await this.applyDirectionFilter(isCurrent);
-      return;
+      return this.applyDirectionFilter(isCurrent);
     }
 
     const state = this.getCurrentState();
@@ -601,6 +619,7 @@ export class FilterController {
       this.getFallbackDirectionsForRoute(routeId)
     );
     await this.refreshStopMarkers(routeId, enabledDirections, isCurrent);
+    return isCurrent();
   }
 
   /**
@@ -649,10 +668,13 @@ export class FilterController {
   /**
    * Apply date/time filter
    */
-  async applyDateTimeFilter(): Promise<void> {
+  async applyDateTimeFilter(
+    isCurrent: () => boolean = () => true
+  ): Promise<boolean> {
+    if (!isCurrent()) return false;
     const state = this.getCurrentState();
     const selection = this.resolveDateTimeSelection(state);
-    if (!selection) return;
+    if (!selection) return false;
 
     try {
       console.log('Applying date/time filter', {
@@ -665,20 +687,27 @@ export class FilterController {
         selection.dateToUse,
         selection.selectedTime
       );
+      if (!isCurrent() || !availableRoutes) return false;
 
       // A7: No Service Available
       if (availableRoutes.length === 0) {
         this.handleNoServiceAvailableForDateTimeFilter();
-        return;
+        return true;
       }
 
       this.applyDateTimeFilteredRoutes(availableRoutes);
-      await this.rerenderAfterDateTimeFilter(state.selectedRouteId);
+      const rendered = await this.rerenderAfterDateTimeFilter(
+        state.selectedRouteId,
+        isCurrent
+      );
+      if (!isCurrent() || !rendered) return false;
 
       // Update URL with latest state
       this.syncURLWithCurrentState();
+      return true;
     } catch (error) {
       console.error('Error applying date/time filter:', error);
+      return false;
     }
   }
 
@@ -748,14 +777,14 @@ export class FilterController {
    * Re-render either selected-route view or current filtered-route set.
    */
   private async rerenderAfterDateTimeFilter(
-    selectedRouteId: string | null
-  ): Promise<void> {
+    selectedRouteId: string | null,
+    isCurrent: () => boolean = () => true
+  ): Promise<boolean> {
     if (selectedRouteId) {
-      await this.applyRouteFilter(selectedRouteId);
-      return;
+      return this.applyRouteFilter(selectedRouteId, isCurrent);
     }
 
-    await this.renderFilteredRoutes();
+    return this.renderFilteredRoutes(isCurrent);
   }
 
   /**
@@ -871,13 +900,13 @@ export class FilterController {
    */
   async applyDirectionFilter(
     isCurrent: () => boolean = () => true
-  ): Promise<void> {
-    if (!isCurrent()) return;
+  ): Promise<boolean> {
+    if (!isCurrent()) return false;
     const state = this.getCurrentState();
 
     if (!state.selectedRouteId) {
       console.log('No route selected for direction filter');
-      return;
+      return false;
     }
 
     try {
@@ -887,7 +916,7 @@ export class FilterController {
       );
       if (!selectedRoute) {
         console.error('Selected route not found in available routes');
-        return;
+        return false;
       }
 
       const routeId = state.selectedRouteId;
@@ -905,12 +934,14 @@ export class FilterController {
         isCurrent
       );
 
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
       this.vehicleTracker.refreshDirectionVisibility();
 
       this.syncURLWithCurrentState();
+      return true;
     } catch (error) {
       console.error('Error applying direction filter:', error);
+      return false;
     }
   }
 
@@ -935,7 +966,10 @@ export class FilterController {
   /**
    * Render routes based on current filter state
    */
-  private async renderFilteredRoutes(): Promise<void> {
+  private async renderFilteredRoutes(
+    isCurrent: () => boolean = () => true
+  ): Promise<boolean> {
+    if (!isCurrent()) return false;
     const state = this.getCurrentState();
     const routesToRender = state.filteredRoutes;
 
@@ -944,9 +978,12 @@ export class FilterController {
     const visibleRouteIds = new Set(routesToRender.map((r) => r.id));
     this.clearRoutesOutsideFilteredSet(state.availableRoutes, visibleRouteIds);
 
+    let rendered = true;
     for (const route of routesToRender) {
-      await this.renderFilteredRoute(route);
+      if (!isCurrent()) return false;
+      if (!(await this.renderFilteredRoute(route, isCurrent))) rendered = false;
     }
+    return rendered && isCurrent();
   }
 
   /**
@@ -968,21 +1005,26 @@ export class FilterController {
   /**
    * Fetch and render route geometry for one filtered route.
    */
-  private async renderFilteredRoute(route: IRoute): Promise<void> {
+  private async renderFilteredRoute(
+    route: IRoute,
+    isCurrent: () => boolean = () => true
+  ): Promise<boolean> {
     try {
       if (this.routeRenderer.hasRouteGeometry(route.id)) {
         console.log(
           `Route ${route.id} already has geometry, showing existing polylines`
         );
-        return;
+        return true;
       }
 
       const geometry = await this.fetchRouteGeometry(route.id);
+      if (!isCurrent()) return false;
       if (geometry) {
         this.routeRenderer.renderRouteGeometry(route.id, geometry, route.color);
       } else {
         console.warn(`No geometry data available for route ${route.id}`);
       }
+      return true;
     } catch (error: unknown) {
       if (this.isMissingRouteGeometryError(error)) {
         console.debug(
@@ -991,6 +1033,7 @@ export class FilterController {
       } else {
         console.error(`Failed to render route ${route.id}:`, error);
       }
+      return false;
     }
   }
 
@@ -1036,7 +1079,7 @@ export class FilterController {
   private async fetchAvailableRoutes(
     date: Date,
     time: ISelectedTime
-  ): Promise<IRoute[]> {
+  ): Promise<IRoute[] | null> {
     try {
       // Convert date to YYYY-MM-DD format
       const dateStr = date.toISOString().split('T')[0];
@@ -1054,7 +1097,7 @@ export class FilterController {
       return transitApiService.filterRoutesByDateTime(dateStr, timeStr);
     } catch (error) {
       console.error('Error fetching available routes:', error);
-      return [];
+      return null;
     }
   }
 
@@ -1073,7 +1116,9 @@ export class FilterController {
       return this.stopCache.get(cacheKey) || [];
     }
 
-    return transitApiService.getStops(routeId, direction);
+    const stops = await transitApiService.getStops(routeId, direction);
+    if (!stops) throw new Error('Unable to load route stops');
+    return stops;
   }
 
   /**
@@ -1520,16 +1565,16 @@ export class FilterController {
   async showNearbyStops(
     position: ILatLng,
     isCurrent: () => boolean = () => true
-  ): Promise<void> {
-    if (!isCurrent()) return;
+  ): Promise<boolean> {
+    if (!isCurrent()) return false;
     this.userLocation = position;
 
     // Don't show nearby stops if a route is already selected (TUC1 takes precedence)
     const state = this.getCurrentState();
-    if (state.selectedRouteId) return;
+    if (state.selectedRouteId) return false;
 
     this.clearRenderedNearbyStopsIfActive();
-    if (!state.selectedSystems.prt && !state.selectedSystems.cmu) return;
+    if (!state.selectedSystems.prt && !state.selectedSystems.cmu) return true;
 
     // Derive system filter from the active toggles
     const system = this.getNearbySystemFilter(state.selectedSystems);
@@ -1540,14 +1585,15 @@ export class FilterController {
         position.lng,
         system
       );
-      if (!isCurrent() || !nearbyData || nearbyData.stops.length === 0) return;
+      if (!isCurrent() || !nearbyData) return false;
+      if (nearbyData.stops.length === 0) return true;
 
       this.collectNearbyRouteIds(nearbyData.stops);
 
       this.hideRoutesWithoutNearbyStops(state.availableRoutes);
 
       await this.renderNearbyRouteGeometries(state.availableRoutes, isCurrent);
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
 
       const stopsByRoute = this.groupNearbyStopsByRoute(nearbyData.stops);
       this.renderNearbyStopMarkers(stopsByRoute);
@@ -1555,8 +1601,10 @@ export class FilterController {
       this.nearbyStopsActive = true;
 
       this.logNearbyStopsSummary(nearbyData);
+      return true;
     } catch (error) {
       console.error('[FilterController] Error showing nearby stops:', error);
+      return false;
     }
   }
 
@@ -1834,52 +1882,201 @@ export class FilterController {
   // Service Health Monitoring
   // -------------------------------------------------------------------
 
-  /** Poll /transit/health every 60 seconds and update the banner. */
+  /** Single-flight health checks: briefly retry startup, then use the normal cadence. */
   private startHealthPolling(): void {
-    if (this.healthPollInterval) return;
-
-    // Initial check
-    this.checkServiceHealth();
-
-    // Poll every 60 seconds
-    this.healthPollInterval = window.setInterval(() => {
-      this.checkServiceHealth();
-    }, 60_000);
+    if (this.healthPollEnabled) return;
+    this.healthPollEnabled = true;
+    this.recoveryChecks = 0;
+    const version = ++this.healthPollVersion;
+    const token = localStorage.getItem('token');
+    const isCurrent = () =>
+      this.healthPollEnabled &&
+      version === this.healthPollVersion &&
+      token === localStorage.getItem('token');
+    const poll = async (): Promise<void> => {
+      if (!isCurrent()) return;
+      const request = new AbortController();
+      this.healthRequest = request;
+      // Bound the entire attempt, including nested rendering requests. Revoking
+      // its guard prevents a late response from changing the map after timeout.
+      const deadline = window.setTimeout(() => request.abort(), 30000);
+      const finished = new Promise<void>((resolve) => {
+        request.signal.addEventListener('abort', () => resolve(), {
+          once: true
+        });
+      });
+      try {
+        await Promise.race([
+          this.checkServiceHealth(
+            () => isCurrent() && !request.signal.aborted,
+            request.signal
+          ),
+          finished
+        ]);
+      } finally {
+        window.clearTimeout(deadline);
+        request.abort();
+        if (this.healthRequest === request) this.healthRequest = null;
+        if (isCurrent()) {
+          const delay =
+            this.transitRecoveryPending && this.recoveryChecks++ < 24
+              ? 5000
+              : 60000;
+          this.healthPollInterval = window.setTimeout(() => {
+            void poll();
+          }, delay);
+        }
+      }
+    };
+    void poll();
   }
 
   /** Stop the health polling interval. */
-  private stopHealthPolling(): void {
-    if (this.healthPollInterval) {
-      clearInterval(this.healthPollInterval);
+  stopHealthPolling(): void {
+    this.healthPollEnabled = false;
+    this.healthPollVersion++;
+    this.healthRequest?.abort();
+    this.healthRequest = null;
+    if (this.healthPollInterval !== null) {
+      clearTimeout(this.healthPollInterval);
       this.healthPollInterval = null;
     }
   }
 
   /** Fetch health status and show/hide the service-status banner. */
-  private async checkServiceHealth(): Promise<void> {
+  private async checkServiceHealth(
+    isCurrent: () => boolean,
+    signal: AbortSignal
+  ): Promise<void> {
     try {
-      const health = await transitApiService.getHealth();
-      if (!health) return;
-
-      await this.refreshColorsWhenRecovered(health);
+      const health = await transitApiService.getHealth(signal);
+      if (!isCurrent()) return;
+      if (!health) {
+        if (this.transitRecoveryPending) this.showTransitLoadingBanner();
+        return;
+      }
+      if (health.gtfs?.ready === false) {
+        this.transitRecoveryPending = true;
+        this.bulkLoaded = false;
+      }
       this.updateServiceBanner(health);
+      if (health.gtfs?.ready !== false && this.transitRecoveryPending) {
+        await this.recoverTransitData(isCurrent, signal);
+        if (!this.transitRecoveryPending) {
+          // The fresh bulk metadata already includes the current route colors.
+          this.colorsWereAvailable = health.trueTimeColors.available;
+        }
+      }
+      if (!isCurrent()) return;
+      this.updateServiceBanner(health);
+      if (!this.transitRecoveryPending && this.canRecoverMap()) {
+        await this.refreshColorsWhenRecovered(health, isCurrent);
+      }
     } catch {
       // Don't show banner for network errors on the health check itself
     }
+  }
+
+  private showTransitLoadingBanner(): void {
+    this.showServiceBanner(
+      [
+        'Transit schedules are not available yet. Routes and nearby stops will refresh automatically when ready.'
+      ],
+      'Loading transit data'
+    );
+  }
+
+  private canRecoverMap(): boolean {
+    return (
+      !this.directionsController.isActive &&
+      !PredictionController.getInstance().hasActiveSelection &&
+      !document.getElementById(MAP_POPUP_ID)
+    );
+  }
+
+  private recoveryContext(): string {
+    const state = this.getCurrentState();
+    return JSON.stringify([
+      state.selectedRouteId,
+      state.selectedDate,
+      state.selectedTime,
+      state.selectedSystems,
+      state.selectedDirections,
+      state.plannedLocationLabel,
+      state.plannedLocationLabel === 'Current Location'
+        ? null
+        : state.plannedLocation
+    ]);
+  }
+
+  /** Rebuild an empty startup cache, then restore the user's current view. */
+  private async recoverTransitData(
+    isPollingCurrent: () => boolean,
+    signal: AbortSignal
+  ): Promise<void> {
+    if (!this.canRecoverMap()) return;
+    const state = this.getCurrentState();
+    const hasSystems = state.selectedSystems.prt || state.selectedSystems.cmu;
+    const position =
+      state.plannedLocation ?? state.currentLocation ?? this.userLocation;
+    if (
+      hasSystems &&
+      !state.selectedRouteId &&
+      !state.selectedTime &&
+      !position
+    )
+      return;
+    const context = this.recoveryContext();
+    const directionsSession = this.directionsController.sessionVersion;
+    const predictionSession = PredictionController.getInstance().sessionVersion;
+    const isCurrent = () =>
+      isPollingCurrent() &&
+      this.canRecoverMap() &&
+      directionsSession === this.directionsController.sessionVersion &&
+      predictionSession === PredictionController.getInstance().sessionVersion &&
+      context === this.recoveryContext();
+    let routes = await this.fetchBulkData(isCurrent, signal);
+    if (!isCurrent() || !this.bulkLoaded || !routes.length) return;
+    if (this.shouldHydrateCMURoutes(routes)) {
+      const allRoutes = await this.fetchAllRoutes(signal);
+      if (!isCurrent() || !allRoutes.some((route) => route.system === 'CMU'))
+        return;
+      routes = allRoutes;
+    }
+    this.publishInitializedRoutes(routes);
+    let restored = true;
+    if (hasSystems) {
+      if (state.selectedTime) {
+        restored = await this.applyDateTimeFilter(isCurrent);
+      } else if (state.selectedRouteId) {
+        restored = await this.applyRouteFilter(
+          state.selectedRouteId,
+          isCurrent
+        );
+      } else if (position) {
+        const routesRendered = await this.renderFilteredRoutes(isCurrent);
+        restored =
+          (await this.showNearbyStops(position, isCurrent)) && routesRendered;
+      }
+    }
+    if (isCurrent() && restored) this.transitRecoveryPending = false;
   }
 
   /**
    * Refresh route colors once after TrueTime color availability recovers.
    */
   private async refreshColorsWhenRecovered(
-    health: IServiceHealth
+    health: IServiceHealth,
+    isCurrent: () => boolean
   ): Promise<void> {
     if (health.trueTimeColors.available && !this.colorsWereAvailable) {
       console.log(
         '[FilterController] TrueTime colors now available — refreshing routes'
       );
-      await this.refreshRouteColors();
+      const applied = await this.refreshRouteColors(isCurrent);
+      if (!applied) return;
     }
+    if (!isCurrent()) return;
     this.colorsWereAvailable = health.trueTimeColors.available;
   }
 
@@ -1887,6 +2084,10 @@ export class FilterController {
    * Show or hide service banner based on current health payload.
    */
   private updateServiceBanner(health: IServiceHealth): void {
+    if (health.gtfs?.ready === false || this.transitRecoveryPending) {
+      this.showTransitLoadingBanner();
+      return;
+    }
     const allHealthy = health.overall && health.trueTimeColors.available;
     if (allHealthy) {
       this.hideServiceBanner();
@@ -1911,6 +2112,10 @@ export class FilterController {
     if (!health.trueTimeColors.available) {
       issues.push('Route colors are temporarily using defaults');
     }
+    if (!health.tripshotLiveStatus.healthy)
+      issues.push('CMU shuttle tracking is unavailable');
+    if (!issues.length && !health.overall)
+      issues.push('Transit service status is temporarily unavailable');
 
     return issues;
   }
@@ -1920,10 +2125,13 @@ export class FilterController {
    * a successful color retry.  Updates the local cache and re-renders
    * any currently-displayed route polylines with the correct color.
    */
-  private async refreshRouteColors(): Promise<void> {
+  private async refreshRouteColors(
+    isCurrent: () => boolean = () => true
+  ): Promise<boolean> {
     try {
       const freshRoutes = await transitApiService.getRoutes();
-      if (!freshRoutes.length) return;
+      if (!isCurrent() || !this.canRecoverMap() || !freshRoutes.length)
+        return false;
 
       // Update the local route cache and color cache
       const state = this.getCurrentState();
@@ -1946,17 +2154,19 @@ export class FilterController {
       }
 
       console.log('[FilterController] Route colors refreshed from server');
+      return true;
     } catch (err) {
       console.warn('[FilterController] Failed to refresh route colors:', err);
+      return false;
     }
   }
 
   /** Show the service-degraded banner with a list of issues. */
-  private showServiceBanner(issues: string[]): void {
+  private showServiceBanner(issues: string[], title?: string): void {
     const banner = document.getElementById('service-status-banner');
     if (!banner) return;
 
-    banner.innerHTML = buildServiceBannerMarkup(issues);
+    banner.innerHTML = buildServiceBannerMarkup(issues, title);
     banner.hidden = false;
 
     const closeBtn = banner.querySelector('.service-status-banner__close');

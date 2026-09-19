@@ -47,6 +47,8 @@ Encode reserved URI characters in the database password. `DB_URL` must not alrea
 
 ## Deploy and verify
 
+For the first Node 24/dependency-cleanup rollout, use **Manual Deploy → Clear build cache & deploy** if a cached `npm ci` fails. In the audited deployment, the cached install failed before Parcel; a clean install completed with zero reported vulnerabilities and deployed successfully. See [Render's deployment controls](https://render.com/docs/deploys#manual-deploys).
+
 The September 2026 audit adds an atomic `SubscriptionSet` document per user. Existing individual subscription records are copied lazily on first access and retained for recovery. Once a set exists, it is authoritative. Use a single writer during this first cutover: do not run an old service against the same database while the updated service accepts subscription changes. Before rolling back to old code, reconcile the sets back into individual records (including removals). An ordinary code rollback alone will not undo the data migration. The original ScottyGo deployment uses its own database and is unaffected.
 
 Save the environment and deploy the selected branch. Without valid Atlas credentials or network access, startup fails before administrator creation.

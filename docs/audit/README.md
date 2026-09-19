@@ -47,7 +47,7 @@ Parcel builds five browser entry points and one Express server. MongoDB persists
 Detailed workstream checkpoints remain in the linked reports and should not be added together because suites overlap.
 
 - Baseline combined rerun after initial changes: 499 passing tests, 20 deliberately skipped live tests, one outdated health fixture. The fixture now models all three feeds and explicitly tests not-ready states.
-- Final combined local run: **530/530 passed in 45 suites**, with 20 opt-in live tests excluded from that run. One subsequent filter-label regression passed with its complete eight-test accessibility suite (81 frontend tests total).
+- Combined local run: **530/530 passed in 45 suites**, with 20 opt-in live tests excluded from that run. After the final filter-label and cold-start recovery changes, the complete frontend rerun passed **106/106 tests in 16 suites**, including the retained directions regressions. Jest discovery is restricted to the root `tests` directory so temporary checkout copies cannot duplicate or introduce tests.
 - Opt-in real-upstream suite: **20/20 passed** with a disposable loopback MongoDB.
 - Repository-wide ESLint, server/browser TypeScript, production build, tracked Windows path checks, and Git whitespace checks pass. Full npm audit reports **zero known vulnerabilities**. A negative test confirms an Atlas-style URL is rejected by test setup before application/database imports.
 - Local production build: successful on Node 24.20.0. App initialized real feeds in about six seconds on this computer, with approximately 263 MB startup peak RSS; this does not predict Render timing.
@@ -55,6 +55,9 @@ Detailed workstream checkpoints remain in the linked reports and should not be a
 - Fault-path regressions: stale JWTs and account demotion, timeout/retry/shutdown, concurrent subscriptions, stored HTML-looking text, reversed network responses, changed search/stop selections, failed report retry, and walking-route recovery.
 - Local selected-stop directions computed a four-minute walk; Exit restored the map and the system-filter controls responded. The 390 CSS-pixel map had no horizontal page overflow and its main touch controls measured 48 by 48 pixels.
 - Before the subscription storage cutover, a sanitized production inventory confirmed one account and zero subscriptions, so there were no existing subscriptions to reconcile on this personal deployment.
+- A fresh Windows clone of the committed deployment branch completed with a clean working tree and no sparse-checkout workaround.
+- GitHub Actions is **disabled on this fork** (confirmed in the repository Actions page); no hosted CI run is claimed. The updated workflows are committed, and equivalent local lint/type/build/database tests were executed. Review the inherited default-branch workflows before enabling fork Actions.
+- Initial hosted audit build `bdd0db1` deployed successfully using Node 24.21.0 after a clean dependency install. All **14 hosted smoke checks passed**, including all five pages, 13 referenced assets, fresh feeds, 102 PRT routes, 15 CMU routes, Atlas persistence, administrator authentication, and Maps configuration. Startup readiness was observed around 112 seconds of process uptime, with 206.5 MB sampled peak Node RSS at that point (218.1 MB in a later check); these are one deployment's observations, not service guarantees.
 
 ## Remaining priorities
 

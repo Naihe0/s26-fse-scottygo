@@ -30,6 +30,7 @@ import type { IVehicle } from '../../../common/transit.interface';
 // Shape of the /transit/health response (inline type kept here so callers
 // don't need to re-declare it).
 export interface IServiceHealth {
+  gtfs?: { ready: boolean };
   memory: unknown;
   vehiclePositions: {
     healthy: boolean;
@@ -73,9 +74,11 @@ export class TransitApiService {
   }
 
   /** GET /transit/routes — returns all routes. */
-  async getRoutes(): Promise<IRoute[]> {
+  async getRoutes(signal?: AbortSignal): Promise<IRoute[]> {
     try {
       const res = await axios.get('/transit/routes', {
+        signal,
+        timeout: 15000,
         headers: authHeaders(),
         validateStatus: () => true
       });
@@ -91,9 +94,11 @@ export class TransitApiService {
   }
 
   /** GET /transit/bulk — all routes, patterns, and stops in one request. */
-  async getBulkData(): Promise<IBulkTransitData | null> {
+  async getBulkData(signal?: AbortSignal): Promise<IBulkTransitData | null> {
     try {
       const res = await axios.get('/transit/bulk', {
+        signal,
+        timeout: 30000,
         headers: authHeaders(),
         validateStatus: () => true
       });
@@ -130,7 +135,10 @@ export class TransitApiService {
   }
 
   /** POST /transit/routes/available — routes running on a specific date/time. */
-  async filterRoutesByDateTime(date: string, time: string): Promise<IRoute[]> {
+  async filterRoutesByDateTime(
+    date: string,
+    time: string
+  ): Promise<IRoute[] | null> {
     try {
       const res = await axios.post(
         '/transit/routes/available',
@@ -144,10 +152,10 @@ export class TransitApiService {
         '[TransitApiService] filterRoutesByDateTime failed:',
         res.data
       );
-      return [];
+      return null;
     } catch (err) {
       console.error('[TransitApiService] filterRoutesByDateTime error:', err);
-      return [];
+      return null;
     }
   }
 
@@ -170,7 +178,7 @@ export class TransitApiService {
   }
 
   /** GET /transit/stops/:routeId?dir=DIRECTION — stops for a route. */
-  async getStops(routeId: string, direction: string): Promise<IStop[]> {
+  async getStops(routeId: string, direction: string): Promise<IStop[] | null> {
     try {
       const res = await axios.get(
         `/transit/stops/${routeId}?dir=${direction}`,
@@ -183,10 +191,10 @@ export class TransitApiService {
         return res.data.payload ?? [];
       }
       console.error('[TransitApiService] getStops failed:', res.data);
-      return [];
+      return null;
     } catch (err) {
       console.error('[TransitApiService] getStops error:', err);
-      return [];
+      return null;
     }
   }
 
@@ -279,9 +287,11 @@ export class TransitApiService {
   }
 
   /** GET /transit/health — service health status. */
-  async getHealth(): Promise<IServiceHealth | null> {
+  async getHealth(signal?: AbortSignal): Promise<IServiceHealth | null> {
     try {
       const res = await axios.get('/transit/health', {
+        signal,
+        timeout: 15000,
         headers: authHeaders(),
         validateStatus: () => true
       });

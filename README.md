@@ -90,7 +90,7 @@ Additional design and operations documentation lives in [`docs/`](docs/), includ
 ## Development practices
 
 - **Main-branch protection** — all changes reach `main` via pull request with required review and approval.
-- **Continuous integration** — GitHub Actions runs linting and the test suite on every PR.
+- **Continuous integration** — the workflow runs lint, server/browser type checks, a production build, isolated MongoDB tests, and a production dependency audit. GitHub Actions is currently disabled on this fork; review inherited workflows before enabling it.
 - **Code quality** — Sigrid static analysis informed iterative refactoring.
 - **AI-assisted development** — see [`CLAUDE.md`](CLAUDE.md) for how AI tooling was used in building this project.
 
