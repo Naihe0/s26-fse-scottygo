@@ -17,7 +17,15 @@ export const DB_CONN_STR: string =
 // ignored by codespaces and Render, which have their default ports
 export const PORT: number = process.env.PORT ? Number(process.env.PORT) : 1000; // defaults to 1000
 
+// Optional interface binding, e.g. 127.0.0.1 for local-only development.
+// Hosted deployments retain Node's default when this is unset.
+export const BIND_ADDRESS: string | undefined = process.env.BIND_ADDRESS;
+
 export const JWT_KEY: string = process.env.JWT_KEY ?? 'someDefaultKey';
+
+// Used only when creating the initial admin; existing accounts are unchanged.
+export const INITIAL_ADMIN_PASSWORD: string =
+  process.env.INITIAL_ADMIN_PASSWORD || 'admin';
 
 export const JWT_EXP: string =
   STAGE === 'PROD' ? (process.env.JWT_EXP ?? '365d') : 'never'; // defaults to never

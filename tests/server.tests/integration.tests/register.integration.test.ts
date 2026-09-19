@@ -71,7 +71,10 @@ jest.mock('../../../server/services/alerts.service', () => ({
 const TEST_PORT = 8185;
 const TEST_URL = `http://localhost:${TEST_PORT}`;
 const TEST_DB_URL =
-  process.env.DB_URL ?? 'mongodb://localhost:27017/scottygo_test_register_int';
+  process.env.TEST_DB_URL ??
+  (process.env.DB_URL && process.env.DEV_DB
+    ? `${process.env.DB_URL}${process.env.DEV_DB}`
+    : 'mongodb://127.0.0.1:27017/scottygo_test_register_int');
 
 // Global state
 let app: App;

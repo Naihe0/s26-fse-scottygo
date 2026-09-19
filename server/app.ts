@@ -11,7 +11,7 @@ import alertsService from './services/alerts.service';
 import memoryMonitorService from './services/memory-monitor.service';
 import { TransitModel } from './models/transit.model';
 import { NotificationModel } from './models/notification.model';
-import { JWT_KEY as secretKey, STAGE } from './env';
+import { JWT_KEY as secretKey, STAGE, BIND_ADDRESS } from './env';
 import { Server as SocketServer, Socket } from 'socket.io';
 import {
   ClientToServerEvents,
@@ -492,7 +492,7 @@ class App {
       });
 
       try {
-        this.server.listen(this.port, () => {
+        this.server.listen(this.port, BIND_ADDRESS, () => {
           // must listen on http server, not express app, for socket.io to work
           console.log(
             `⚡️[Server ${new Date().toISOString()}] Running at ${this.url} ...`

@@ -19,6 +19,7 @@ import {
 } from '../../common/transit.interface';
 import bcrypt from 'bcrypt';
 import { v4 as uuidV4 } from 'uuid';
+import { INITIAL_ADMIN_PASSWORD } from '../env';
 
 // Extended schema for user accounts with status and privilege
 const UserSchema = new Schema<IUserAccount>({
@@ -337,7 +338,7 @@ export class MongoDB implements IDatabase {
     }
 
     // Create default admin user as specified in UC_ManageAcct R2 Initial-Administrator Rule
-    const hashedPassword = await bcrypt.hash('admin', 10);
+    const hashedPassword = await bcrypt.hash(INITIAL_ADMIN_PASSWORD, 10);
     const defaultAdmin: IUserAccount = {
       credentials: {
         username: 'admin',
@@ -354,7 +355,7 @@ export class MongoDB implements IDatabase {
     const newAdmin = new MUser(defaultAdmin);
     await newAdmin.save();
     console.log(
-      `[MongoDB ${new Date().toISOString()}] Default Administrator user created (username: Admin, password: admin)`
+      `[MongoDB ${new Date().toISOString()}] Default Administrator user created (username: admin)`
     );
   }
 

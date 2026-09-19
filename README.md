@@ -43,6 +43,9 @@ ScottyGo is a single TypeScript codebase split into three workspaces:
 
 Requires Node.js `^20.16.0` and npm `>=10.8.0`.
 
+For the Windows setup with a separate, persistent local MongoDB database, see
+[Local development on Windows](docs/LocalDevelopmentWindows.md).
+
 Install dependencies:
 
 ```bash
