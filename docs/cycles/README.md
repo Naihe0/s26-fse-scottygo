@@ -1,5 +1,10 @@
 # Improvement cycles
 
+## iPhone map layout follow-up
+
+The user-reported missing header and bottom gap prompted a focused viewport fix.
+See the [diagnosis, responsive checks, and release record](2026-09-19-iphone-map-layout.md).
+
 ## Cycle 3 — Alerts and app polish
 
 Clickable alert sources and map actions, readable agency/community information,

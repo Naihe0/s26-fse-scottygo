@@ -21,4 +21,10 @@ Related mobile safeguards set editable fields to 16px across phone portrait/land
 
 ## Release
 
-Deployment verification is pending. The change is limited to the map stylesheet and this report; no backend, database, service-plan, or credential changes are needed.
+- Application commit `32b878a647602822de6b6e6dbfc8b7288e3b75ad` was pushed to `codex/render-atlas-setup`. Render deployment `dep-danemrcs728c73aqklm0` reached **Live** after 56 seconds.
+- The personal production service serves the new `/map.fd648543.css` stylesheet. Hosted 390 × 664 measurements confirm header top 0/bottom 56, map top 56/bottom 664, and no body horizontal overflow; the navigation menu is accessible above the map.
+- All 14 hosted smoke checks passed after transit initialization: pages, frontend assets, fresh PRT/CMU feeds, route lists, Atlas persistence, authentication, and Maps configuration. No test reports or subscriptions were written in production.
+- The temporary local app and disposable MongoDB were stopped; no listeners remained on 8080, 8180, 8383, 27017, or 27019. Browser sizing is restored after QA.
+- Physical iPhone confirmation was requested from the user after deployment; responsive Chromium checks do not replace that evidence. The rollback target is application `2efa90ecfa368a6d159c2fd77c1d0c718e95ca5d` / Render deployment `dep-dane2lnf3r2c73dvkl7g`.
+
+The release changes only the map stylesheet and documentation. No backend, database, service-plan, or credential changes were made.
