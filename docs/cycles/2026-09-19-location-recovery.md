@@ -31,4 +31,12 @@ The website cannot override iPhone permissions. In addition to the per-site sett
 
 ## Release
 
-Production deployment verification pending. No server configuration, credentials, database schema, or paid service changes are required.
+Application commit `9064216550f5db909850e0499316083ba78dcf07` deployed to [ScottyGo](https://scottygo-ningrui.onrender.com) through Render deployment `dep-danf3l2jnfac738rgmug`, confirmed Live in 46.8 seconds.
+
+Hosted Chromium verification confirmed normal GPS acquisition with one “Your Location” marker and no location-error feedback; recenter also worked. At 390 × 664, the header and recenter control remained visible, the main map extended from y=56 to y=664, and there was no horizontal overflow. The browser viewport override was reset after verification.
+
+Transit readiness became healthy after initialization (observed at 157 seconds of server uptime). The final production smoke passed all 14 checks with zero failures, pending checks, or warnings: five pages and 14 frontend assets, three fresh live feeds, TrueTime colors, 102 PRT and 15 CMU routes, current Atlas persistence, admin authentication/authorization, and Maps configuration. The open map cleared its cold-start notice and retained a single GPS marker without location-error feedback. Private verification output is saved in `private/location-recovery-deployment-smoke.jsonl`.
+
+Local cleanup is complete: the verified test app (PID 27312) stopped, and the verified MongoDB process (PID 16416) shut down gracefully. Neither process remains, and no listeners remain on ports 8080, 8180, 8383, 27017, or 27019.
+
+Rollback target: application commit `32b878a647602822de6b6e6dbfc8b7288e3b75ad`, Render deployment `dep-danemrcs728c73aqklm0`. No server configuration, credentials, database schema, or paid service changes were made.
