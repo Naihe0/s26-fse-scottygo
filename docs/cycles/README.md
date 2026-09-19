@@ -1,5 +1,9 @@
 # Improvement cycles
 
+## Cycle 2 — Map design and rendering
+
+The next user-requested cycle refines bus headings, location visibility, route/stop styling, and rendering behavior. See [the use cases, implementation, and release record](2026-09-19-map-design.md).
+
 ## 2026-09-19 — Reliable map exploration and live tracking
 
 This cycle follows the [repository audit](../audit/README.md). The user requested one complete discovery → use-case planning → implementation → testing → production release cycle, with freedom to select useful changes. The personal Render service is the release target; the original deployment and its database remain separate.

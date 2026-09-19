@@ -63,7 +63,7 @@ interface TrueTimeVehicle {
   tmstmp: string;
   lat: string;
   lon: string;
-  hdg: string;
+  hdg?: string;
   rt: string;
   dly?: boolean;
   spd?: number;
@@ -324,7 +324,12 @@ class TrueTimeService implements ITrueTimeService {
       lat: parseFloat(v.lat),
       lon: parseFloat(v.lon),
       routeId: v.rt,
-      heading: parseInt(v.hdg),
+      heading:
+        typeof v.hdg === 'string' &&
+        v.hdg.trim() !== '' &&
+        Number.isFinite(Number(v.hdg))
+          ? Number(v.hdg)
+          : undefined,
       source: 'live' as const,
       lastUpdate: toISOString(v.tmstmp),
       isDetoured: false

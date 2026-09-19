@@ -1,0 +1,126 @@
+map-key {
+  position: absolute;
+  left: 20px;
+  bottom: calc(36px + env(safe-area-inset-bottom, 0px));
+  z-index: 24;
+  color: #334155;
+}
+.map-key__toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #fff;
+  color: inherit;
+  font:
+    500 12px 'Inter',
+    sans-serif;
+  box-shadow: 0 2px 8px #0f172a14;
+  cursor: pointer;
+}
+.map-key__toggle .material-icons-outlined {
+  font-size: 18px;
+}
+.map-key__toggle:hover,
+.map-key__toggle[aria-expanded='true'] {
+  background: #f1f5f9;
+}
+.map-key__toggle:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 3px;
+}
+.map-key__panel {
+  position: absolute;
+  bottom: 54px;
+  left: 0;
+  width: 260px;
+  max-width: calc(100vw - 104px);
+  max-height: calc(100dvh - 200px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 18px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 8px 28px #0f172a1f;
+}
+.map-key__panel[hidden] {
+  display: none;
+}
+.map-key__panel h2 {
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: #0f172a;
+}
+.map-key__panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.map-key__panel li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+}
+.map-key__panel li:last-child {
+  margin-bottom: 0;
+}
+.map-key__panel img,
+.map-key__lines {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  flex: 0 0 36px;
+}
+.map-key__panel strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+}
+.map-key__panel small {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #64748b;
+}
+.map-key__lines {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+}
+.map-key__lines i {
+  border-top: 3px solid #0f766e;
+  transform: rotate(-15deg);
+}
+.map-key__lines i + i {
+  border-color: #e9462f;
+}
+body.dark .map-key__toggle,
+body.dark .map-key__panel {
+  background: #1e293b;
+  border-color: #475569;
+  color: #e2e8f0;
+}
+body.dark .map-key__panel h2 {
+  color: #f8fafc;
+}
+body.dark .map-key__panel small {
+  color: #cbd5e1;
+}
+@media (max-width: 600px) {
+  map-key {
+    left: 16px;
+    bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+  }
+}
+@media (max-height: 600px) {
+  .map-key__panel {
+    max-height: calc(100dvh - 150px);
+  }
+}

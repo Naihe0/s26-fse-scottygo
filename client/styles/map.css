@@ -1,4 +1,5 @@
 @import './live-tracking.css';
+@import './map-key.css';
 
 :root {
   --primary: #c41230;
@@ -76,6 +77,12 @@ body.dark {
    rotate control can still inject itself via gm-control-active */
 #map .gm-control-active {
   display: none !important;
+}
+
+/* The SDK retains a transparent accessibility target even with clickable:false.
+   Keep the named GPS image above transit artwork without covering stop targets. */
+#map [role='img'][aria-label='Your Location'] {
+  pointer-events: none;
 }
 
 /* ============================================
@@ -497,45 +504,6 @@ body.dark .bell-btn.bell-subscribed {
   flex-direction: column;
   gap: 8px;
   z-index: 20;
-}
-
-/* Location Indicator Component */
-.location-dot {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 16px;
-  height: 16px;
-  background: #4285f4;
-  border: 3px solid white;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-  z-index: 15;
-}
-
-.pulse {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 32px;
-  height: 32px;
-  background: #4285f4;
-  border-radius: 50%;
-  opacity: 0.4;
-  transform: translate(-50%, -50%);
-  animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
-}
-
-@keyframes ping {
-  0% {
-    transform: translate(-50%, -50%) scale(1);
-    opacity: 0.6;
-  }
-  100% {
-    transform: translate(-50%, -50%) scale(2);
-    opacity: 0;
-  }
 }
 
 /* Dark Mode Toggle Component */

@@ -8,6 +8,58 @@ import {
   IConfig
 } from '../../../common/map.interface';
 
+// Keep geographic context legible without competing with ScottyGo's overlays.
+// Embedded styles deliberately avoid a map ID or cloud-style configuration.
+const BASE_MAP_STYLES: google.maps.MapTypeStyle[] = [
+  { elementType: 'geometry', stylers: [{ color: '#f3f5f7' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#697586' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#ffffff' }] },
+  {
+    featureType: 'landscape.man_made',
+    elementType: 'geometry',
+    stylers: [{ color: '#eef1f4' }]
+  },
+  {
+    featureType: 'road',
+    elementType: 'geometry.fill',
+    stylers: [{ color: '#ffffff' }]
+  },
+  {
+    featureType: 'road',
+    elementType: 'geometry.stroke',
+    stylers: [{ color: '#e3e8ee' }]
+  },
+  {
+    featureType: 'road.highway',
+    elementType: 'geometry.fill',
+    stylers: [{ color: '#e0e6ed' }]
+  },
+  {
+    featureType: 'poi.park',
+    elementType: 'geometry',
+    stylers: [{ color: '#e0ece3' }]
+  },
+  {
+    featureType: 'water',
+    elementType: 'geometry',
+    stylers: [{ color: '#cddfe9' }]
+  },
+  {
+    featureType: 'poi.business',
+    elementType: 'labels.icon',
+    stylers: [{ visibility: 'off' }]
+  },
+  {
+    featureType: 'transit',
+    elementType: 'labels.icon',
+    stylers: [{ visibility: 'off' }]
+  }
+];
+
+interface MarkerAnimation {
+  frameId?: number;
+}
+
 /**
  * Google Maps implementation of IMapProvider.
  *
@@ -18,6 +70,8 @@ import {
 export class GoogleMapProvider implements IMapProvider {
   private map!: google.maps.Map;
   private markers: Map<string, google.maps.Marker> = new Map();
+  private markerAnimations = new Map<string, MarkerAnimation>();
+  private motionPreference: MediaQueryList | null = null;
   private polylines: Map<string, google.maps.Polyline> = new Map();
   private transitLayer!: google.maps.TransitLayer;
   private trafficLayer!: google.maps.TrafficLayer;
@@ -38,6 +92,7 @@ export class GoogleMapProvider implements IMapProvider {
       fullscreenControl: false, // Disable fullscreen button
       rotateControl: false, // Disable rotate/tilt diamond control
       tilt: 0, // Prevent 45° imagery which also triggers the rotate control
+      styles: BASE_MAP_STYLES,
       zoomControlOptions: {
         position: google.maps.ControlPosition.RIGHT_BOTTOM
       }
@@ -89,6 +144,7 @@ export class GoogleMapProvider implements IMapProvider {
       map: this.map,
       title: options.title,
       draggable: options.draggable,
+      clickable: options.clickable,
       icon: iconOption,
       zIndex: options.zIndex
     });
@@ -96,36 +152,63 @@ export class GoogleMapProvider implements IMapProvider {
 
     return {
       id,
-      setPosition: (pos: ILatLng) => marker.setPosition(pos),
+      setPosition: (pos: ILatLng) => {
+        this.cancelMarkerAnimation(id);
+        if (this.markers.get(id) === marker) marker.setPosition(pos);
+      },
       animatePosition: (pos: ILatLng, durationMs = 1000) => {
+        this.cancelMarkerAnimation(id);
+        if (this.markers.get(id) !== marker) return;
+        const target = { ...pos };
         const start = marker.getPosition();
-        if (!start) {
-          marker.setPosition(pos);
+        if (
+          !start ||
+          !Number.isFinite(durationMs) ||
+          durationMs <= 0 ||
+          this.prefersReducedMotion()
+        ) {
+          marker.setPosition(target);
           return;
         }
         const startLat = start.lat();
         const startLng = start.lng();
-        const dLat = pos.lat - startLat;
-        const dLng = pos.lng - startLng;
+        const dLat = target.lat - startLat;
+        const dLng = target.lng - startLng;
         // Skip animation for tiny moves or teleports (> ~5 km)
-        if (Math.abs(dLat) < 0.00001 && Math.abs(dLng) < 0.00001) return;
-        if (Math.abs(dLat) > 0.05 || Math.abs(dLng) > 0.05) {
-          marker.setPosition(pos);
+        if (
+          (Math.abs(dLat) < 0.00001 && Math.abs(dLng) < 0.00001) ||
+          Math.abs(dLat) > 0.05 ||
+          Math.abs(dLng) > 0.05
+        ) {
+          marker.setPosition(target);
           return;
         }
         const t0 = performance.now();
+        const animation: MarkerAnimation = {};
+        this.markerAnimations.set(id, animation);
         const step = (now: number) => {
+          // Ownership also rejects callbacks already dispatched before cancel.
+          if (
+            this.markerAnimations.get(id) !== animation ||
+            this.markers.get(id) !== marker
+          )
+            return;
           const elapsed = now - t0;
-          const progress = Math.min(elapsed / durationMs, 1);
+          const progress = Math.max(0, Math.min(elapsed / durationMs, 1));
+          if (progress === 1 || this.prefersReducedMotion()) {
+            marker.setPosition(target);
+            this.markerAnimations.delete(id);
+            return;
+          }
           // Ease-out cubic for a natural deceleration feel
           const ease = 1 - Math.pow(1 - progress, 3);
           marker.setPosition({
             lat: startLat + dLat * ease,
             lng: startLng + dLng * ease
           });
-          if (progress < 1) requestAnimationFrame(step);
+          animation.frameId = requestAnimationFrame(step);
         };
-        requestAnimationFrame(step);
+        animation.frameId = requestAnimationFrame(step);
       },
       setVisible: (visible: boolean) => marker.setVisible(visible),
       setIcon: (
@@ -151,6 +234,7 @@ export class GoogleMapProvider implements IMapProvider {
         google.maps.event.addListener(marker, 'click', callback);
       },
       remove: () => {
+        this.cancelMarkerAnimation(id);
         marker.setMap(null);
         this.markers.delete(id);
       }
@@ -190,6 +274,9 @@ export class GoogleMapProvider implements IMapProvider {
   }
 
   clearMarkers(): void {
+    this.markerAnimations.forEach((_animation, id) => {
+      this.cancelMarkerAnimation(id);
+    });
     this.markers.forEach((m) => m.setMap(null));
     this.markers.clear();
   }
@@ -202,6 +289,23 @@ export class GoogleMapProvider implements IMapProvider {
   clearAll(): void {
     this.clearMarkers();
     this.clearPolylines();
+  }
+
+  private cancelMarkerAnimation(id: string): void {
+    const animation = this.markerAnimations.get(id);
+    this.markerAnimations.delete(id);
+    if (animation?.frameId !== undefined) {
+      cancelAnimationFrame(animation.frameId);
+    }
+  }
+
+  private prefersReducedMotion(): boolean {
+    if (!this.motionPreference && typeof window.matchMedia === 'function') {
+      this.motionPreference = window.matchMedia(
+        '(prefers-reduced-motion: reduce)'
+      );
+    }
+    return this.motionPreference?.matches ?? false;
   }
 
   onMapClick(callback: (position: ILatLng) => void): void {

@@ -1,17 +1,13 @@
-/**
- * Route Renderer
- * Handles rendering route geometries, stops, and managing their visibility
- */
-
+/** Renders routes and stops independently of the map SDK. */
 import type {
   IMapProvider,
   IMapPolyline,
   IMapMarker,
   ILatLng
 } from '../../../common/map.interface';
-import type { IRoute, IStop, IDetour } from '../../../common/transit.interface';
+import type { IStop, IDetour } from '../../../common/transit.interface';
+import { createStopIcon, stopDotSize } from '../utils/stop-icon';
 
-// GeoJSON type definitions
 interface GeoJSONGeometry {
   type: string;
   coordinates: number[][];
@@ -30,29 +26,48 @@ interface GeoJSONFeatureCollection {
 
 type GeoJSON = GeoJSONFeature | GeoJSONFeatureCollection;
 
-// Custom route path format from backend (exported for use in other modules)
 export interface RoutePathSegment {
   direction: string;
-  path: Array<{ lat: number; lng: number }>;
+  path: ILatLng[];
 }
 
-// Union type for route data (exported for use in other modules)
 export type RouteData = GeoJSON | RoutePathSegment[];
+
+interface RenderedSegment {
+  direction: string | null;
+  path: ILatLng[];
+  polylines: IMapPolyline[];
+}
+
+interface RenderedStops {
+  markers: IMapMarker[];
+  color: string;
+  positions: ILatLng[];
+  routeId: string;
+}
+
+function isPosition(point: ILatLng): boolean {
+  return (
+    !!point &&
+    Number.isFinite(point.lat) &&
+    Math.abs(point.lat) <= 90 &&
+    Number.isFinite(point.lng) &&
+    Math.abs(point.lng) <= 180
+  );
+}
 
 export class RouteRenderer {
   private static instance: RouteRenderer;
   private mapProvider: IMapProvider | null = null;
-
-  // Store references to map elements
-  private routePolylines = new Map<string, IMapPolyline[]>(); // routeId_direction → polylines
-  private detourPolylines = new Map<string, IMapPolyline[]>(); // routeId_direction → detour overlays
-  private stopMarkers = new Map<string, IMapMarker[]>(); // routeId_direction → markers
-  private routeColors = new Map<string, string>(); // routeId → color
-  /** Reverse lookup: polyline.id → routeId */
-  private polylineRouteMap = new Map<string, string>();
-  /** Path segments per route for overlap detection: routeId → array of polyline paths */
-  private routePaths = new Map<string, ILatLng[][]>();
-  /** Callback invoked when a polyline on the map is clicked */
+  // Route ownership is explicit: underscores and custom direction names are safe.
+  private routePolylines = new Map<string, RenderedSegment[]>();
+  private detourPolylines = new Map<string, RenderedSegment[]>();
+  private stopMarkers = new Map<string, RenderedStops>();
+  private routeColors = new Map<string, string>();
+  private hiddenRoutes = new Set<string>();
+  private hiddenDirections = new Map<string, Set<string>>();
+  private zoomProviders = new WeakSet<IMapProvider>();
+  private dotSize = 10;
   private onRouteClickCallback:
     | ((routeIds: string[], position: ILatLng) => void)
     | null = null;
@@ -60,639 +75,413 @@ export class RouteRenderer {
   private constructor() {}
 
   static getInstance(): RouteRenderer {
-    if (!RouteRenderer.instance) {
-      RouteRenderer.instance = new RouteRenderer();
-    }
+    if (!RouteRenderer.instance) RouteRenderer.instance = new RouteRenderer();
     return RouteRenderer.instance;
   }
 
-  /** Register a callback for polyline clicks. */
+  initialize(mapProvider: IMapProvider): void {
+    if (this.mapProvider !== mapProvider) this.clearAllRoutes();
+    this.mapProvider = mapProvider;
+    this.dotSize = stopDotSize(mapProvider.getZoom());
+    if (this.zoomProviders.has(mapProvider)) return;
+    this.zoomProviders.add(mapProvider);
+    mapProvider.onZoomChanged((zoom) => {
+      if (
+        this.mapProvider !== mapProvider ||
+        this.dotSize === stopDotSize(zoom)
+      )
+        return;
+      this.dotSize = stopDotSize(zoom);
+      for (const { markers, color } of this.stopMarkers.values()) {
+        const icon = createStopIcon(color, zoom);
+        markers.forEach((marker) => marker.setIcon(icon));
+      }
+    });
+  }
+
   setRouteClickCallback(
     cb: (routeIds: string[], position: ILatLng) => void
   ): void {
     this.onRouteClickCallback = cb;
   }
 
-  /** Return route color or fallback. */
   getRouteColor(routeId: string): string {
     return this.routeColors.get(routeId) || '#c41230';
   }
 
-  /**
-   * Find all rendered route IDs whose polyline paths pass near the given
-   * position. Checks actual stored path coordinates against a proximity
-   * threshold (~30 m at Pittsburgh latitude).
-   */
+  /** Include only visible geometry; test complete segments, not just vertices. */
   getRoutesAtPosition(position: ILatLng): string[] {
-    const THRESHOLD = 0.0003; // ~30 m
-    const hitRoutes: string[] = [];
-
-    for (const [routeId, paths] of this.routePaths) {
-      let found = false;
-      for (const path of paths) {
-        for (const pt of path) {
-          if (
-            Math.abs(pt.lat - position.lat) < THRESHOLD &&
-            Math.abs(pt.lng - position.lng) < THRESHOLD
-          ) {
-            found = true;
-            break;
+    if (!isPosition(position)) return [];
+    const hits = new Set<string>();
+    const scale = Math.cos((position.lat * Math.PI) / 180);
+    const thresholdSquared = 0.0003 ** 2; // About 33 m, adjusted for longitude.
+    for (const overlays of [this.routePolylines, this.detourPolylines]) {
+      for (const [routeId, segments] of overlays) {
+        if (hits.has(routeId)) continue;
+        for (const segment of segments) {
+          if (!this.segmentVisible(routeId, segment)) continue;
+          for (let i = 1; i < segment.path.length; i++) {
+            const a = segment.path[i - 1];
+            const b = segment.path[i];
+            const ax = (a.lng - position.lng) * scale;
+            const ay = a.lat - position.lat;
+            const dx = (b.lng - a.lng) * scale;
+            const dy = b.lat - a.lat;
+            const lengthSquared = dx * dx + dy * dy;
+            const t = lengthSquared
+              ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / lengthSquared))
+              : 0;
+            if ((ax + t * dx) ** 2 + (ay + t * dy) ** 2 <= thresholdSquared) {
+              hits.add(routeId);
+              break;
+            }
           }
+          if (hits.has(routeId)) break;
         }
-        if (found) break;
       }
-      if (found) hitRoutes.push(routeId);
     }
-
-    return hitRoutes;
+    return [...hits];
   }
 
-  /** Attach a click listener to a polyline and register it in the reverse map. */
-  private registerPolylineClick(polyline: IMapPolyline, routeId: string): void {
-    this.polylineRouteMap.set(polyline.id, routeId);
-    polyline.onClick((position: ILatLng) => {
-      if (!this.onRouteClickCallback) return;
-      // Find all routes overlapping at the clicked position
-      const overlapping = this.getRoutesAtPosition(position);
-      // Ensure the clicked route is always included
-      if (!overlapping.includes(routeId)) {
-        overlapping.unshift(routeId);
-      }
-      this.onRouteClickCallback(overlapping, position);
+  private segmentVisible(routeId: string, segment: RenderedSegment): boolean {
+    return (
+      !this.hiddenRoutes.has(routeId) &&
+      !(
+        segment.direction &&
+        this.hiddenDirections.get(routeId)?.has(segment.direction)
+      )
+    );
+  }
+
+  /** Both strokes are clickable, so the casing remains a useful hit area. */
+  private renderSegment(
+    routeId: string,
+    direction: string | null,
+    path: ILatLng[],
+    color: string,
+    detour = false
+  ): RenderedSegment | null {
+    if (!Array.isArray(path) || path.length < 2 || !path.every(isPosition))
+      return null;
+    const points = path.map((point) => ({ lat: point.lat, lng: point.lng }));
+    const polylines = [
+      this.mapProvider!.addPolyline({
+        path: points,
+        color: '#ffffff',
+        weight: detour ? 7 : 6,
+        opacity: 0.95,
+        zIndex: detour ? 20 : 10
+      }),
+      this.mapProvider!.addPolyline({
+        path: points,
+        color,
+        weight: detour ? 4.5 : 3.5,
+        opacity: 1,
+        zIndex: detour ? 21 : 11
+      })
+    ];
+    for (const polyline of polylines) {
+      polyline.onClick((position) => {
+        if (!this.onRouteClickCallback) return;
+        const overlapping = this.getRoutesAtPosition(position);
+        if (!overlapping.includes(routeId)) overlapping.unshift(routeId);
+        this.onRouteClickCallback(overlapping, position);
+      });
+    }
+    const segment = { direction, path: points, polylines };
+    if (!this.segmentVisible(routeId, segment)) {
+      polylines.forEach((polyline) => polyline.setVisible(false));
+    }
+    return segment;
+  }
+
+  renderRouteGeometry(
+    routeId: string,
+    routeData: RouteData,
+    color: string
+  ): void {
+    if (!this.mapProvider) return;
+    // A color/geometry refresh must preserve the user's active visibility.
+    this.removeRouteGeometry(routeId);
+    this.routeColors.set(routeId, color);
+    for (const stops of this.stopMarkers.values()) {
+      if (stops.routeId !== routeId || stops.color === color) continue;
+      stops.color = color;
+      const icon = createStopIcon(color, this.mapProvider.getZoom());
+      stops.markers.forEach((marker) => marker.setIcon(icon));
+    }
+    const segments: RenderedSegment[] = [];
+    for (const { direction, path } of this.readPaths(routeData)) {
+      const segment = this.renderSegment(routeId, direction, path, color);
+      if (segment) segments.push(segment);
+    }
+    if (segments.length) this.routePolylines.set(routeId, segments);
+  }
+
+  private readPaths(
+    routeData: RouteData
+  ): Array<{ direction: string | null; path: ILatLng[] }> {
+    if (!routeData || typeof routeData !== 'object') return [];
+    if (Array.isArray(routeData))
+      return routeData.filter((segment) => !!segment);
+    const features =
+      routeData.type === 'FeatureCollection'
+        ? (routeData as GeoJSONFeatureCollection).features
+        : [routeData as GeoJSONFeature];
+    if (!Array.isArray(features)) return [];
+    return features.flatMap((feature) => {
+      if (
+        feature?.geometry?.type !== 'LineString' ||
+        !Array.isArray(feature.geometry.coordinates)
+      )
+        return [];
+      return [
+        {
+          direction: null,
+          path: feature.geometry.coordinates.map((coord) => ({
+            lat: coord?.[1],
+            lng: coord?.[0]
+          }))
+        }
+      ];
     });
   }
 
-  /**
-   * Render detour overlays for a route.
-   *
-   * Draw only the impacted detour segments (non-overlapping portions) so
-   * the base route remains visible and only the rerouted section is highlighted.
-   */
   renderDetourGeometry(routeId: string, detours: IDetour[]): void {
-    if (!this.mapProvider) {
-      console.error('Map provider not initialized');
-      return;
-    }
-
+    if (!this.mapProvider) return;
     this.clearDetourPolylines(routeId);
-
-    for (const detour of detours) {
-      for (const geometry of detour.geometry ?? []) {
-        const directionKey = `${routeId}_${geometry.direction}`;
-
-        const impactedSegments = this.extractImpactedSegments(
+    const segments: RenderedSegment[] = [];
+    for (const detour of Array.isArray(detours) ? detours : []) {
+      const geometries = Array.isArray(detour?.geometry) ? detour.geometry : [];
+      for (const geometry of geometries) {
+        if (!geometry || typeof geometry.direction !== 'string') continue;
+        for (const path of this.extractImpactedSegments(
           geometry.detourPath,
           geometry.originalPath ?? []
-        );
-
-        for (const segment of impactedSegments) {
-          const activePolyline = this.mapProvider.addPolyline({
-            path: segment,
-            color: '#ff2d20',
-            weight: 6,
-            opacity: 0.95
-          });
-
-          if (!this.detourPolylines.has(directionKey)) {
-            this.detourPolylines.set(directionKey, []);
-          }
-          this.detourPolylines.get(directionKey)!.push(activePolyline);
+        )) {
+          const segment = this.renderSegment(
+            routeId,
+            geometry.direction,
+            path,
+            '#e9462f',
+            true
+          );
+          if (segment) segments.push(segment);
         }
       }
     }
+    if (segments.length) this.detourPolylines.set(routeId, segments);
   }
 
-  /**
-   * Return only detour-path segments that diverge from the original path.
-   * Falls back to the full detour path when no original path is available.
-   */
   private extractImpactedSegments(
-    detourPath: Array<{ lat: number; lng: number }>,
-    originalPath: Array<{ lat: number; lng: number }>
-  ): Array<Array<{ lat: number; lng: number }>> {
-    if (detourPath.length < 2) return [];
+    detourPath: ILatLng[],
+    originalPath: ILatLng[]
+  ): ILatLng[][] {
+    if (
+      !Array.isArray(detourPath) ||
+      detourPath.length < 2 ||
+      !detourPath.every(isPosition) ||
+      !Array.isArray(originalPath) ||
+      !originalPath.every(isPosition)
+    )
+      return [];
     if (originalPath.length < 2) return [detourPath];
-
-    const toleranceDeg = 0.00025; // ~25m, enough to avoid noise around shared geometry
-    const segments: Array<Array<{ lat: number; lng: number }>> = [];
-    let current: Array<{ lat: number; lng: number }> = [];
-
+    const toleranceDeg = 0.00025;
+    const segments: ILatLng[][] = [];
+    let current: ILatLng[] = [];
     for (const point of detourPath) {
       const isShared = originalPath.some(
         (orig) =>
           Math.abs(point.lat - orig.lat) <= toleranceDeg &&
           Math.abs(point.lng - orig.lng) <= toleranceDeg
       );
-
-      if (!isShared) {
-        current.push(point);
-      } else if (current.length > 0) {
-        if (current.length > 1) {
-          segments.push(current);
-        }
+      if (!isShared) current.push(point);
+      else if (current.length) {
+        if (current.length > 1) segments.push(current);
         current = [];
       }
     }
-
-    if (current.length > 1) {
-      segments.push(current);
-    }
-
-    return segments.length > 0 ? segments : [detourPath];
+    if (current.length > 1) segments.push(current);
+    return segments.length ? segments : [detourPath];
   }
 
-  /**
-   * Initialize with map provider
-   */
-  initialize(mapProvider: IMapProvider): void {
-    this.mapProvider = mapProvider;
-  }
-
-  /**
-   * Render route geometry from GeoJSON Feature or custom route format
-   */
-  renderRouteGeometry(
-    routeId: string,
-    routeData: RouteData,
-    color: string
-  ): void {
-    if (!this.mapProvider) {
-      console.error('Map provider not initialized');
-      return;
-    }
-
-    // Store color for this route
-    this.routeColors.set(routeId, color);
-
-    // Clear existing polylines for this route
-    this.clearRoutePolylines(routeId);
-
-    // Validate route data structure
-    if (!routeData || typeof routeData !== 'object') {
-      console.warn(`Invalid route data for route ${routeId}:`, routeData);
-      return;
-    }
-
-    // Check if it's the custom format (array of direction/path objects)
-    if (Array.isArray(routeData)) {
-      this.renderCustomFormatPolylines(routeId, routeData, color);
-    } else {
-      this.renderGeoJSONPolylines(routeId, routeData as GeoJSON, color);
-    }
-
-    console.log(`Rendered route ${routeId} with polylines`);
-  }
-
-  /**
-   * Render polylines from the custom direction/path array format.
-   */
-  private renderCustomFormatPolylines(
-    routeId: string,
-    segments: RoutePathSegment[],
-    color: string
-  ): void {
-    segments.forEach((segment: RoutePathSegment) => {
-      if (
-        segment.path &&
-        Array.isArray(segment.path) &&
-        segment.path.length > 0
-      ) {
-        const polyline = this.mapProvider!.addPolyline({
-          path: segment.path,
-          color: color,
-          weight: 4,
-          opacity: 1.0
-        });
-
-        this.registerPolylineClick(polyline, routeId);
-
-        // Store path for overlap detection
-        if (!this.routePaths.has(routeId)) {
-          this.routePaths.set(routeId, []);
-        }
-        this.routePaths
-          .get(routeId)!
-          .push(segment.path.map((p) => ({ lat: p.lat, lng: p.lng })));
-
-        // Store with direction-specific key
-        const directionKey = `${routeId}_${segment.direction}`;
-        if (!this.routePolylines.has(directionKey)) {
-          this.routePolylines.set(directionKey, []);
-        }
-        this.routePolylines.get(directionKey)!.push(polyline);
-      }
-    });
-  }
-
-  /**
-   * Render polylines from GeoJSON Feature or FeatureCollection format.
-   */
-  private renderGeoJSONPolylines(
-    routeId: string,
-    geoJson: GeoJSON,
-    color: string
-  ): void {
-    const features: GeoJSONFeature[] =
-      geoJson.type === 'FeatureCollection'
-        ? (geoJson as GeoJSONFeatureCollection).features
-        : [geoJson as GeoJSONFeature];
-
-    if (!features || !Array.isArray(features)) {
-      console.warn(`No valid features found for route ${routeId}`);
-      return;
-    }
-
-    const polylines: IMapPolyline[] = [];
-
-    features.forEach((feature: GeoJSONFeature) => {
-      if (
-        !feature ||
-        !feature.geometry ||
-        typeof feature.geometry !== 'object'
-      ) {
-        console.warn(`Invalid feature geometry for route ${routeId}`);
-        return;
-      }
-
-      if (feature.geometry.type === 'LineString') {
-        if (
-          !feature.geometry.coordinates ||
-          !Array.isArray(feature.geometry.coordinates)
-        ) {
-          console.warn(`Invalid coordinates for route ${routeId}`);
-          return;
-        }
-
-        // GeoJSON uses [lng, lat], need to convert to {lat, lng}
-        const path = feature.geometry.coordinates.map((coord: number[]) => ({
-          lat: coord[1],
-          lng: coord[0]
-        }));
-
-        const polyline = this.mapProvider!.addPolyline({
-          path,
-          color: color,
-          weight: 4,
-          opacity: 1.0
-        });
-
-        this.registerPolylineClick(polyline, routeId);
-
-        // Store path for overlap detection
-        if (!this.routePaths.has(routeId)) {
-          this.routePaths.set(routeId, []);
-        }
-        this.routePaths.get(routeId)!.push(path);
-
-        polylines.push(polyline);
-      }
-    });
-
-    // For GeoJSON format, store without direction (or use a default key)
-    if (polylines.length > 0) {
-      this.routePolylines.set(routeId, polylines);
-    }
-  }
-
-  /**
-   * Render stop markers for a route
-   * @param onStopClick  Optional callback invoked with the stop when its marker is clicked
-   */
   renderStopMarkers(
     routeId: string,
     stops: IStop[],
     direction: string,
     onStopClick?: (stop: IStop) => void
   ): void {
-    if (!this.mapProvider) {
-      console.error('Map provider not initialized');
-      return;
-    }
-
+    if (!this.mapProvider) return;
     const key = `${routeId}_${direction}`;
-
-    // Clear existing markers for this route+direction
     this.clearStopMarkers(key);
-
-    const color = this.routeColors.get(routeId) || '#FF0000';
-    const dotIcon = this.createDotMarker(color, 10);
-
+    const color = this.getRouteColor(routeId);
+    const icon = createStopIcon(color, this.mapProvider.getZoom());
     const markers: IMapMarker[] = [];
-
-    stops.forEach((stop, index) => {
-      const marker = this.mapProvider!.addMarker({
-        position: { lat: stop.lat, lng: stop.lon },
-        title: `${stop.stopName} (Stop #${index + 1})`,
-        icon: dotIcon
+    const positions: ILatLng[] = [];
+    const seen = new Set<string>();
+    for (const stop of stops) {
+      const position = { lat: stop.lat, lng: stop.lon };
+      if (!isPosition(position) || seen.has(stop.stopId)) continue;
+      seen.add(stop.stopId);
+      const marker = this.mapProvider.addMarker({
+        position,
+        title: `${stop.stopName} (Stop #${markers.length + 1})`,
+        icon: icon.url,
+        iconAnchor: icon.anchor,
+        iconSize: icon.size,
+        zIndex: 30
       });
-
-      if (onStopClick) {
-        marker.onClick(() => onStopClick(stop));
-      }
-
+      if (onStopClick) marker.onClick(() => onStopClick(stop));
       markers.push(marker);
-    });
-
-    this.stopMarkers.set(key, markers);
-    console.log(
-      `Rendered ${markers.length} stop markers for route ${routeId} ${direction}`
-    );
+      positions.push(position);
+    }
+    this.stopMarkers.set(key, { markers, color, positions, routeId });
   }
 
-  /**
-   * Hide a specific route (make invisible but keep in memory)
-   */
   hideRoute(routeId: string): void {
-    // Check for direction-specific keys first
-    const inboundKey = `${routeId}_INBOUND`;
-    const outboundKey = `${routeId}_OUTBOUND`;
-
-    const inboundPolylines = this.routePolylines.get(inboundKey);
-    const outboundPolylines = this.routePolylines.get(outboundKey);
-    const regularPolylines = this.routePolylines.get(routeId);
-
-    if (inboundPolylines) {
-      inboundPolylines.forEach((polyline) => polyline.setVisible(false));
-    }
-    if (outboundPolylines) {
-      outboundPolylines.forEach((polyline) => polyline.setVisible(false));
-    }
-    if (regularPolylines) {
-      regularPolylines.forEach((polyline) => polyline.setVisible(false));
-    }
+    this.hiddenRoutes.add(routeId);
+    this.applyRouteVisibility(routeId);
   }
 
-  /**
-   * Show a specific route
-   */
   showRoute(routeId: string): void {
-    // Check for direction-specific keys first
-    const inboundKey = `${routeId}_INBOUND`;
-    const outboundKey = `${routeId}_OUTBOUND`;
-
-    const inboundPolylines = this.routePolylines.get(inboundKey);
-    const outboundPolylines = this.routePolylines.get(outboundKey);
-    const regularPolylines = this.routePolylines.get(routeId);
-
-    if (inboundPolylines) {
-      inboundPolylines.forEach((polyline) => polyline.setVisible(true));
-    }
-    if (outboundPolylines) {
-      outboundPolylines.forEach((polyline) => polyline.setVisible(true));
-    }
-    if (regularPolylines) {
-      regularPolylines.forEach((polyline) => polyline.setVisible(true));
-    }
+    this.hiddenRoutes.delete(routeId);
+    this.applyRouteVisibility(routeId);
   }
 
-  /**
-   * Hide a specific direction for a route
-   */
   hideDirectionPolylines(routeId: string, direction: string): void {
-    const key = `${routeId}_${direction}`;
-    const polylines = this.routePolylines.get(key);
-    if (polylines) {
-      polylines.forEach((polyline) => polyline.setVisible(false));
-    }
-
-    const detourPolylines = this.detourPolylines.get(key);
-    if (detourPolylines) {
-      detourPolylines.forEach((polyline) => polyline.setVisible(false));
-    }
+    if (!this.hiddenDirections.has(routeId))
+      this.hiddenDirections.set(routeId, new Set());
+    this.hiddenDirections.get(routeId)!.add(direction);
+    this.applyRouteVisibility(routeId);
   }
 
-  /**
-   * Show a specific direction for a route
-   */
   showDirectionPolylines(routeId: string, direction: string): void {
-    const key = `${routeId}_${direction}`;
-    const polylines = this.routePolylines.get(key);
-    if (polylines) {
-      polylines.forEach((polyline) => polyline.setVisible(true));
-    }
+    this.hiddenDirections.get(routeId)?.delete(direction);
+    this.applyRouteVisibility(routeId);
+  }
 
-    const detourPolylines = this.detourPolylines.get(key);
-    if (detourPolylines) {
-      detourPolylines.forEach((polyline) => polyline.setVisible(true));
+  private applyRouteVisibility(routeId: string): void {
+    for (const overlays of [this.routePolylines, this.detourPolylines]) {
+      for (const segment of overlays.get(routeId) ?? []) {
+        const visible = this.segmentVisible(routeId, segment);
+        segment.polylines.forEach((polyline) => polyline.setVisible(visible));
+      }
     }
   }
 
-  /**
-   * Check if a route already has geometry rendered
-   */
   hasRouteGeometry(routeId: string): boolean {
-    // Check for direction-specific polylines
-    const inboundKey = `${routeId}_INBOUND`;
-    const outboundKey = `${routeId}_OUTBOUND`;
-
-    if (
-      this.routePolylines.has(inboundKey) ||
-      this.routePolylines.has(outboundKey)
-    ) {
-      return true;
-    }
-
-    // Check for regular polylines
     return this.routePolylines.has(routeId);
   }
 
-  /**
-   * Clear route polylines (remove from map)
-   */
   clearRoutePolylines(routeId: string): void {
-    const removePolylines = (polylines: IMapPolyline[] | undefined) => {
-      if (!polylines) return;
-      polylines.forEach((p) => {
-        this.polylineRouteMap.delete(p.id);
-        p.remove();
-      });
-    };
+    this.removeRouteGeometry(routeId);
+    this.hiddenRoutes.delete(routeId);
+    this.hiddenDirections.delete(routeId);
+  }
 
-    // Clear direction-specific polylines
-    const inboundKey = `${routeId}_INBOUND`;
-    const outboundKey = `${routeId}_OUTBOUND`;
-
-    removePolylines(this.routePolylines.get(inboundKey));
-    this.routePolylines.delete(inboundKey);
-
-    removePolylines(this.routePolylines.get(outboundKey));
-    this.routePolylines.delete(outboundKey);
-
-    // Clear regular polylines
-    removePolylines(this.routePolylines.get(routeId));
+  private removeRouteGeometry(routeId: string): void {
+    this.removeSegments(this.routePolylines.get(routeId));
     this.routePolylines.delete(routeId);
-
-    // Clear stored paths for overlap detection
-    this.routePaths.delete(routeId);
-
     this.clearDetourPolylines(routeId);
   }
 
-  /**
-   * Clear detour polylines (remove from map)
-   */
   clearDetourPolylines(routeId: string): void {
-    const inboundKey = `${routeId}_INBOUND`;
-    const outboundKey = `${routeId}_OUTBOUND`;
-
-    const inboundPolylines = this.detourPolylines.get(inboundKey);
-    if (inboundPolylines) {
-      inboundPolylines.forEach((polyline) => polyline.remove());
-      this.detourPolylines.delete(inboundKey);
-    }
-
-    const outboundPolylines = this.detourPolylines.get(outboundKey);
-    if (outboundPolylines) {
-      outboundPolylines.forEach((polyline) => polyline.remove());
-      this.detourPolylines.delete(outboundKey);
-    }
+    this.removeSegments(this.detourPolylines.get(routeId));
+    this.detourPolylines.delete(routeId);
   }
 
-  /**
-   * Clear stop markers for a route+direction
-   */
+  private removeSegments(segments: RenderedSegment[] | undefined): void {
+    segments?.forEach(({ polylines }) =>
+      polylines.forEach((polyline) => polyline.remove())
+    );
+  }
+
   clearStopMarkers(key: string): void {
-    const markers = this.stopMarkers.get(key);
-    if (markers) {
-      markers.forEach((marker) => marker.remove());
-      this.stopMarkers.delete(key);
-    }
+    this.stopMarkers.get(key)?.markers.forEach((marker) => marker.remove());
+    this.stopMarkers.delete(key);
   }
 
-  /**
-   * Clear all routes from map
-   */
   clearAllRoutes(): void {
-    // Clear all polylines
-    this.routePolylines.forEach((polylines) => {
-      polylines.forEach((polyline) => polyline.remove());
-    });
+    this.routePolylines.forEach((segments) => this.removeSegments(segments));
     this.routePolylines.clear();
-    this.polylineRouteMap.clear();
-    this.routePaths.clear();
-
-    this.detourPolylines.forEach((polylines) => {
-      polylines.forEach((polyline) => polyline.remove());
-    });
+    this.detourPolylines.forEach((segments) => this.removeSegments(segments));
     this.detourPolylines.clear();
-
-    // Clear all stop markers
-    this.stopMarkers.forEach((markers) => {
-      markers.forEach((marker) => marker.remove());
-    });
+    this.stopMarkers.forEach(({ markers }) =>
+      markers.forEach((marker) => marker.remove())
+    );
     this.stopMarkers.clear();
-
-    console.log('Cleared all routes and stops from map');
+    this.routeColors.clear();
+    this.hiddenRoutes.clear();
+    this.hiddenDirections.clear();
   }
 
-  /**
-   * Show only filtered routes, hide others
-   */
   updateVisibleRoutes(visibleRouteIds: string[]): void {
     const visibleSet = new Set(visibleRouteIds);
-
-    // Hide routes not in the visible set
-    this.routePolylines.forEach((polylines, routeId) => {
-      if (visibleSet.has(routeId)) {
-        this.showRoute(routeId);
-      } else {
-        this.hideRoute(routeId);
-      }
-    });
+    for (const routeId of new Set([
+      ...this.routePolylines.keys(),
+      ...this.detourPolylines.keys()
+    ])) {
+      if (visibleSet.has(routeId)) this.showRoute(routeId);
+      else this.hideRoute(routeId);
+    }
   }
 
-  /**
-   * Generate SVG marker icon as data URL
-   */
-  private createDotMarker(color: string, _size: number = 12): string {
-    // Bus-stop pin: teardrop shape with a bus-stop icon inside
-    const w = 24;
-    const h = 32;
-    const svg = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-        <path d="M12 0C6 0 1 5 1 11c0 8 11 20 11 20s11-12 11-20C23 5 18 0 12 0z"
-              fill="${color}" stroke="white" stroke-width="1.5"/>
-        <circle cx="12" cy="11" r="5.5" fill="white"/>
-        <rect x="9" y="7.5" width="6" height="5" rx="1" fill="${color}"/>
-        <rect x="9.5" y="8.5" width="2" height="1.5" rx="0.3" fill="white"/>
-        <rect x="12.5" y="8.5" width="2" height="1.5" rx="0.3" fill="white"/>
-        <rect x="9" y="12" width="6" height="0.8" fill="${color}"/>
-      </svg>
-    `;
-    return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg.trim());
-  }
-
-  /**
-   * Get all currently rendered route IDs
-   */
   getRenderedRouteIds(): string[] {
-    return Array.from(this.routePolylines.keys());
+    return [...this.routePolylines.keys()];
   }
 
-  /**
-   * Get bounding box for a rendered route's stop markers and polyline paths
-   */
   getRouteBounds(
     routeId: string
   ): { north: number; south: number; east: number; west: number } | null {
-    return null;
+    const points = (this.routePolylines.get(routeId) ?? []).flatMap(
+      ({ path }) => path
+    );
+    for (const stops of this.stopMarkers.values()) {
+      if (stops.routeId === routeId) points.push(...stops.positions);
+    }
+    return this.boundsOf(points);
   }
 
-  /**
-   * Zoom the map to fit the given route data
-   */
+  private boundsOf(
+    points: ILatLng[]
+  ): { north: number; south: number; east: number; west: number } | null {
+    let bounds: {
+      north: number;
+      south: number;
+      east: number;
+      west: number;
+    } | null = null;
+    for (const point of points) {
+      if (!isPosition(point)) continue;
+      if (!bounds)
+        bounds = {
+          north: point.lat,
+          south: point.lat,
+          east: point.lng,
+          west: point.lng
+        };
+      else {
+        bounds.north = Math.max(bounds.north, point.lat);
+        bounds.south = Math.min(bounds.south, point.lat);
+        bounds.east = Math.max(bounds.east, point.lng);
+        bounds.west = Math.min(bounds.west, point.lng);
+      }
+    }
+    return bounds;
+  }
+
   fitToRouteData(routeData: RouteData): void {
     if (!this.mapProvider) return;
-
-    const points: Array<{ lat: number; lng: number }> = [];
-
-    if (Array.isArray(routeData)) {
-      routeData.forEach((segment) => {
-        if (segment.path && Array.isArray(segment.path)) {
-          segment.path.forEach((p) => points.push(p));
-        }
-      });
-    } else {
-      const geoJson = routeData as GeoJSON;
-      const features: GeoJSONFeature[] =
-        geoJson.type === 'FeatureCollection'
-          ? (geoJson as GeoJSONFeatureCollection).features
-          : [geoJson as GeoJSONFeature];
-
-      features.forEach((feature) => {
-        if (
-          feature?.geometry?.type === 'LineString' &&
-          feature.geometry.coordinates
-        ) {
-          feature.geometry.coordinates.forEach((coord) => {
-            points.push({ lat: coord[1], lng: coord[0] });
-          });
-        }
-      });
-    }
-
-    if (points.length === 0) return;
-
-    let north = -Infinity,
-      south = Infinity,
-      east = -Infinity,
-      west = Infinity;
-    points.forEach((p) => {
-      if (p.lat > north) north = p.lat;
-      if (p.lat < south) south = p.lat;
-      if (p.lng > east) east = p.lng;
-      if (p.lng < west) west = p.lng;
-    });
-
-    this.mapProvider.fitBounds({ north, south, east, west });
+    const bounds = this.boundsOf(
+      this.readPaths(routeData).flatMap(({ path }) =>
+        Array.isArray(path) ? path : []
+      )
+    );
+    if (bounds) this.mapProvider.fitBounds(bounds);
   }
 
-  /**
-   * Center and zoom the map on a specific position
-   */
-  zoomToPosition(lat: number, lng: number, zoom: number = 16): void {
-    if (!this.mapProvider) return;
-    this.mapProvider.setCenter({ lat, lng });
-    this.mapProvider.setZoom(zoom);
+  zoomToPosition(lat: number, lng: number, zoom = 16): void {
+    this.mapProvider?.setCenter({ lat, lng });
+    this.mapProvider?.setZoom(zoom);
   }
 }

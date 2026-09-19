@@ -23,51 +23,47 @@ export function createBusIcon(
   anchor: { x: number; y: number };
   size: { width: number; height: number };
 } {
-  // Detoured buses keep an amber override so they stand out on the map.
-  const color = vehicle.isDetoured ? '#FFA500' : routeColor;
+  // Only hex colors may enter SVG markup; feed-supplied metadata stays out.
+  const routeHex = typeof routeColor === 'string' ? routeColor.trim() : '';
+  const safeColor = /^#?(?:[\da-f]{3}|[\da-f]{6})$/i.test(routeHex)
+    ? `#${routeHex.replace(/^#/, '')}`
+    : '#2563eb';
+  const color = vehicle.isDetoured ? '#d97706' : safeColor;
 
-  const scale = Math.max(0.5, Math.min(2.5, (zoom - 10) * 0.3 + 1));
+  const safeZoom = Number.isFinite(zoom) ? zoom : 14;
+  const sz = Math.round(Math.max(32, Math.min(44, 32 + (safeZoom - 10) * 2)));
+  const heading =
+    typeof vehicle.heading === 'number' && Number.isFinite(vehicle.heading)
+      ? ((vehicle.heading % 360) + 360) % 360
+      : null;
 
-  // Normalise heading to [0, 360).
-  const heading = (((vehicle.heading ?? 0) % 360) + 360) % 360;
-
-  // Westward headings (180-359°): mirror the bus so the front stays
-  // visually "correct" (windows above chassis, headlight at nose).
-  // Eastward headings (0-179°): standard rotation only.
-  const flip = heading >= 180;
-
-  // Rotation angle that makes the bus front point toward `heading`.
-  // Without flip: front is +x; rotate(heading-90) maps +x -> compass heading.
-  // With flip: after scale(-1,1), effective front is -x;
-  // rotate(-(heading+90)) maps -x -> compass heading.
-  const rotDeg = flip ? -(heading + 90) : heading - 90;
-
-  const vbSize = 40;
-  const cx = vbSize / 2;
-  const cy = vbSize / 2;
-  const sz = Math.round(vbSize * scale);
-
-  const groupTransform = flip
-    ? `translate(${cx},${cy}) scale(-1,1) rotate(${rotDeg})`
-    : `translate(${cx},${cy}) rotate(${rotDeg})`;
+  // The pointer starts north. SVG's clockwise rotation matches compass bearing;
+  // only the pointer rotates, so the bus pictogram stays upright in every direction.
+  const pointer =
+    heading === null
+      ? ''
+      : `<g data-part="heading" transform="rotate(${heading} 24 24)">` +
+        `<path d="M24 2.5 19.5 8.5 28.5 8.5Z" fill="${color}" stroke="#0f172a" stroke-opacity="0.2" stroke-width="3" stroke-linejoin="round"/>` +
+        `<path d="M24 2.5 19.5 8.5 28.5 8.5Z" fill="${color}" stroke="#fff" stroke-width="1.75" stroke-linejoin="round"/>` +
+        `</g>`;
 
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 ${vbSize} ${vbSize}">` +
-    `<g transform="${groupTransform}">` +
-    `<rect x="-12" y="-5" width="24" height="10" rx="2" fill="${color}" stroke="rgba(0,0,0,0.35)" stroke-width="0.6"/>` +
-    `<rect x="9" y="-5" width="3" height="10" fill="rgba(0,0,0,0.18)"/>` +
-    `<rect x="4.5" y="-3.5" width="5" height="7" rx="1" fill="rgba(210,235,255,0.9)" stroke="rgba(0,0,0,0.25)" stroke-width="0.4"/>` +
-    `<rect x="-1.5" y="-3.5" width="3.5" height="5" rx="0.5" fill="rgba(210,235,255,0.75)" stroke="rgba(0,0,0,0.2)" stroke-width="0.3"/>` +
-    `<rect x="-7" y="-3.5" width="3.5" height="5" rx="0.5" fill="rgba(210,235,255,0.75)" stroke="rgba(0,0,0,0.2)" stroke-width="0.3"/>` +
-    `<circle cx="12" cy="0" r="1.3" fill="rgba(255,255,200,0.95)"/>` +
-    `<rect x="5" y="4.5" width="4.5" height="2.5" rx="0.8" fill="rgba(30,30,30,0.85)"/>` +
-    `<rect x="-9.5" y="4.5" width="4.5" height="2.5" rx="0.8" fill="rgba(30,30,30,0.85)"/>` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 48 48">` +
+    pointer +
+    `<circle cx="24" cy="24.5" r="15.5" fill="#0f172a" fill-opacity="0.18"/>` +
+    `<circle data-part="badge" cx="24" cy="24" r="13.5" fill="${color}" stroke="#fff" stroke-width="3"/>` +
+    `<g data-part="bus" fill="#fff" stroke="#0f172a" stroke-opacity="0.2" stroke-width="0.7">` +
+    `<rect x="18" y="16" width="12" height="15" rx="3"/>` +
+    `<path d="M19.5 30v2M28.5 30v2" stroke="#fff" stroke-opacity="1" stroke-width="2" stroke-linecap="round"/>` +
     `</g>` +
+    `<rect x="20" y="18.5" width="8" height="5.5" rx="1" fill="#0f172a" fill-opacity="0.72"/>` +
+    `<circle cx="20.5" cy="27.5" r="1" fill="#0f172a" fill-opacity="0.72"/>` +
+    `<circle cx="27.5" cy="27.5" r="1" fill="#0f172a" fill-opacity="0.72"/>` +
     `</svg>`;
 
   return {
     url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
-    anchor: { x: Math.round(cx * scale), y: Math.round(cy * scale) },
+    anchor: { x: sz / 2, y: sz / 2 },
     size: { width: sz, height: sz }
   };
 }

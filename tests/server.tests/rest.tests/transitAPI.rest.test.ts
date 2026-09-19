@@ -364,7 +364,10 @@ describeE2E('E2E: GET /transit/vehicles/:routeId', () => {
         expect(typeof v.lat).toBe('number');
         expect(typeof v.lon).toBe('number');
         expect(typeof v.routeId).toBe('string');
-        expect(typeof v.heading).toBe('number');
+        if (v.heading !== undefined) {
+          expect(typeof v.heading).toBe('number');
+          expect(Number.isFinite(v.heading)).toBe(true);
+        }
         expect(v.source).toBe('live');
         expect(typeof v.lastUpdate).toBe('string');
         expect(typeof v.isDetoured).toBe('boolean');

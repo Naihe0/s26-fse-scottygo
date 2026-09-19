@@ -273,7 +273,13 @@ export class VehiclePositionsService {
       lat: vp.position.latitude,
       lon: vp.position.longitude,
       routeId,
-      heading: vp.position.bearing ?? 0,
+      // Protobuf exposes 0 on the prototype even when bearing was omitted.
+      heading:
+        Object.prototype.hasOwnProperty.call(vp.position, 'bearing') &&
+        typeof vp.position.bearing === 'number' &&
+        Number.isFinite(vp.position.bearing)
+          ? vp.position.bearing
+          : undefined,
       speed: vp.position.speed != null ? vp.position.speed : undefined,
       source: 'live',
       lastUpdate: vp.timestamp

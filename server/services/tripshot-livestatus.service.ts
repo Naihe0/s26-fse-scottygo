@@ -455,7 +455,10 @@ export class TripShotLiveStatusService {
       lat: vs.location.lt,
       lon: vs.location.lg,
       routeId: normalizedRouteId, // TripShot UUID; callers rewrite to CMU-n
-      heading: vs.bearing ?? 0,
+      heading:
+        typeof vs.bearing === 'number' && Number.isFinite(vs.bearing)
+          ? vs.bearing
+          : undefined,
       speed: vs.speed,
       source: 'live',
       lastUpdate: vs.when,

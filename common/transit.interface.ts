@@ -15,7 +15,7 @@ export interface IVehicle {
   lat: number; // Latitude
   lon: number; // Longitude
   routeId: string;
-  heading: number;
+  heading?: number; // Compass degrees; absent when the live feed has no valid bearing.
   speed?: number; // Speed in m/s from GTFS-RT (may be absent)
   source: 'live' | 'static'; // "live" from PRT API, "static" from local cache
   lastUpdate: string; // ISO Timestamp

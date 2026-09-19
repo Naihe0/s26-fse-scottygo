@@ -19,7 +19,8 @@ import type {
 } from './components/bus-report-form';
 import { showToast } from './utils/toast';
 import type { IRouteBellElement } from './components/route-bell';
-import { LocationIndicator } from './components/location-indicator';
+import './components/map-key';
+import { createLocationIcon } from './utils/location-icon';
 import './components/location-search';
 import type { ILocationSearchElement } from './components/location-search';
 import './components/toggle-panel';
@@ -882,14 +883,6 @@ function requestUserLocation(): void {
               mapProvider.setZoom(15);
               addUserLocationMarker(lat, lng);
 
-              const locationIndicator =
-                document.querySelector<LocationIndicator>('location-indicator');
-              if (
-                locationIndicator &&
-                typeof locationIndicator.show === 'function'
-              ) {
-                locationIndicator.show(lat, lng);
-              }
               console.log('Centered map on user location');
 
               // TUC4 Step 2: Show nearby stops within 1km of user location
@@ -970,28 +963,22 @@ function centerOnCmuCampus(): void {
   directionsController.updatePlannedLocation(CMU_CAMPUS_DEFAULT);
 }
 
-// Add a blue dot marker on the map for user location
+// Keep one geographically anchored marker above transit overlays.
 function addUserLocationMarker(lat: number, lng: number): void {
-  // Remove previous user location marker if exists
   if (userLocationMarker) {
-    userLocationMarker.remove();
-    userLocationMarker = null;
+    userLocationMarker.setPosition({ lat, lng });
+    userLocationMarker.setVisible(true);
+    return;
   }
-
-  // Create a blue dot SVG icon for user location
-  const size = 18;
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-      <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 1}" fill="#4285F4" stroke="white" stroke-width="2"/>
-    </svg>
-  `;
-  const icon =
-    'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg.trim());
-
+  const icon = createLocationIcon('gps');
   userLocationMarker = mapProvider.addMarker({
     position: { lat, lng },
     title: 'Your Location',
-    icon: icon
+    icon: icon.url,
+    iconSize: icon.size,
+    iconAnchor: icon.anchor,
+    zIndex: 2000,
+    clickable: false
   });
   console.log('User location marker added to map');
 }
@@ -1004,24 +991,14 @@ function addPlannedLocationMarker(
 ): void {
   removePlannedLocationMarker();
 
-  // Red pin SVG — larger and more prominent than the GPS blue dot
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="36" height="48" viewBox="0 0 36 48">
-      <path d="M18 0C8.06 0 0 8.06 0 18c0 13.5 18 30 18 30s18-16.5 18-30C36 8.06 27.94 0 18 0z" fill="#C41230"/>
-      <circle cx="18" cy="18" r="8" fill="white"/>
-      <circle cx="18" cy="18" r="4" fill="#C41230"/>
-    </svg>
-  `;
-  const icon =
-    'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg.trim());
-
+  const icon = createLocationIcon('planned');
   plannedLocationMarker = mapProvider.addMarker({
     position: { lat, lng },
     title: label,
-    icon: icon,
-    iconSize: { width: 36, height: 48 },
-    iconAnchor: { x: 18, y: 48 },
-    zIndex: 999
+    icon: icon.url,
+    iconSize: icon.size,
+    iconAnchor: icon.anchor,
+    zIndex: 1900
   });
 
   // Click on planned marker → show remove popup

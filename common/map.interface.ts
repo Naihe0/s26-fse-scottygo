@@ -32,6 +32,7 @@ export interface IMapMarkerOptions {
   iconSize?: { width: number; height: number };
   zIndex?: number;
   draggable?: boolean;
+  clickable?: boolean;
 }
 
 export interface IMapPolylineOptions {
