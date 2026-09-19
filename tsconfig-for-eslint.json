@@ -6,6 +6,7 @@
     "./server/**/*.ts",
     "./tests/server.tests/**/*.ts",
     "./tests/client.tests/**/*.ts",
+    "./tests/setup-env.ts",
     "./tests/rest/**/*.ts",
     "./tools/**/*.ts",
     "./common/**/*.ts"

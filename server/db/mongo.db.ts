@@ -18,11 +18,13 @@ import {
   INotification
 } from '../../common/transit.interface';
 import bcrypt from 'bcrypt';
-import { v4 as uuidV4 } from 'uuid';
-import { INITIAL_ADMIN_PASSWORD } from '../env';
+import { randomUUID as uuidV4 } from 'node:crypto';
+import { INITIAL_ADMIN_PASSWORD, STAGE } from '../env';
+import type { IAppError } from '../../common/server.responses';
 
 // Extended schema for user accounts with status and privilege
 const UserSchema = new Schema<IUserAccount>({
+  tokenVersion: { type: Number, default: 0 },
   credentials: {
     username: { type: String, required: true, unique: true },
     password: { type: String, required: true }
@@ -99,6 +101,29 @@ SubscriptionSchema.index({ userId: 1, routeId: 1 }, { unique: true });
 
 const MSubscription = model<ISubscription>('Subscription', SubscriptionSchema);
 
+// Keep a user's bounded subscription list in one document so MongoDB can enforce
+// the route uniqueness and ten-route limit in the same atomic update.
+interface ISubscriptionSet {
+  _id: string;
+  subscriptions: ISubscription[];
+}
+const SubscriptionEntrySchema = new Schema<ISubscription>(
+  {
+    _id: { type: String, required: true },
+    userId: { type: String, required: true },
+    routeId: { type: String, required: true },
+    createdAt: { type: String, required: true }
+  },
+  { _id: false }
+);
+const MSubscriptionSet = model<ISubscriptionSet>(
+  'SubscriptionSet',
+  new Schema<ISubscriptionSet>({
+    _id: { type: String, required: true },
+    subscriptions: { type: [SubscriptionEntrySchema], default: [] }
+  })
+);
+
 // ── Bus Report Schema (TUC3) ──────────────────────────────────────────
 const BusReportSchema = new Schema<IBusReport>({
   _id: { type: String, required: true },
@@ -173,6 +198,11 @@ export class MongoDB implements IDatabase {
   }
 
   async init(): Promise<void> {
+    if (STAGE === 'PROD' || process.env.ALLOW_DB_RESET !== 'true') {
+      throw new Error(
+        'Database reset requires ALLOW_DB_RESET=true and is forbidden in production'
+      );
+    }
     // Check if MongoDB is actually connected before trying to drop collections
     // readyState: 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
     if (mongoose.connection.readyState !== 1) {
@@ -254,7 +284,10 @@ export class MongoDB implements IDatabase {
   ): Promise<IUserAccount | null> {
     const updatedUser: IUserAccount | null = await MUser.findOneAndUpdate(
       { 'credentials.username': username },
-      { status },
+      {
+        $set: { status },
+        ...(status === 'Inactive' ? { $inc: { tokenVersion: 1 } } : {})
+      },
       { new: true }
     ).lean();
     return updatedUser;
@@ -302,7 +335,10 @@ export class MongoDB implements IDatabase {
   ): Promise<IUserAccount | null> {
     const updatedUser: IUserAccount | null = await MUser.findOneAndUpdate(
       { 'credentials.username': username },
-      { 'credentials.password': hashedPassword },
+      {
+        $set: { 'credentials.password': hashedPassword },
+        $inc: { tokenVersion: 1 }
+      },
       { new: true }
     ).lean();
     return updatedUser;
@@ -327,7 +363,10 @@ export class MongoDB implements IDatabase {
   async seedDefaultAdmin(): Promise<void> {
     // Check if default admin already exists
     const existingAdmin = await MUser.findOne({
-      'credentials.username': 'admin'
+      $or: [
+        { 'credentials.username': 'admin' },
+        { privilegeLevel: 'Administrator' }
+      ]
     });
 
     if (existingAdmin) {
@@ -419,32 +458,85 @@ export class MongoDB implements IDatabase {
   // ── Notification (TUC3) Methods ──────────────────────────────────────
 
   async getSubscriptionsByUserId(userId: string): Promise<ISubscription[]> {
-    return (await MSubscription.find({ userId }).lean()) as ISubscription[];
+    await this.ensureSubscriptionSet(userId);
+    return (
+      (await MSubscriptionSet.findById(userId).lean())?.subscriptions ?? []
+    );
   }
 
   async findSubscription(
     userId: string,
     routeId: string
   ): Promise<ISubscription | null> {
-    return (await MSubscription.findOne({
-      userId,
-      routeId
-    }).lean()) as ISubscription | null;
+    return (
+      (await this.getSubscriptionsByUserId(userId)).find(
+        (sub) => sub.routeId === routeId
+      ) ?? null
+    );
   }
 
   async countSubscriptionsByUserId(userId: string): Promise<number> {
-    return await MSubscription.countDocuments({ userId });
+    return (await this.getSubscriptionsByUserId(userId)).length;
   }
 
   async saveSubscription(sub: ISubscription): Promise<ISubscription> {
-    const doc = new MSubscription(sub);
-    const saved = await doc.save();
-    return saved.toObject();
+    await this.ensureSubscriptionSet(sub.userId);
+    const updated = await MSubscriptionSet.updateOne(
+      {
+        _id: sub.userId,
+        'subscriptions.routeId': { $ne: sub.routeId },
+        $expr: { $lt: [{ $size: '$subscriptions' }, 10] }
+      },
+      { $push: { subscriptions: sub } }
+    );
+    if (updated.modifiedCount > 0) return sub;
+
+    // This read chooses a user-facing conflict reason; correctness is enforced
+    // by the atomic conditional update above, even across multiple app instances.
+    const duplicate = await this.findSubscription(sub.userId, sub.routeId);
+    throw {
+      type: 'ClientError',
+      name: duplicate ? 'DuplicateSubscription' : 'SubscriptionLimitReached',
+      message: duplicate
+        ? `You are already subscribed to Route ${sub.routeId}.`
+        : 'Subscription limit reached (10). Please remove a subscription first.'
+    } as IAppError;
   }
 
   async deleteSubscription(userId: string, routeId: string): Promise<boolean> {
-    const result = await MSubscription.deleteOne({ userId, routeId });
-    return result.deletedCount > 0;
+    await this.ensureSubscriptionSet(userId);
+    const result = await MSubscriptionSet.updateOne(
+      { _id: userId },
+      { $pull: { subscriptions: { routeId } } }
+    );
+    return result.modifiedCount > 0;
+  }
+
+  private async ensureSubscriptionSet(userId: string): Promise<void> {
+    if (await MSubscriptionSet.exists({ _id: userId })) return;
+    // Lazy, non-destructive migration: first writer wins initialization; later
+    // readers never re-import records removed from the new authoritative set.
+    const legacy = await MSubscription.find({ userId }).lean();
+    try {
+      await MSubscriptionSet.updateOne(
+        { _id: userId },
+        {
+          $setOnInsert: { subscriptions: legacy }
+        },
+        { upsert: true }
+      );
+    } catch (error) {
+      // Simultaneous first access may race on the _id unique index.
+      if (
+        !(
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          error.code === 11000
+        )
+      )
+        throw error;
+    }
   }
 
   async saveBusReport(report: IBusReport): Promise<IBusReport> {

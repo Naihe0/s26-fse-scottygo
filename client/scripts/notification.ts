@@ -3,6 +3,7 @@ export {};
 
 import './components/app-header';
 import './components/live-notifications';
+import { escapeHtml } from './utils/html';
 import { io } from 'socket.io-client';
 import type {
   INotification,
@@ -43,6 +44,7 @@ const clearBtn = document.getElementById('notif-search-clear')!;
 /** true while showing live notification search results (not alerts) */
 let showingNotifications = false;
 let routeDisplayById = new Map<string, IRouteDisplayMeta>();
+let requestVersion = 0;
 
 function resolveRouteDisplay(routeId: string): {
   title: string;
@@ -100,11 +102,11 @@ function createNotifCard(notif: INotification): HTMLLIElement {
     <div class="notif-card-header">
       <span class="notif-icon">${NOTIF_ICON}</span>
       <div class="notif-header-text">
-        <span class="notif-title">${display.title}</span>
-          <span class="notif-subtitle">${secondaryText}</span>
+        <span class="notif-title">${escapeHtml(display.title)}</span>
+          <span class="notif-subtitle">${escapeHtml(secondaryText)}</span>
       </div>
     </div>
-    <p class="notif-body">${formatMessage(notif.message)}</p>
+    <p class="notif-body">${escapeHtml(formatMessage(notif.message))}</p>
     <div class="notif-card-footer">
       <span class="notif-tag">Live Update</span>
       <span class="notif-time">${formatTime(notif.createdAt)}</span>
@@ -142,11 +144,11 @@ function createAlertCard(alert: IServiceAlert): HTMLLIElement {
   li.innerHTML = `
     <div class="notif-card-header">
       <span class="notif-icon">${ALERT_ICON}</span>
-      <span class="notif-title">${alert.headerText}</span>
+      <span class="notif-title">${escapeHtml(alert.headerText)}</span>
     </div>
-    <p class="notif-body">${alert.descriptionText}</p>
+    <p class="notif-body">${escapeHtml(alert.descriptionText)}</p>
     <div class="notif-card-footer">
-      <span class="notif-tag">Service Alert${routes ? ` · ${routes}` : ''}</span>
+      <span class="notif-tag">Service Alert${routes ? ` · ${escapeHtml(routes)}` : ''}</span>
     </div>
   `;
 
@@ -156,6 +158,7 @@ function createAlertCard(alert: IServiceAlert): HTMLLIElement {
 // ── Data fetching ──────────────────────────────────────────────────────────────
 
 async function loadAlerts(): Promise<void> {
+  const version = ++requestVersion;
   showingNotifications = false;
   list.innerHTML = '';
 
@@ -163,6 +166,7 @@ async function loadAlerts(): Promise<void> {
     const res = await fetch('/notifications/alerts', {
       headers: authHeaders()
     });
+    if (version !== requestVersion) return;
     if (res.status === 503) {
       emptyEl.textContent = 'Service alerts are temporarily unavailable.';
       emptyEl.classList.add('is-visible');
@@ -174,10 +178,12 @@ async function loadAlerts(): Promise<void> {
       return;
     }
     const data = await res.json();
+    if (version !== requestVersion) return;
     const alerts: IServiceAlert[] = data.payload ?? [];
     alerts.forEach((a) => list.appendChild(createAlertCard(a)));
     updateEmptyState();
   } catch {
+    if (version !== requestVersion) return;
     emptyEl.textContent = 'Service alerts are temporarily unavailable.';
     emptyEl.classList.add('is-visible');
   }
@@ -188,6 +194,7 @@ async function searchNotifications(params: {
   bus?: string;
   q?: string;
 }): Promise<void> {
+  const version = ++requestVersion;
   showingNotifications = true;
   list.innerHTML = '';
 
@@ -203,9 +210,11 @@ async function searchNotifications(params: {
       fetch(`/notifications/notifications?${qs}`, { headers: authHeaders() }),
       fetch('/notifications/alerts', { headers: authHeaders() })
     ]);
+    if (version !== requestVersion) return;
 
     if (notifRes.ok) {
       const notifData = await notifRes.json();
+      if (version !== requestVersion) return;
       let notifs: INotification[] = notifData.payload ?? [];
       if (params.q) {
         notifs = notifs.filter((n) =>
@@ -223,6 +232,7 @@ async function searchNotifications(params: {
     // Filter service alerts client-side by query text
     if (alertRes.ok) {
       const alertData = await alertRes.json();
+      if (version !== requestVersion) return;
       const alerts: IServiceAlert[] = alertData.payload ?? [];
       const matched = query
         ? alerts.filter((a) => matchesAlertQuery(a, query, resolveRouteDisplay))
@@ -232,6 +242,7 @@ async function searchNotifications(params: {
 
     updateEmptyState(query || undefined);
   } catch {
+    if (version !== requestVersion) return;
     emptyEl.textContent = 'Failed to load notifications.';
     emptyEl.classList.add('is-visible');
   }
@@ -266,6 +277,7 @@ function connectForAlerts(): void {
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 function handleSearchInput(): void {
+  requestVersion++;
   const query = searchInput.value.trim();
   clearBtn.classList.toggle('is-visible', query.length > 0);
 
@@ -319,6 +331,7 @@ async function init(): Promise<void> {
   searchInput.addEventListener('input', handleSearchInput);
 
   clearBtn.addEventListener('click', () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
     searchInput.value = '';
     clearBtn.classList.remove('is-visible');
     // Clear URL params without reload

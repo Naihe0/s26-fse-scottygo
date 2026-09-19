@@ -31,6 +31,7 @@ const POLL_INTERVAL_MS = 30_000; // 30 seconds
 
 /** AbortSignal timeout for each fetch. */
 const FETCH_TIMEOUT_MS = 10_000;
+const MAX_FEED_AGE_MS = 90_000;
 /** Ignore arrivals that are already stale beyond this grace period. */
 const STALE_PREDICTION_GRACE_MS = 60_000;
 
@@ -57,7 +58,7 @@ export interface TripShotRouteSchedule {
   operatingDays: number[];
 }
 
-class TripShotLiveStatusService {
+export class TripShotLiveStatusService {
   /**
    * In-memory store: TripShot routeId UUID → IVehicle[]
    * Only active rides with live GPS data are included.
@@ -91,6 +92,8 @@ class TripShotLiveStatusService {
 
   /** True while a feed fetch/decode cycle is in progress. */
   private fetchInProgress = false;
+  private stopped = true;
+  private activeRequest: AbortController | null = null;
 
   /** Timestamp of the last successful fetch. */
   private lastFetched: Date | null = null;
@@ -158,9 +161,13 @@ class TripShotLiveStatusService {
     return this.lastFetched;
   }
 
-  /** True when the last fetch succeeded (or we haven't fetched yet). */
+  /** A live feed is healthy only after a recent successful fetch. */
   isHealthy(): boolean {
-    return this.consecutiveFailures === 0;
+    return (
+      this.consecutiveFailures === 0 &&
+      this.lastFetched !== null &&
+      Date.now() - this.lastFetched.getTime() <= MAX_FEED_AGE_MS
+    );
   }
 
   /** Number of consecutive failed fetches. */
@@ -182,6 +189,7 @@ class TripShotLiveStatusService {
       console.warn(`${tag()} Polling already running`);
       return;
     }
+    this.stopped = false;
     console.log(
       `${tag()} Starting polling (every ${POLL_INTERVAL_MS / 1000}s)`
     );
@@ -192,6 +200,10 @@ class TripShotLiveStatusService {
 
   /** Stop the polling loop. */
   stop(): void {
+    this.stopped = true;
+    this.activeRequest?.abort();
+    this.activeRequest = null;
+    this.fetchInProgress = false;
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
@@ -202,6 +214,7 @@ class TripShotLiveStatusService {
   // ── Internal ─────────────────────────────────────────────────────────
 
   private pollTick(): void {
+    if (this.stopped) return;
     if (this.fetchInProgress) {
       console.warn(`${tag()} Skipping poll: previous fetch still in progress`);
       return;
@@ -210,10 +223,14 @@ class TripShotLiveStatusService {
   }
 
   private async fetchAndStore(): Promise<void> {
+    if (this.stopped) return;
+    const request = new AbortController();
+    this.activeRequest = request;
     this.fetchInProgress = true;
+    const timeout = setTimeout(() => request.abort(), FETCH_TIMEOUT_MS);
     try {
       const res = await fetch(TRIPSHOT_LIVE_STATUS_URL, {
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+        signal: request.signal
       });
 
       if (!res.ok) {
@@ -221,6 +238,7 @@ class TripShotLiveStatusService {
       }
 
       const data: TsLiveStatus = await res.json();
+      if (this.activeRequest !== request || this.stopped) return;
 
       const { newVehicles, newPredictions, newStops, newSchedules } =
         this.buildIndex(data);
@@ -255,6 +273,7 @@ class TripShotLiveStatusService {
           `${newPredictions.size} stops with predictions`
       );
     } catch (err) {
+      if (this.activeRequest !== request || this.stopped) return;
       this.consecutiveFailures++;
       this.lastError = err instanceof Error ? err.message : String(err);
       console.error(
@@ -262,7 +281,11 @@ class TripShotLiveStatusService {
         err
       );
     } finally {
-      this.fetchInProgress = false;
+      clearTimeout(timeout);
+      if (this.activeRequest === request) {
+        this.activeRequest = null;
+        this.fetchInProgress = false;
+      }
     }
   }
 

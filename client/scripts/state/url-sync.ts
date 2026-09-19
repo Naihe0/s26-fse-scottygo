@@ -40,7 +40,13 @@ export class URLSyncManager {
     const hash = window.location.hash;
     const params = new URLSearchParams(hash.split('?')[1] || '');
 
-    const state: Partial<IMapState> = {};
+    const state: Partial<IMapState> = {
+      selectedRouteId: null,
+      selectedDate: null,
+      selectedTime: null,
+      selectedSystems: { prt: true, cmu: false },
+      selectedDirections: { inbound: true, outbound: true }
+    };
 
     // Route filter
     const routeId = params.get('r');
@@ -50,7 +56,7 @@ export class URLSyncManager {
 
     // System filter
     const systems = params.get('s');
-    if (systems) {
+    if (systems !== null) {
       const systemArray = systems.split(',');
       state.selectedSystems = {
         prt: systemArray.includes('PRT'),
@@ -60,11 +66,35 @@ export class URLSyncManager {
 
     // Direction filter
     const directions = params.get('dir');
-    if (directions) {
+    if (directions !== null) {
       const dirArray = directions.split(',');
       state.selectedDirections = {
         inbound: dirArray.includes('IB'),
         outbound: dirArray.includes('OB')
+      };
+    }
+
+    const date = params.get('d');
+    if (date && /^\d{8}$/.test(date)) {
+      const year = Number(date.slice(0, 4));
+      const month = Number(date.slice(4, 6));
+      const day = Number(date.slice(6, 8));
+      const parsed = new Date(year, month - 1, day);
+      if (
+        parsed.getFullYear() === year &&
+        parsed.getMonth() === month - 1 &&
+        parsed.getDate() === day
+      ) {
+        state.selectedDate = parsed;
+      }
+    }
+    const time = params.get('t');
+    if (time && /^([01]\d|2[0-3])[0-5]\d$/.test(time)) {
+      const hour = Number(time.slice(0, 2));
+      state.selectedTime = {
+        hour: hour % 12 || 12,
+        minute: Number(time.slice(2)),
+        period: hour >= 12 ? 'PM' : 'AM'
       };
     }
 
@@ -81,15 +111,27 @@ export class URLSyncManager {
     if (state.selectedRouteId) {
       params.set('r', state.selectedRouteId);
     }
+    if (state.selectedDate && Number.isFinite(state.selectedDate.getTime())) {
+      const date = state.selectedDate;
+      params.set(
+        'd',
+        `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
+      );
+    }
+    if (state.selectedTime) {
+      const time = state.selectedTime;
+      const hour = (time.hour % 12) + (time.period === 'PM' ? 12 : 0);
+      params.set(
+        't',
+        `${String(hour).padStart(2, '0')}${String(time.minute).padStart(2, '0')}`
+      );
+    }
 
     // System filter (only if not default)
     const systems: string[] = [];
     if (state.selectedSystems.prt) systems.push('PRT');
     if (state.selectedSystems.cmu) systems.push('CMU');
-    if (
-      systems.length > 0 &&
-      !(state.selectedSystems.prt && !state.selectedSystems.cmu)
-    ) {
+    if (!(state.selectedSystems.prt && !state.selectedSystems.cmu)) {
       // Don't add if it's the default (PRT only)
       params.set('s', systems.join(','));
     }
@@ -98,7 +140,7 @@ export class URLSyncManager {
     const directions: string[] = [];
     if (state.selectedDirections.inbound) directions.push('IB');
     if (state.selectedDirections.outbound) directions.push('OB');
-    if (directions.length > 0 && directions.length < 2) {
+    if (directions.length < 2) {
       // Only add if not showing both (default)
       params.set('dir', directions.join(','));
     }

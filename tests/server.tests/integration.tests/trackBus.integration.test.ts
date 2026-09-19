@@ -221,6 +221,19 @@ jest.mock('../../../server/services/trip-updates.service', () => ({
   }
 }));
 
+// Health includes the independently polled CMU feed; keep it deterministic too.
+jest.mock('../../../server/services/tripshot-livestatus.service', () => ({
+  __esModule: true,
+  default: {
+    start: jest.fn(),
+    stop: jest.fn(),
+    isHealthy: jest.fn().mockReturnValue(true),
+    getLastFetched: jest.fn().mockReturnValue(new Date()),
+    getConsecutiveFailures: jest.fn().mockReturnValue(0),
+    getLastError: jest.fn().mockReturnValue(null)
+  }
+}));
+
 // TripShot: CMU Shuttle external API
 jest.mock('../../../server/services/tripshot.service', () => ({
   __esModule: true,
@@ -267,6 +280,7 @@ jest.mock('../../../server/services/memory-monitor.service', () => ({
 import gtfsService from '../../../server/services/gtfs.service';
 import vehiclePositionsService from '../../../server/services/vehicle-positions.service';
 import tripUpdatesService from '../../../server/services/trip-updates.service';
+import tripshotLiveStatusService from '../../../server/services/tripshot-livestatus.service';
 import trueTimeService from '../../../server/services/truetime.service';
 
 const mockGtfs = gtfsService as jest.Mocked<typeof gtfsService>;
@@ -485,6 +499,8 @@ describe('TUC 2: Track Bus in Real-Time — Integration Tests', () => {
   // 5. POSITIVE: GET /transit/health — all services healthy
   // --------------------------------------------------------------------------
   test('(+) GET /transit/health — healthy status when all upstream feeds are operational', async () => {
+    mockGtfs.isLoaded.mockReturnValue(true);
+    jest.mocked(tripshotLiveStatusService.isHealthy).mockReturnValue(true);
     mockVehicles.isHealthy.mockReturnValue(true);
     mockVehicles.getConsecutiveFailures.mockReturnValue(0);
     mockVehicles.getLastError.mockReturnValue(null);
@@ -497,6 +513,7 @@ describe('TUC 2: Track Bus in Real-Time — Integration Tests', () => {
     expect(res.status).toBe(200);
     const status = res.data as unknown as Record<string, unknown>;
     expect(status.overall).toBe(true);
+    expect(status.gtfs).toEqual({ ready: true });
 
     // Verify vehicle positions health subsection
     const vpHealth = status.vehiclePositions as Record<string, unknown>;
@@ -509,6 +526,44 @@ describe('TUC 2: Track Bus in Real-Time — Integration Tests', () => {
     expect(tuHealth.healthy).toBe(true);
     expect(tuHealth.consecutiveFailures).toBe(0);
     expect(tuHealth.error).toBeNull();
+  });
+
+  test('(-) GET /transit/health — not ready while static schedules are still loading', async () => {
+    mockGtfs.isLoaded.mockReturnValue(false);
+    mockVehicles.isHealthy.mockReturnValue(true);
+    mockTrips.isHealthy.mockReturnValue(true);
+    jest.mocked(tripshotLiveStatusService.isHealthy).mockReturnValue(true);
+    try {
+      const res = await request('GET', '/transit/health');
+      expect(res.status).toBe(200);
+      expect(res.data).toMatchObject({
+        gtfs: { ready: false },
+        overall: false
+      });
+    } finally {
+      mockGtfs.isLoaded.mockReturnValue(true);
+    }
+  });
+
+  test('(-) GET /transit/health — not ready before the first CMU live sample', async () => {
+    mockGtfs.isLoaded.mockReturnValue(true);
+    mockVehicles.isHealthy.mockReturnValue(true);
+    mockTrips.isHealthy.mockReturnValue(true);
+    jest.mocked(tripshotLiveStatusService.isHealthy).mockReturnValue(false);
+    jest.mocked(tripshotLiveStatusService.getLastFetched).mockReturnValue(null);
+    try {
+      const res = await request('GET', '/transit/health');
+      expect(res.status).toBe(200);
+      expect(res.data).toMatchObject({
+        tripshotLiveStatus: { healthy: false, lastFetched: null },
+        overall: false
+      });
+    } finally {
+      jest.mocked(tripshotLiveStatusService.isHealthy).mockReturnValue(true);
+      jest
+        .mocked(tripshotLiveStatusService.getLastFetched)
+        .mockReturnValue(new Date());
+    }
   });
 
   // --------------------------------------------------------------------------

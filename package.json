@@ -15,8 +15,8 @@
     "url": "git+https://github.com/cmu-fse/s26-fse-scottygo.git"
   },
   "scripts": {
-    "clean:dist": "rm -rf ./.dist",
-    "clean:all": "rm -rf ./.parcel-cache ./.dist",
+    "clean:dist": "node tools/clean.mjs",
+    "clean:all": "node tools/clean.mjs --all",
     "build": "parcel build",
     "clean:build": "npm-run-all clean:all build",
     "start": "node --max-old-space-size=320 --expose-gc ./.dist/server/serve",
@@ -28,13 +28,13 @@
     "export:cmu-static": "ts-node ./tools/export-cmu-static-from-tripshot",
     "serve": "ts-node server/serve",
     "test": "jest",
-    "test:rest": "npm-run-all --continue-on-error test:rest:manageacct test:rest:memory-monitoring test:rest:transit test:rest:loginlogout",
+    "test:rest": "jest tests/server.tests/rest.tests --runInBand --detectOpenHandles --coverageDirectory=.coverage/rest",
     "test:rest:e2e": "npm-run-all --continue-on-error test:rest:e2e:transitAPI",
     "test:rest:manageacct": "jest ./tests/server.tests/rest.tests/manageacct.rest.test.ts --runInBand --detectOpenHandles --coverageDirectory=.coverage/rest-manageacct",
     "test:rest:memory-monitoring": "jest ./tests/server.tests/rest.tests/memory-monitoring.rest.test.ts --runInBand --detectOpenHandles --coverageDirectory=.coverage/rest-memory-monitoring",
     "test:rest:transit": "jest ./tests/server.tests/rest.tests/transit.rest.test.ts --runInBand --detectOpenHandles --coverageDirectory=.coverage/rest-transit",
     "test:rest:transitAPI": "jest ./tests/server.tests/rest.tests/transitAPI.rest.test.ts --runInBand --detectOpenHandles --coverageDirectory=.coverage/rest-transitAPI",
-    "test:rest:e2e:transitAPI": "RUN_TRANSIT_E2E=true jest ./tests/server.tests/rest.tests/transitAPI.rest.test.ts --runInBand --detectOpenHandles --coverageDirectory=.coverage/rest-transitAPI",
+    "test:rest:e2e:transitAPI": "node tools/transit-e2e.mjs",
     "test:rest:loginlogout": "jest ./tests/server.tests/rest.tests/loginlogout.rest.test.ts --runInBand --detectOpenHandles --coverageDirectory=.coverage/rest-loginlogout",
     "test:unit:loginlogout": "jest ./tests/server.tests/unit.tests/loginlogout.unit.test.ts --runInBand --detectOpenHandles --coverageDirectory=.coverage/unit-loginlogout",
     "test:unit:manageacct": "jest ./tests/server.tests/unit.tests/manageacct.unit.test.ts --runInBand --detectOpenHandles --coverageDirectory=.coverage/unit-manageacct",
@@ -45,10 +45,10 @@
     "test:unit:discoverstops": "jest ./tests/server.tests/unit.tests/discoverstops.unit.test.ts --runInBand --detectOpenHandles --coverageDirectory=.coverage/unit-discoverstops",
     "test:unit:bootstrap": "jest ./tests/server.tests/unit.tests/admin-bootstrap.unit.test.ts --runInBand --detectOpenHandles --coverageDirectory=.coverage/unit-bootstrap",
     "test:unit:directions": "jest ./tests/client.tests --runInBand --detectOpenHandles --coverageDirectory=.coverage/unit-directions",
-    "test:unit": "npm-run-all test:unit:loginlogout test:unit:manageacct test:unit:register test:unit:searchinfo test:unit:track-bus test:unit:visualize-routes test:unit:discoverstops test:unit:bootstrap test:unit:directions",
+    "test:unit": "jest tests/server.tests/unit.tests tests/client.tests --runInBand --detectOpenHandles --coverageDirectory=.coverage/unit",
     "test:integration:manageacct": "jest ./tests/server.tests/integration.tests/manageacct.integration.test.ts --runInBand --detectOpenHandles --coverageDirectory=.coverage/integration-manageacct",
     "test:integration:loginlogout": "jest ./tests/server.tests/integration.tests/loginlogout.integration.test.ts --runInBand --detectOpenHandles --coverageDirectory=.coverage/integration-loginlogout",
-    "test:integration": "npm-run-all test:integration:manageacct test:integration:loginlogout test:integration:register test:integration:searchinfo test:integration:visualize-routes test:integration:trackBus test:integration:livenotification test:integration:discover-stops",
+    "test:integration": "jest tests/server.tests/integration.tests --runInBand --detectOpenHandles --coverageDirectory=.coverage/integration",
     "test:integration:register": "jest ./tests/server.tests/integration.tests/register.integration.test.ts --runInBand --detectOpenHandles --coverageDirectory=.coverage/integration-register",
     "test:integration:searchinfo": "jest ./tests/server.tests/integration.tests/searchinfo.integration.test.ts --runInBand --detectOpenHandles --coverageDirectory=.coverage/integration-searchinfo",
     "test:integration:visualize-routes": "jest ./tests/server.tests/integration.tests/visualize-routes.integration.test.ts --runInBand --detectOpenHandles --forceExit --coverageDirectory=.coverage/integration-visualize-routes",
@@ -57,23 +57,22 @@
     "test:integration:discover-stops": "jest ./tests/server.tests/integration.tests/discover-stops.integration.test.ts --runInBand --detectOpenHandles --forceExit --coverageDirectory=.coverage/integration-discover-stops",
     "test:server": "npm-run-all --continue-on-error test:unit test:integration test:rest",
     "prepush:check": "node ./tools/prepush-safety-check.mjs",
-    "later": "echo \"Some future command...\" && exit 1"
+    "check:paths": "node tools/check-paths.mjs",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.client.json",
+    "test:ci": "jest --runInBand --detectOpenHandles"
   },
   "dependencies": {
-    "adm-zip": "^0.5.16",
-    "axios": "^1.15.0",
-    "bcrypt": "^5.1.1",
-    "csv-parse": "^6.1.0",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
+    "axios": "^1.20.0",
+    "bcrypt": "^6.0.0",
+    "csv-parse": "^7.0.2",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.3",
     "gtfs-realtime-bindings": "^1.1.1",
     "jquery": "^3.7.1",
-    "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.5.2",
-    "resend": "^6.9.2",
-    "socket.io": "^4.7.5",
-    "socket.io-client": "^4.7.5",
-    "uuid": "^10.0.0"
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.24.4",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
   },
   "type": "commonjs",
   "devDependencies": {
@@ -89,7 +88,7 @@
     "@types/jquery": "^3.5.30",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^20.14.12",
-    "@types/uuid": "^10.0.0",
+    "adm-zip": "^0.6.1",
     "assert": "^2.1.0",
     "buffer": "^6.0.3",
     "eslint": "^9.8.0",
@@ -99,7 +98,6 @@
     "jest-environment-jsdom": "^29.7.0",
     "jest-expect-message": "^1.1.3",
     "nodemon": "^3.1.4",
-    "npm": "^10.8.0",
     "npm-run-all": "^4.1.5",
     "parcel": "^2.12.0",
     "prettier": "^3.3.3",
@@ -131,7 +129,7 @@
     }
   },
   "engines": {
-    "node": "^20.16.0",
+    "node": "^24.19.0",
     "npm": ">=10.8.0"
   }
 }

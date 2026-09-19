@@ -320,13 +320,22 @@ const RESERVED_USERNAMES: string[] = [
  */
 export function validateUsernameFormat(username: string): void {
   // Check minimum length
-  if (username.length < 4) {
+  if (typeof username !== 'string' || username.length < 4) {
     const error: IAppError = {
       type: 'ClientError',
       name: 'InvalidUsername',
       message: 'Username must be at least 4 characters long'
     };
     throw error;
+  }
+
+  if (username.length > 64 || !/^[a-zA-Z0-9_.-]+$/.test(username)) {
+    throw {
+      type: 'ClientError',
+      name: 'InvalidUsername',
+      message:
+        'Username must be 4–64 letters, numbers, periods, underscores, or hyphens'
+    } as IAppError;
   }
 
   // Check reserved username list
@@ -347,7 +356,12 @@ export function validateUsernameFormat(username: string): void {
 export function validateEmailFormat(email: string): void {
   // CMU email regex: allows @cmu.edu and @subdomain.cmu.edu (e.g., @andrew.cmu.edu)
   const emailRegex = /^[^\s@]+@([^\s@]+\.)?cmu\.edu$/;
-  if (!emailRegex.test(email)) {
+  if (
+    typeof email !== 'string' ||
+    email.length > 254 ||
+    /[<>"'\\]/.test(email) ||
+    !emailRegex.test(email)
+  ) {
     const error: IAppError = {
       type: 'ClientError',
       name: 'InvalidEmail',
@@ -362,6 +376,16 @@ export function validateEmailFormat(email: string): void {
  * Throws IAppError if password doesn't meet requirements.
  */
 export function validatePasswordStrength(password: string): void {
+  if (
+    typeof password !== 'string' ||
+    Buffer.byteLength(password, 'utf8') > 72
+  ) {
+    throw {
+      type: 'ClientError',
+      name: 'InvalidPassword',
+      message: 'Password must be a string of at most 72 bytes'
+    } as IAppError;
+  }
   // Rule 1: At least 4 characters long
   if (password.length < 4) {
     const error: IAppError = {

@@ -4,6 +4,8 @@
  * Used for Direction Filter (Inbound/Outbound) and System Filter (PRT/CMU Shuttle)
  */
 
+import { escapeHtml } from '../utils/html';
+
 export interface IToggleOption {
   id: string;
   label: string;
@@ -67,6 +69,7 @@ export class TogglePanel extends HTMLElement implements ITogglePanelElement {
             <input 
               type="checkbox" 
               id="${option.id}" 
+              aria-label="${escapeHtml(option.label)}"
               ${option.defaultChecked ? 'checked' : ''} 
             />
             <span class="slider"></span>

@@ -7,6 +7,8 @@
  * the current one rather than dismissing it.
  */
 
+import { escapeHtml } from './html';
+
 export type PopupType = 'route' | 'stop' | 'bus';
 
 /** The single id used for every map overlay popup. */
@@ -38,13 +40,13 @@ let activeParams: Omit<SlotState, 'html' | 'scrollTop'> | null = null;
  *
  * @param iconModifier  BEM modifier for the icon span, e.g. 'stop' or 'bus'
  * @param iconName      Material icon name, e.g. 'place' or 'directions_bus'
- * @param titleHtml     Inner HTML for the bold title element
+ * @param titleText     Text for the bold title element
  * @param minimizeTitle Optional title attribute on the minimize button
  */
 export function createMapPopup(
   iconModifier: string,
   iconName: string,
-  titleHtml: string,
+  titleText: string,
   minimizeTitle?: string
 ): { popup: HTMLDivElement; subheader: HTMLDivElement } {
   const popup = document.createElement('div');
@@ -56,7 +58,7 @@ export function createMapPopup(
   const titleAttr = minimizeTitle ? ` title="${minimizeTitle}"` : '';
   header.innerHTML = `
     <span class="material-icons-outlined map-popup__icon map-popup__icon--${iconModifier}">${iconName}</span>
-    <strong class="map-popup__title">${titleHtml}</strong>
+    <strong class="map-popup__title">${escapeHtml(titleText)}</strong>
     <button class="map-popup__minimize" aria-label="Minimize"${titleAttr}>&ndash;</button>
     <button class="map-popup__close" aria-label="Close">&times;</button>
   `;
@@ -198,14 +200,25 @@ function _createTab(
   const tab = document.createElement('div');
   tab.className = 'map-popup-tab';
   tab.dataset.type = type;
+  tab.setAttribute('role', 'button');
+  tab.tabIndex = 0;
+  tab.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      tab.click();
+    }
+  });
 
   let inner =
     '<span class="material-icons-outlined map-popup-tab__arrow">expand_less</span>';
   if (badgeText) {
-    const style = badgeColor ? ` style="background:${badgeColor}"` : '';
-    inner += `<span class="map-popup-tab__badge"${style}>${badgeText}</span>`;
+    const style =
+      badgeColor && /^#[\da-f]{6}$/i.test(badgeColor)
+        ? ` style="background:${badgeColor}"`
+        : '';
+    inner += `<span class="map-popup-tab__badge"${style}>${escapeHtml(badgeText)}</span>`;
   }
-  inner += `<span class="map-popup-tab__label">${label}</span>`;
+  inner += `<span class="map-popup-tab__label">${escapeHtml(label)}</span>`;
   tab.innerHTML = inner;
 
   tab.addEventListener('click', () => {

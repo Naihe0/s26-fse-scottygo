@@ -161,6 +161,8 @@ let pendingRegisterPayload: IUser | null = null;
 let pendingAgreementUsername: string | null = null;
 let pendingAgreementPassword: string | null = null;
 let pendingRedirectToHome = false;
+let agreementSubmitting = false;
+let registrationSubmitting = false;
 
 // Track which fields have been touched for validation
 const touched: Record<string, boolean> = {
@@ -246,6 +248,8 @@ const switchToRegister = (): void => {
   });
   Object.keys(fieldValid).forEach((k) => {
     fieldValid[k] = false;
+    validationVersions[k] = (validationVersions[k] ?? 0) + 1;
+    clearTimeout(validateTimers[k]);
   });
   clearHint(usernameHint);
   clearHint(emailHint);
@@ -266,6 +270,7 @@ showLoginBtn?.addEventListener('click', switchToLogin);
 // ── Backend Validation ──────────────────────────────────────────────
 
 const validateTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+const validationVersions: Record<string, number> = {};
 
 const validateFieldDebounced = (
   field: 'username' | 'email' | 'password',
@@ -274,6 +279,11 @@ const validateFieldDebounced = (
   successMsg: string
 ): void => {
   if (validateTimers[field]) clearTimeout(validateTimers[field]);
+  const version = (validationVersions[field] ?? 0) + 1;
+  validationVersions[field] = version;
+  fieldValid[field] = false;
+  clearHint(hintEl);
+  updateRegisterButton();
 
   if (!value) {
     fieldValid[field] = false;
@@ -289,6 +299,7 @@ const validateFieldDebounced = (
         { field, value },
         { validateStatus: () => true }
       );
+      if (validationVersions[field] !== version) return;
       if (res.status === 200) {
         fieldValid[field] = true;
         setHint(hintEl, true, `✓ ${successMsg}`);
@@ -298,6 +309,7 @@ const validateFieldDebounced = (
         setHint(hintEl, false, `✗ ${msg}`);
       }
     } catch {
+      if (validationVersions[field] !== version) return;
       fieldValid[field] = false;
       setHint(hintEl, false, '✗ Could not validate');
     }
@@ -330,7 +342,8 @@ const updateRegisterButton = (): void => {
     fieldValid.password &&
     fieldValid.confirm &&
     !!tosInput?.checked;
-  registerBtn.disabled = !allValid;
+  registerBtn.disabled =
+    !allValid || registrationSubmitting || agreementSubmitting;
 };
 
 // Wire up validation listeners
@@ -480,9 +493,19 @@ const agreeAndRefreshSession = async (
     };
   }
   const loginResult = await loginUser(username, password);
-  if (hasSuccessStatus(loginResult.status)) {
-    storeAuthFromResponse(loginResult.data);
+  if (
+    !hasSuccessStatus(loginResult.status) ||
+    !getAuthenticatedPayload(loginResult.data)?.token
+  ) {
+    return {
+      ok: false,
+      message: getResponseMessage(
+        loginResult.data,
+        'Agreement saved, but login failed. Please try again.'
+      )
+    };
   }
+  storeAuthFromResponse(loginResult.data);
   return { ok: true };
 };
 
@@ -548,7 +571,7 @@ loginForm?.addEventListener('submit', async (event: SubmitEvent) => {
         return;
       }
 
-      if (errorName === 'UnauthorizedRequest') {
+      if (status === 401 && errorName === 'UnauthorizedRequest') {
         openTermsModal(username, password, true);
         return;
       }
@@ -583,6 +606,8 @@ loginForm?.addEventListener('submit', async (event: SubmitEvent) => {
 
 registerForm?.addEventListener('submit', async (event: SubmitEvent) => {
   event.preventDefault();
+  updateRegisterButton();
+  if (registerBtn?.disabled) return;
   setStatus('');
 
   const credentials: ILogin = {
@@ -603,12 +628,14 @@ registerForm?.addEventListener('submit', async (event: SubmitEvent) => {
 // ── Confirm Registration Modal ──────────────────────────────────────
 
 confirmYes?.addEventListener('click', async () => {
+  if (registrationSubmitting) return;
   if (!pendingRegisterPayload) {
     closeModal(confirmModal);
     return;
   }
 
   closeModal(confirmModal);
+  registrationSubmitting = true;
   setSubmitting(registerBtn, true, 'Register');
 
   const shouldAgree = pendingRegisterPayload.agreed;
@@ -664,6 +691,7 @@ confirmYes?.addEventListener('click', async () => {
     setStatus(message, true);
   } finally {
     pendingRegisterPayload = null;
+    registrationSubmitting = false;
     setSubmitting(registerBtn, false, 'Register');
     updateRegisterButton();
   }
@@ -677,6 +705,7 @@ confirmNo?.addEventListener('click', () => {
 // ── Terms Modal ─────────────────────────────────────────────────────
 
 const handleAgreementAccept = async (): Promise<void> => {
+  if (agreementSubmitting) return;
   if (!pendingAgreementUsername || !pendingAgreementPassword) {
     if (tosInput) tosInput.checked = true;
     closeModal(termsModal);
@@ -684,7 +713,9 @@ const handleAgreementAccept = async (): Promise<void> => {
     return;
   }
 
-  setSubmitting(registerBtn, true, 'Register');
+  agreementSubmitting = true;
+  setSubmitting(termsAccept, true, 'Accept');
+  updateRegisterButton();
   try {
     const agreementOutcome = await agreeAndRefreshSession(
       pendingAgreementUsername,
@@ -703,6 +734,9 @@ const handleAgreementAccept = async (): Promise<void> => {
     if (pendingRedirectToHome) {
       redirectToDirectory('Agreement accepted. Redirecting...');
     }
+    pendingAgreementUsername = null;
+    pendingAgreementPassword = null;
+    pendingRedirectToHome = false;
   } catch (error) {
     const message =
       error instanceof Error
@@ -710,10 +744,9 @@ const handleAgreementAccept = async (): Promise<void> => {
         : 'Network error. Please try again.';
     setStatus(message, true);
   } finally {
-    pendingAgreementUsername = null;
-    pendingAgreementPassword = null;
-    pendingRedirectToHome = false;
-    setSubmitting(registerBtn, false, 'Register');
+    agreementSubmitting = false;
+    setSubmitting(termsAccept, false, 'Accept');
+    updateRegisterButton();
     setSubmitting(loginBtn, false, 'Login');
   }
 };

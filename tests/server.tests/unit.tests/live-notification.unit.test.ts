@@ -134,15 +134,11 @@ describe('Subscription rules', () => {
   test('(negative) duplicate subscription is rejected', async () => {
     jest.spyOn(TransitModel, 'getRoutes').mockResolvedValue([sampleRoute]);
 
-    const existingSub: ISubscription = {
-      _id: 'sub-1',
-      userId: 'user-1',
-      routeId: '61C',
-      createdAt: new Date().toISOString()
-    };
-
     DAC.db = createMockDb({
-      findSubscription: jest.fn().mockResolvedValue(existingSub)
+      saveSubscription: jest.fn().mockRejectedValue({
+        type: 'ClientError',
+        name: 'DuplicateSubscription'
+      })
     });
 
     await expect(
@@ -157,8 +153,11 @@ describe('Subscription rules', () => {
     jest.spyOn(TransitModel, 'getRoutes').mockResolvedValue([sampleRoute]);
 
     DAC.db = createMockDb({
-      findSubscription: jest.fn().mockResolvedValue(null),
-      countSubscriptionsByUserId: jest.fn().mockResolvedValue(10)
+      saveSubscription: jest.fn().mockRejectedValue({
+        type: 'ClientError',
+        name: 'SubscriptionLimitReached',
+        message: 'Subscription limit reached (10).'
+      })
     });
 
     await expect(

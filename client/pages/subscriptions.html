@@ -20,9 +20,23 @@
     </main>
 
     <div class="sheet-overlay" id="sheet-overlay"></div>
-    <div class="bottom-sheet" id="bottom-sheet">
+    <div
+      class="bottom-sheet"
+      id="bottom-sheet"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sheet-title"
+      inert
+    >
       <div class="sheet-handle"></div>
-      <h2 class="sheet-title">Add a route</h2>
+      <button
+        type="button"
+        id="sheet-close"
+        class="sheet-close"
+        aria-label="Close add route dialog"
+        >Close</button
+      >
+      <h2 class="sheet-title" id="sheet-title">Add a route</h2>
       <div class="sheet-search">
         <svg
           width="18"
@@ -41,6 +55,7 @@
           type="text"
           id="route-search-input"
           placeholder="Search routes..."
+          aria-label="Search routes to subscribe"
           autocomplete="off"
         />
       </div>

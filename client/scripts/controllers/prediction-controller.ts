@@ -74,6 +74,7 @@ export class PredictionController {
 
   /** Interval handle for 1-second countdown ticker. */
   private predictionTickerInterval: number | null = null;
+  private requestVersion = 0;
 
   private constructor() {
     this.stateManager = MapStateManager.getInstance();
@@ -110,12 +111,15 @@ export class PredictionController {
    */
   async handleStopClick(stop: IStop): Promise<void> {
     if (this.directionsController.isActive) return;
+    const version = ++this.requestVersion;
     if (this.restoreMinimisedPopup(stop)) return;
 
     try {
       const routeFilter =
         this.stateManager.getState().selectedRouteId ?? undefined;
       const predictions = await this.fetchPredictions(stop.stopId, routeFilter);
+      if (version !== this.requestVersion || this.directionsController.isActive)
+        return;
       this.showStopPopup(stop, predictions);
     } catch (error) {
       console.error('[PredictionController] Error handling stop click:', error);
@@ -138,6 +142,7 @@ export class PredictionController {
 
   /** Stop prediction polling and the countdown ticker. */
   stopPolling(): void {
+    this.requestVersion++;
     if (this.predictionPollInterval !== null) {
       clearInterval(this.predictionPollInterval);
       this.predictionPollInterval = null;
@@ -282,6 +287,19 @@ export class PredictionController {
     li.className = 'map-popup__arrival map-popup__arrival--selectable';
     li.dataset.predIndex = String(index);
     li.dataset.arrival = String(p.predictedArrivalTime);
+    li.setAttribute('role', 'button');
+    li.tabIndex = 0;
+    li.classList.toggle(
+      'map-popup__arrival--selected',
+      selectedIndices.has(index)
+    );
+    li.setAttribute('aria-pressed', String(selectedIndices.has(index)));
+    li.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        li.click();
+      }
+    });
 
     const routeBadge = document.createElement('span');
     routeBadge.className = 'map-popup__route-badge';
@@ -311,6 +329,7 @@ export class PredictionController {
         selectedIndices.add(index);
         li.classList.add('map-popup__arrival--selected');
       }
+      li.setAttribute('aria-pressed', String(selectedIndices.has(index)));
       this.updateDirectionsBtnLabel(directionsBtn, selectedIndices.size);
     });
 
@@ -349,6 +368,7 @@ export class PredictionController {
     this.stopPolling();
     this.openPopupStopId = ctx.stop.stopId;
     this.openPopupRouteId = this.stateManager.getState().selectedRouteId;
+    const version = this.requestVersion;
 
     // 1-second countdown ticker
     this.predictionTickerInterval = window.setInterval(() => {
@@ -365,11 +385,17 @@ export class PredictionController {
         this.stopPolling();
         return;
       }
-      const fresh = await this.fetchPredictions(
-        ctx.stop.stopId,
-        this.openPopupRouteId ?? undefined
-      );
-      this.refreshPredictionList(fresh.slice(0, 8), ctx);
+      try {
+        const fresh = await this.fetchPredictions(
+          ctx.stop.stopId,
+          this.openPopupRouteId ?? undefined
+        );
+        if (version !== this.requestVersion) return;
+        this.refreshPredictionList(fresh.slice(0, 8), ctx);
+      } catch (error) {
+        if (version === this.requestVersion)
+          console.warn('Could not refresh stop predictions:', error);
+      }
     }, 30_000);
   }
 
@@ -400,53 +426,40 @@ export class PredictionController {
     const popup = document.getElementById(MAP_POPUP_ID);
     if (!popup) return;
 
-    const items = popup.querySelectorAll<HTMLElement>('.map-popup__arrival');
-
-    items.forEach((li) => {
-      const idx = Number(li.dataset.predIndex);
-      if (idx >= freshPreds.length) {
-        li.remove();
-        selectedIndices.delete(idx);
-        return;
-      }
-      const p = freshPreds[idx];
-      displayPredictions[idx] = p;
-      li.dataset.arrival = String(p.predictedArrivalTime);
-
-      const minsEl = li.querySelector('.map-popup__minutes');
-      if (minsEl)
-        minsEl.textContent = this.formatCountdown(p.predictedArrivalTime);
-
-      const metaEl = li.querySelector('.map-popup__meta');
-      if (metaEl) {
-        const parts: string[] = [];
-        if (p.vid)
-          parts.push(p.vid === 'Scheduled' ? 'Scheduled' : `Bus ${p.vid}`);
-        if (p.isDelayed) parts.push('Delayed');
-        metaEl.textContent = parts.join(' · ');
-      }
-
-      const badge = li.querySelector('.map-popup__route-badge') as HTMLElement;
-      if (badge) {
-        badge.textContent = p.routeId;
-        badge.style.backgroundColor = this.getRouteColor(p.routeId);
-      }
+    const directionsBtn = popup.querySelector<HTMLButtonElement>(
+      '.map-popup__directions-btn'
+    );
+    if (!directionsBtn) return;
+    // Preserve selection by vehicle identity, not by the previous row index.
+    // Scheduled rows have no vehicle identity, so use their scheduled arrival.
+    const key = (prediction: IPrediction): string =>
+      JSON.stringify([
+        prediction.stopId,
+        prediction.routeId,
+        prediction.vid && prediction.vid !== 'Scheduled'
+          ? prediction.vid
+          : prediction.predictedArrivalTime
+      ]);
+    const selected = new Set(
+      displayPredictions
+        .filter((_, index) => selectedIndices.has(index))
+        .map(key)
+    );
+    selectedIndices.clear();
+    freshPreds.forEach((prediction, index) => {
+      if (selected.has(key(prediction))) selectedIndices.add(index);
     });
-
-    const emptyEl = popup.querySelector('.map-popup__empty');
-    if (freshPreds.length === 0 && !emptyEl) {
-      const list = popup.querySelector('.map-popup__list');
-      if (list) list.remove();
-      const hint = popup.querySelector('.map-popup__select-hint');
-      if (hint) hint.remove();
-      const empty = document.createElement('p');
-      empty.className = 'map-popup__empty';
-      empty.textContent = 'No upcoming arrivals';
-      const dirBtn = popup.querySelector('.map-popup__directions-btn');
-      if (dirBtn) popup.insertBefore(empty, dirBtn);
-    } else if (freshPreds.length > 0 && emptyEl) {
-      emptyEl.remove();
-    }
+    displayPredictions.splice(0, displayPredictions.length, ...freshPreds);
+    ctx.predictions = freshPreds;
+    popup
+      .querySelectorAll(
+        '.map-popup__list, .map-popup__select-hint, .map-popup__empty'
+      )
+      .forEach((element) => element.remove());
+    this.buildPredictionListSection(ctx, directionsBtn).forEach((element) =>
+      popup.insertBefore(element, directionsBtn)
+    );
+    this.updateDirectionsBtnLabel(directionsBtn, selectedIndices.size);
   }
 
   private bindMinimizeButton(popup: Element, ctx: StopPopupContext): void {
@@ -507,8 +520,16 @@ export class PredictionController {
           selectedIndices.add(idx);
           li.classList.add('map-popup__arrival--selected');
         }
+        li.setAttribute('aria-pressed', String(selectedIndices.has(idx)));
         if (directionsBtn) {
           this.updateDirectionsBtnLabel(directionsBtn, selectedIndices.size);
+        }
+      });
+      li.addEventListener('keydown', (event) => {
+        const keyboardEvent = event as KeyboardEvent;
+        if (keyboardEvent.key === 'Enter' || keyboardEvent.key === ' ') {
+          keyboardEvent.preventDefault();
+          (li as HTMLElement).click();
         }
       });
     });

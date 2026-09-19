@@ -2,6 +2,7 @@ export {};
 
 import './components/app-header';
 import './components/live-notifications';
+import { escapeHtml } from './utils/html';
 import {
   buildRouteDisplayMap,
   getRouteDisplay,
@@ -68,6 +69,7 @@ function showToast(message: string): void {
 let subscriptions: Subscription[] = [];
 let allRoutes: IRouteDisplayMeta[] = [];
 let routeDisplayById = new Map<string, IRouteDisplayMeta>();
+let mutationPending = false;
 /** Most recent notification createdAt per routeId (from last 30 min). */
 const latestNotifTime = new Map<string, string>();
 
@@ -77,7 +79,10 @@ async function fetchSubscriptions(): Promise<void> {
   const res = await fetch('/notifications/subscriptions', {
     headers: authHeaders()
   });
-  if (!res.ok) return;
+  if (!res.ok)
+    throw new Error(
+      'Could not load subscriptions. Please reload to try again.'
+    );
   const data = await res.json();
   subscriptions = data.payload ?? [];
 }
@@ -181,6 +186,7 @@ function updateCount(): void {
   labelEl.textContent = atLimit ? 'Limit reached' : '+ Add route';
   dividerEl.style.display = atLimit ? 'none' : '';
   btn.classList.toggle('is-disabled', atLimit);
+  btn.disabled = atLimit;
 }
 
 function formatAgo(isoTimestamp: string): string {
@@ -211,9 +217,9 @@ function createCard(sub: Subscription): HTMLLIElement {
     <div class="card-icon-circle">${busIconSVG}</div>
     <div class="card-info">
       <a class="card-route-link" href="/notifications?route=${encodeURIComponent(sub.routeId)}">
-        ${display.title} ${chevronSVG}
+        ${escapeHtml(display.title)} ${chevronSVG}
       </a>
-      <div class="card-last-updated">${display.subtitle}</div>
+      <div class="card-last-updated">${escapeHtml(display.subtitle)}</div>
       ${updatedText ? `<div class="card-last-updated">${updatedText}</div>` : ''}
     </div>
     <div class="card-actions">
@@ -228,30 +234,32 @@ function createCard(sub: Subscription): HTMLLIElement {
   li.querySelector<HTMLButtonElement>('.card-remove')!.addEventListener(
     'click',
     async () => {
-      const { ok } = await apiUnsubscribe(sub.routeId);
-      await fetchSubscriptions();
-      const stillSubscribed = subscriptions.some((s) =>
-        routeIdsEqual(s.routeId, sub.routeId)
-      );
-
-      if (!ok || stillSubscribed) {
+      if (mutationPending) return;
+      mutationPending = true;
+      const button = li.querySelector<HTMLButtonElement>('.card-remove')!;
+      button.disabled = true;
+      try {
+        const { ok } = await apiUnsubscribe(sub.routeId);
+        await fetchSubscriptions();
+        const stillSubscribed = subscriptions.some((s) =>
+          routeIdsEqual(s.routeId, sub.routeId)
+        );
+        if (!ok || stillSubscribed) throw new Error('Unsubscribe failed');
+        document.dispatchEvent(
+          new CustomEvent('notifRouteLeave', {
+            detail: { routeId: sub.routeId }
+          })
+        );
+      } catch {
         showToast('Failed to remove subscription. Please try again.');
+      } finally {
+        mutationPending = false;
         renderList();
         renderSheetResults(
           (document.getElementById('route-search-input') as HTMLInputElement)
             .value
         );
-        return;
       }
-
-      document.dispatchEvent(
-        new CustomEvent('notifRouteLeave', { detail: { routeId: sub.routeId } })
-      );
-      renderList();
-      renderSheetResults(
-        (document.getElementById('route-search-input') as HTMLInputElement)
-          .value
-      );
     }
   );
 
@@ -332,6 +340,8 @@ async function toggleSubscriptionFromSheet(routeId: string): Promise<void> {
           detail: { routeId }
         })
       );
+    } else {
+      showToast('Failed to remove subscription. Please try again.');
     }
     return;
   }
@@ -369,19 +379,31 @@ function renderSheetResults(query: string): void {
     li.innerHTML = `
       <div class="result-icon-circle">${busIconSVG}</div>
       <div class="result-info">
-        <div class="result-name">${display.title}</div>
-        <div class="result-destination">${display.subtitle}</div>
+        <div class="result-name">${escapeHtml(display.title)}</div>
+        <div class="result-destination">${escapeHtml(display.subtitle)}</div>
       </div>
-      <button class="result-add-btn ${isSubscribed ? 'subscribed' : ''}" aria-label="${isSubscribed ? 'Remove' : 'Add'} Route ${route.id}">
+      <button class="result-add-btn ${isSubscribed ? 'subscribed' : ''}" aria-label="${isSubscribed ? 'Remove' : 'Add'} Route ${escapeHtml(route.id)}">
         +
       </button>
     `;
 
     const addBtn = li.querySelector<HTMLButtonElement>('.result-add-btn')!;
     addBtn.addEventListener('click', async () => {
-      await toggleSubscriptionFromSheet(route.id);
-      renderList();
-      renderSheetResults(query);
+      if (mutationPending) return;
+      mutationPending = true;
+      addBtn.disabled = true;
+      try {
+        await toggleSubscriptionFromSheet(route.id);
+      } catch {
+        showToast('Could not update subscription. Please try again.');
+      } finally {
+        mutationPending = false;
+        renderList();
+        renderSheetResults(
+          (document.getElementById('route-search-input') as HTMLInputElement)
+            .value
+        );
+      }
     });
 
     results.appendChild(li);
@@ -401,6 +423,7 @@ function initSheet(): void {
   function openSheet(): void {
     overlay.classList.add('is-active');
     sheet.classList.add('is-active');
+    sheet.removeAttribute('inert');
     renderSheetResults('');
     input.focus();
   }
@@ -408,7 +431,9 @@ function initSheet(): void {
   function closeSheet(): void {
     overlay.classList.remove('is-active');
     sheet.classList.remove('is-active');
+    sheet.setAttribute('inert', '');
     input.value = '';
+    addBtn.focus();
   }
 
   addBtn.addEventListener('click', () => {
@@ -416,6 +441,28 @@ function initSheet(): void {
     openSheet();
   });
   overlay.addEventListener('click', closeSheet);
+  document.getElementById('sheet-close')?.addEventListener('click', closeSheet);
+  sheet.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeSheet();
+    } else if (event.key === 'Tab') {
+      const focusable = Array.from(
+        sheet.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), a[href]'
+        )
+      );
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    }
+  });
   input.addEventListener('input', () => renderSheetResults(input.value.trim()));
 }
 
@@ -428,11 +475,16 @@ async function init(): Promise<void> {
     return;
   }
 
-  await Promise.all([
+  const results = await Promise.allSettled([
     fetchSubscriptions(),
     fetchRoutes(),
     fetchRecentNotifications()
   ]);
+  if (results.some((result) => result.status === 'rejected')) {
+    showToast(
+      'Some subscription data could not be loaded. Please reload to try again.'
+    );
+  }
   renderList();
   initSheet();
 }

@@ -143,8 +143,12 @@ function Show-Status {
     Write-Host "Logs: $logDirectory"
 }
 
-$nodeCommand = Get-Command node.exe -ErrorAction Stop
-$nodePath = $nodeCommand.Source
+$portableNode = Get-ChildItem -LiteralPath $runtimeRoot -Directory -Filter 'node-v24*-win-x64' -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending |
+    ForEach-Object { Join-Path $_.FullName 'node.exe' } |
+    Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+    Select-Object -First 1
+$nodePath = if ($portableNode) { $portableNode } else { (Get-Command node.exe -ErrorAction Stop).Source }
 $mongoPath = Get-ChildItem -LiteralPath $runtimeRoot -Directory -Filter 'mongodb-*' -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending |
     ForEach-Object { Join-Path $_.FullName 'bin\mongod.exe' } |
@@ -182,6 +186,9 @@ if ($Action -eq 'stop') {
 if (-not $mongoPath) {
     throw "MongoDB is not installed under $runtimeRoot\mongodb-*\bin\mongod.exe. Install the portable runtime first."
 }
+if ([int]((& $nodePath --version).TrimStart('v').Split('.')[0]) -ne 24) {
+    throw 'Install Node.js 24 LTS, or unpack its official Windows zip under %LOCALAPPDATA%\ScottyGo.'
+}
 if (-not (Test-Path -LiteralPath (Join-Path $projectRoot '.env'))) {
     throw "Create $projectRoot\.env before starting the app. See docs/LocalDevelopmentWindows.md."
 }
@@ -198,7 +205,7 @@ $appProcess = Get-ReusableProcess 'app' $appPort
 if (-not (Test-Path -LiteralPath $serverPath)) {
     Push-Location $projectRoot
     try {
-        & (Get-Command npm.cmd -ErrorAction Stop).Source run build
+        & $nodePath (Join-Path $projectRoot 'node_modules\parcel\lib\bin.js') build
         if ($LASTEXITCODE -ne 0) { throw 'The application build failed.' }
     } finally { Pop-Location }
 }
@@ -224,14 +231,15 @@ if ($null -eq $appProcess) {
     $childEnvironment = @{
         PATH = "$gitUsrBin;$env:PATH"
         ENV = 'LOCAL'
-        STAGE = 'PROD'
+        STAGE = 'DEV'
+        ALLOW_DB_RESET = 'false'
         BIND_ADDRESS = '127.0.0.1'
         LOCAL_HOST = 'http://localhost'
         PORT = "$appPort"
         DB_URL = "mongodb://127.0.0.1:$mongoPort"
         PROD_DB = '/ScottyGoLocal'
-        DEV_DB = '/ScottyGoTest'
-        TEST_DB_URL = "mongodb://127.0.0.1:$mongoPort/ScottyGoTest"
+        DEV_DB = '/ScottyGoLocal'
+        TEST_DB_URL = "mongodb://127.0.0.1:$mongoPort/scottygo_test_local"
     }
     $previousEnvironment = @{}
     try {

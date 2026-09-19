@@ -10,6 +10,10 @@ import trueTimeService from '../services/truetime.service';
 import gtfsService from '../services/gtfs.service';
 import tripshotService from '../services/tripshot.service';
 import {
+  parseTransitDate,
+  validateTransitTime
+} from '../services/transit-date';
+import {
   IRoute,
   IStop,
   IPattern,
@@ -485,15 +489,16 @@ export class TransitModel {
 
     // Apply date/time filter (schedule-aware)
     if (filters?.date && filters?.time) {
+      validateTransitTime(filters.time);
       const activeRoutes = gtfsService.filterRoutesByDateTime(
-        new Date(filters.date),
+        parseTransitDate(filters.date),
         filters.time
       );
       const activeIds = new Set(activeRoutes.map((r) => r.id));
       routes = routes.filter((r) => activeIds.has(r.id));
     } else if (filters?.date) {
       const activeRoutes = gtfsService.filterRoutesByDate(
-        new Date(filters.date)
+        parseTransitDate(filters.date)
       );
       const activeIds = new Set(activeRoutes.map((r) => r.id));
       routes = routes.filter((r) => activeIds.has(r.id));

@@ -5,6 +5,7 @@
  */
 import { MapStateManager } from '../state/map-state';
 import type { IRoute, IStop } from '../../../common/transit.interface';
+import { escapeHtml } from '../utils/html';
 
 /** Fallback color for route badges when the route has no assigned color. */
 const DEFAULT_BADGE_COLOR = '#888888';
@@ -17,6 +18,10 @@ export class TransitSearch extends HTMLElement {
   private searchInput: HTMLInputElement | null = null;
   private clearBtn: HTMLButtonElement | null = null;
   private dropdown: HTMLElement | null = null;
+  private requestVersion = 0;
+  private readonly handleOutsideClick = (event: MouseEvent): void => {
+    if (!this.contains(event.target as Node)) this.hideDropdown();
+  };
 
   connectedCallback(): void {
     this.innerHTML = this.buildTemplate();
@@ -35,6 +40,8 @@ export class TransitSearch extends HTMLElement {
 
   disconnectedCallback(): void {
     this.unsubscribe?.();
+    this.requestVersion++;
+    document.removeEventListener('click', this.handleOutsideClick);
   }
 
   private handleInput(): void {
@@ -62,6 +69,7 @@ export class TransitSearch extends HTMLElement {
    */
   private async renderResults(query: string): Promise<void> {
     if (!this.dropdown) return;
+    const requestVersion = ++this.requestVersion;
 
     const token = localStorage.getItem('token') ?? '';
     let matchedRoutes: IRoute[] = [];
@@ -72,6 +80,7 @@ export class TransitSearch extends HTMLElement {
         headers: { Authorization: `Bearer ${token}` }
       });
 
+      if (!res.ok) throw new Error(`Search failed (${res.status})`);
       if (res.ok) {
         const data = (await res.json()) as {
           payload?: { routes: IRoute[]; stops: IStop[] };
@@ -80,8 +89,14 @@ export class TransitSearch extends HTMLElement {
         matchedStops = data.payload?.stops ?? [];
       }
     } catch (err) {
+      if (requestVersion !== this.requestVersion || !this.isConnected) return;
       console.warn('Transit search request failed:', err);
+      this.dropdown.textContent =
+        'Search is temporarily unavailable. Please try again.';
+      this.showDropdown();
+      return;
     }
+    if (requestVersion !== this.requestVersion || !this.isConnected) return;
 
     if (matchedRoutes.length === 0 && matchedStops.length === 0) {
       this.dropdown.innerHTML = `<div class="search-no-results">No results found</div>`;
@@ -116,9 +131,9 @@ export class TransitSearch extends HTMLElement {
       label = `${r.id}- ${r.name}`;
     }
     return `
-        <div class="search-result-item search-result-route" data-route-id="${r.id}" role="option" tabindex="0">
+        <div class="search-result-item search-result-route" data-route-id="${escapeHtml(r.id)}" role="option" tabindex="0">
           <span class="material-icons-outlined search-result-icon">directions_bus</span>
-          <span class="search-result-name">${label}</span>
+          <span class="search-result-name">${escapeHtml(label)}</span>
         </div>`;
   }
 
@@ -126,17 +141,19 @@ export class TransitSearch extends HTMLElement {
     const badges = (s.routes ?? [])
       .map((routeId: string) => {
         const route = this.routeMap.get(routeId);
-        const color = route?.color ?? DEFAULT_BADGE_COLOR;
+        const color = /^#[\da-f]{6}$/i.test(route?.color ?? '')
+          ? route!.color
+          : DEFAULT_BADGE_COLOR;
         const textColor = this.getTextColor(color);
-        return `<span class="route-badge" style="background:${color};color:${textColor}">${routeId}</span>`;
+        return `<span class="route-badge" style="background:${color};color:${textColor}">${escapeHtml(routeId)}</span>`;
       })
       .join('');
 
     return `
-          <div class="search-result-item search-result-stop" data-stop-id="${s.stopId}" role="option" tabindex="0">
+          <div class="search-result-item search-result-stop" data-stop-id="${escapeHtml(s.stopId)}" role="option" tabindex="0">
             <span class="material-icons-outlined search-result-icon">place</span>
             <div class="search-result-content">
-              <span class="search-result-name">${s.stopName}</span>
+              <span class="search-result-name">${escapeHtml(s.stopName)}</span>
               ${badges ? `<div class="search-result-badges">${badges}</div>` : ''}
             </div>
           </div>`;
@@ -146,6 +163,28 @@ export class TransitSearch extends HTMLElement {
     if (!this.dropdown) return;
     this.attachRouteListeners(this.dropdown);
     this.attachStopListeners(this.dropdown, matchedStops);
+    const options = Array.from(
+      this.dropdown.querySelectorAll<HTMLElement>('[role="option"]')
+    );
+    options.forEach((option, index) => {
+      option.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          this.searchInput?.focus();
+          option.click();
+        } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          const next =
+            (index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) %
+            options.length;
+          options[next].focus();
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          this.searchInput?.focus();
+          this.hideDropdown();
+        }
+      });
+    });
   }
 
   private attachRouteListeners(container: HTMLElement): void {
@@ -217,6 +256,8 @@ export class TransitSearch extends HTMLElement {
               placeholder="Search routes or stops"
               autocomplete="off"
               aria-label="Search routes or stops"
+              role="combobox"
+              aria-expanded="false"
               aria-autocomplete="list"
               aria-controls="search-dropdown"
             />
@@ -235,7 +276,7 @@ export class TransitSearch extends HTMLElement {
             hidden
           ></div>
         </div>
-        <button class="layers-btn" id="layers-btn" title="Toggle Layers">
+        <button class="layers-btn" id="layers-btn" title="Toggle Layers" aria-label="Toggle map layers">
           <span class="material-icons-outlined">layers</span>
         </button>
       </div>
@@ -247,6 +288,15 @@ export class TransitSearch extends HTMLElement {
 
     this.searchInput?.addEventListener('input', () => this.handleInput());
     this.searchInput?.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        this.hideDropdown();
+        return;
+      }
+      if (e.key === 'ArrowDown' && !this.dropdown?.hidden) {
+        e.preventDefault();
+        this.dropdown?.querySelector<HTMLElement>('[role="option"]')?.focus();
+        return;
+      }
       if (e.key !== 'Enter') return;
       e.preventDefault();
       const query = this.searchInput?.value.trim() ?? '';
@@ -270,9 +320,7 @@ export class TransitSearch extends HTMLElement {
       this.dispatchEvent(new CustomEvent('toggleLayers', { bubbles: true }));
     });
 
-    document.addEventListener('click', (e) => {
-      if (!this.contains(e.target as Node)) this.hideDropdown();
-    });
+    document.addEventListener('click', this.handleOutsideClick);
   }
 
   private subscribeToState(): void {
@@ -289,10 +337,13 @@ export class TransitSearch extends HTMLElement {
 
   private showDropdown(): void {
     if (this.dropdown) this.dropdown.hidden = false;
+    this.searchInput?.setAttribute('aria-expanded', 'true');
   }
 
   private hideDropdown(): void {
+    this.requestVersion++;
     if (this.dropdown) this.dropdown.hidden = true;
+    this.searchInput?.setAttribute('aria-expanded', 'false');
   }
 }
 

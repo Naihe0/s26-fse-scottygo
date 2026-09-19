@@ -82,15 +82,18 @@ function decodeNextValue(
 ): { value: number; index: number } {
   let shift = 0;
   let result = 0;
-  while (true) {
+  while (index < str.length && shift < 30) {
     const b = str.charCodeAt(index) - 63;
+    if (b < 0 || b > 63) throw new Error('Invalid encoded polyline');
     index += 1;
     result |= (b & 0x1f) << shift;
     shift += 5;
-    if (b < 0x20) break;
+    if (b < 0x20) {
+      const value = result & 1 ? ~(result >> 1) : result >> 1;
+      return { value, index };
+    }
   }
-  const value = result & 1 ? ~(result >> 1) : result >> 1;
-  return { value, index };
+  throw new Error('Invalid encoded polyline');
 }
 
 export function decodePolyline(

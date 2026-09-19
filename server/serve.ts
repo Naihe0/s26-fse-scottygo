@@ -28,7 +28,7 @@ const app = new App(
     port: PORT,
     host: HOST,
     url: `${HOST}${ENV === 'LOCAL' ? ':' + PORT.toString() : ''}`,
-    initOnStart: STAGE === 'PROD' ? false : true
+    initOnStart: STAGE !== 'PROD' && process.env.ALLOW_DB_RESET === 'true'
   }
 );
 

@@ -22,6 +22,7 @@ export type IPrivilegeLevel = 'Administrator' | 'Coordinator' | 'Member';
 
 // Extended user interface with account management fields
 export interface IUserAccount extends IUser {
+  tokenVersion?: number; // Incremented when previously issued sessions must be revoked.
   status: IAccountStatus;
   privilegeLevel: IPrivilegeLevel;
   onboardingComplete: boolean;
@@ -29,6 +30,7 @@ export interface IUserAccount extends IUser {
 
 // JWT token payload - uses immutable userId to avoid token invalidation on username change
 export interface ITokenPayload {
+  tokenVersion?: number; // Legacy sessions have version 0.
   userId: string; // User's _id (immutable)
   username: string; // Included for convenience, but userId is the source of truth
   iat?: number; // Issued at (set by jwt.sign)

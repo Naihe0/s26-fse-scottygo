@@ -41,15 +41,14 @@ ScottyGo is a single TypeScript codebase split into three workspaces:
 
 ## Running locally
 
-Requires Node.js `^20.16.0` and npm `>=10.8.0`.
+Requires Node.js `^24.19.0` and npm `>=10.8.0`.
 
-For the Windows setup with a separate, persistent local MongoDB database, see
-[Local development on Windows](docs/LocalDevelopmentWindows.md).
+For the Windows setup with a separate, persistent local MongoDB database, see [Local development on Windows](docs/LocalDevelopmentWindows.md).
 
 Install dependencies:
 
 ```bash
-npm install
+npm ci
 ```
 
 Create your environment file by copying the template, then fill in the values:
@@ -68,15 +67,21 @@ npm run watch
 
 ## Testing
 
+Unit tests need no database. Integration and REST suites require MongoDB on `127.0.0.1:27019`, using the disposable `scottygo_test` database. Jest refuses remote databases and application database names, clears external email/AI keys, and serializes database suites. Override `TEST_DB_URL` only with a loopback URL whose database is `scottygo_test` or `scottygo_test_*`. Live transit E2E tests are opt-in (`npm run test:rest:e2e:transitAPI`) and depend on upstream availability.
+
 ```bash
 npm test                 # full Jest suite
 npm run test:unit        # unit tests
 npm run test:integration # integration tests
 npm run test:rest        # REST API tests
 npm run test:server      # unit + integration + REST
+npm run typecheck       # server and browser TypeScript
+npm run prepush:check   # lint, types, production build, unit tests; no file rewrites
 ```
 
 ## Documentation
+
+See the [repository and application audit](docs/audit/README.md) for the feature inventory, implemented fixes, verification results, and remaining improvements.
 
 For a separate hosted deployment, see [Render and MongoDB Atlas setup](docs/RenderAtlasDeployment.md).
 

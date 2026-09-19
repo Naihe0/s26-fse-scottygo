@@ -183,8 +183,13 @@ class TrueTimeService implements ITrueTimeService {
       error?: TrueTimeError[];
     }>('getroutes');
 
-    if (!data.routes || data.routes.length === 0) {
-      return [];
+    if (data.error?.length || !data.routes || data.routes.length === 0) {
+      const error: IAppError = {
+        type: 'ServerError',
+        name: 'UpstreamError',
+        message: 'TrueTime did not return route colors'
+      };
+      throw error;
     }
 
     return data.routes.map((r) => ({

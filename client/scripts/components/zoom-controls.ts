@@ -6,13 +6,13 @@ export class ZoomControls extends HTMLElement {
   connectedCallback(): void {
     this.innerHTML = `
       <div class="zoom-panel">
-        <button class="circle-btn" id="zoom-in-btn" title="Zoom In">
+        <button class="circle-btn" id="zoom-in-btn" title="Zoom In" aria-label="Zoom in">
           <span class="material-icons-outlined">add</span>
         </button>
-        <button class="circle-btn" id="zoom-out-btn" title="Zoom Out">
+        <button class="circle-btn" id="zoom-out-btn" title="Zoom Out" aria-label="Zoom out">
           <span class="material-icons-outlined">remove</span>
         </button>
-        <button class="circle-btn" id="recenter-btn" title="Recenter on User Location">
+        <button class="circle-btn" id="recenter-btn" title="Recenter on User Location" aria-label="Recenter on your location">
           <span class="material-icons-outlined">my_location</span>
         </button>
       </div>

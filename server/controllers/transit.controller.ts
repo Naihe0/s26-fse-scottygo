@@ -9,6 +9,10 @@ import tripUpdatesService from '../services/trip-updates.service';
 import { TransitModel } from '../models/transit.model';
 import gtfsService from '../services/gtfs.service';
 import alertsService from '../services/alerts.service';
+import {
+  parseTransitDate,
+  validateTransitTime
+} from '../services/transit-date';
 import * as responses from '../../common/server.responses';
 import {
   IRoute,
@@ -177,6 +181,25 @@ export default class BusController extends Controller {
   }
 
   private parseNearbyStopsFilters(req: Request): INearbyStopsFilters {
+    for (const name of [
+      'routeId',
+      'system',
+      'direction',
+      'date',
+      'time',
+      'includeRoutes'
+    ]) {
+      if (
+        req.query[name] !== undefined &&
+        typeof req.query[name] !== 'string'
+      ) {
+        throw {
+          type: 'ClientError',
+          name: 'OutOfBounds',
+          message: `${name} must be a single string`
+        } as responses.IAppError;
+      }
+    }
     const includeRoutesParam = req.query.includeRoutes as string | undefined;
     const filters: INearbyStopsFilters = {
       includeRoutes:
@@ -188,6 +211,25 @@ export default class BusController extends Controller {
       filters.direction = (req.query.direction as string).toUpperCase();
     if (req.query.date) filters.date = req.query.date as string;
     if (req.query.time) filters.time = req.query.time as string;
+    if (filters.system && !['PRT', 'CMU'].includes(filters.system)) {
+      throw {
+        type: 'ClientError',
+        name: 'OutOfBounds',
+        message: 'system must be PRT or CMU'
+      } as responses.IAppError;
+    }
+    if (
+      filters.direction &&
+      !['INBOUND', 'OUTBOUND'].includes(filters.direction)
+    ) {
+      throw {
+        type: 'ClientError',
+        name: 'OutOfBounds',
+        message: 'direction must be INBOUND or OUTBOUND'
+      } as responses.IAppError;
+    }
+    if (filters.date) parseTransitDate(filters.date);
+    if (filters.time) validateTransitTime(filters.time);
     return filters;
   }
 
@@ -243,7 +285,10 @@ export default class BusController extends Controller {
     req: Request,
     res: Response
   ): Promise<void> {
-    const { date, time } = req.body as { date?: string; time?: string };
+    const { date, time } = (req.body ?? {}) as {
+      date?: unknown;
+      time?: unknown;
+    };
 
     if (!date) {
       const errorRes: responses.IAppError = {
@@ -256,9 +301,12 @@ export default class BusController extends Controller {
     }
 
     try {
-      const routes = time
-        ? gtfsService.filterRoutesByDateTime(new Date(date), time)
-        : gtfsService.filterRoutesByDate(new Date(date));
+      const calendarDate = parseTransitDate(date);
+      if (time !== undefined) validateTransitTime(time);
+      const routes =
+        typeof time === 'string'
+          ? gtfsService.filterRoutesByDateTime(calendarDate, time)
+          : gtfsService.filterRoutesByDate(calendarDate);
 
       this.sendRoutesRetrieved(res, routes);
     } catch (error: unknown) {
@@ -326,8 +374,10 @@ export default class BusController extends Controller {
       return;
     }
 
-    const lat = parseFloat(latStr);
-    const lon = parseFloat(lonStr);
+    const lat =
+      typeof latStr === 'string' && latStr.trim() ? Number(latStr) : NaN;
+    const lon =
+      typeof lonStr === 'string' && lonStr.trim() ? Number(lonStr) : NaN;
 
     if (
       !Number.isFinite(lat) ||
@@ -348,13 +398,27 @@ export default class BusController extends Controller {
     }
 
     // Default radius: 1000 m (~15 min walk); override via query param
-    const radiusMeters = req.query.radiusMeters
-      ? parseInt(req.query.radiusMeters as string, 10)
-      : undefined; // let the model apply its own default
-
-    const filters = this.parseNearbyStopsFilters(req);
+    const rawRadius = req.query.radiusMeters;
+    const radiusMeters =
+      rawRadius === undefined
+        ? undefined
+        : typeof rawRadius === 'string' && rawRadius.trim()
+          ? Number(rawRadius)
+          : NaN;
+    if (
+      radiusMeters !== undefined &&
+      (!Number.isFinite(radiusMeters) || radiusMeters <= 0)
+    ) {
+      res.status(400).json({
+        type: 'ClientError',
+        name: 'OutOfBounds',
+        message: 'radiusMeters must be a positive number'
+      });
+      return;
+    }
 
     try {
+      const filters = this.parseNearbyStopsFilters(req);
       const payload = await TransitModel.getNearbyStops(
         lat,
         lon,
@@ -376,7 +440,9 @@ export default class BusController extends Controller {
   // GET /transit/stops/:routeId?dir=INBOUND|OUTBOUND
   private async getStops(req: Request, res: Response): Promise<void> {
     const { routeId } = req.params;
-    const direction = (req.query.dir as string | undefined)?.toUpperCase();
+    const rawDirection = req.query.dir;
+    const direction =
+      typeof rawDirection === 'string' ? rawDirection.toUpperCase() : undefined;
 
     if (!direction) {
       const errorRes: responses.IAppError = {
@@ -385,6 +451,14 @@ export default class BusController extends Controller {
         message: 'Query parameter "dir" is required (INBOUND or OUTBOUND)'
       };
       res.status(400).json(errorRes);
+      return;
+    }
+    if (!['INBOUND', 'OUTBOUND'].includes(direction)) {
+      res.status(400).json({
+        type: 'ClientError',
+        name: 'OutOfBounds',
+        message: 'dir must be INBOUND or OUTBOUND'
+      });
       return;
     }
 

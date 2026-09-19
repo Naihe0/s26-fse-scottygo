@@ -17,6 +17,7 @@ import {
   STAGE as appStage
 } from '../env';
 import * as responses from '../../common/server.responses';
+import { createIpRateLimiter } from '../services/auth-rate-limit.service';
 
 /**
  * Return a client-error response for a missing required field.
@@ -33,13 +34,13 @@ function clientError(
  * Returns an IAppError if validation fails, or null if valid.
  */
 function validateCredentials(
-  username: string | undefined,
-  password: string | undefined
+  username: unknown,
+  password: unknown
 ): responses.IAppError | null {
-  if (!username) {
+  if (typeof username !== 'string' || !username) {
     return clientError('MissingUsername', 'Username is required');
   }
-  if (!password) {
+  if (typeof password !== 'string' || !password) {
     return clientError('MissingPassword', 'Password is required');
   }
   return null;
@@ -66,7 +67,7 @@ export default class AuthController extends Controller {
   private parseCredentials(req: Request, res: Response): ILogin | null {
     const credentialError = validateCredentials(
       req.params.username,
-      req.body.password
+      req.body?.password
     );
     if (credentialError) {
       res.status(400).json(credentialError);
@@ -76,11 +77,22 @@ export default class AuthController extends Controller {
   }
 
   public initializeRoutes(): void {
+    // Share the failure budget with password-backed terms acceptance so it
+    // cannot be used as an unthrottled alternate password-check endpoint.
+    const loginLimit = createIpRateLimiter({
+      limit: 30,
+      windowMs: 15 * 60_000,
+      skipSuccessful: true
+    }).middleware;
+    const registerLimit = createIpRateLimiter({
+      limit: 30,
+      windowMs: 60 * 60_000
+    }).middleware;
     this.router.get('/', this.authPage.bind(this));
     this.router.post('/validate', this.validateField.bind(this));
-    this.router.post('/users', this.register.bind(this));
-    this.router.post('/tokens/:username?', this.login.bind(this));
-    this.router.patch('/users/:username', this.agreed.bind(this));
+    this.router.post('/users', registerLimit, this.register.bind(this));
+    this.router.post('/tokens/:username?', loginLimit, this.login.bind(this));
+    this.router.patch('/users/:username', loginLimit, this.agreed.bind(this));
   }
 
   public authPage(req: Request, res: Response): void {
@@ -88,19 +100,19 @@ export default class AuthController extends Controller {
   }
 
   public async register(req: Request, res: Response) {
-    const reqUsername = req.body.credentials?.username;
-    const reqPassword = req.body.credentials?.password;
-    const reqEmail = req.body.email;
-    const reqAgreed = req.body.agreed;
+    const reqUsername = req.body?.credentials?.username;
+    const reqPassword = req.body?.credentials?.password;
+    const reqEmail = req.body?.email;
+    const reqAgreed = req.body?.agreed;
 
     const credentialError = validateCredentials(reqUsername, reqPassword);
     if (credentialError) {
       return res.status(400).json(credentialError);
-    } else if (!reqEmail) {
+    } else if (typeof reqEmail !== 'string' || !reqEmail) {
       return res
         .status(400)
         .json(clientError('MissingEmail', 'Email address is required'));
-    } else if (reqAgreed === undefined || reqAgreed === null) {
+    } else if (typeof reqAgreed !== 'boolean') {
       return res
         .status(400)
         .json(
@@ -169,6 +181,7 @@ export default class AuthController extends Controller {
 
       // Create token payload with userId (immutable) and username (for convenience)
       const tokenPayload: ITokenPayload = {
+        tokenVersion: userAccount.tokenVersion ?? 0,
         userId: user._id!,
         username: user.credentials.username
       };

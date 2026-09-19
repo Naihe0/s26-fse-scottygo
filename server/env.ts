@@ -27,6 +27,27 @@ export const JWT_KEY: string = process.env.JWT_KEY ?? 'someDefaultKey';
 export const INITIAL_ADMIN_PASSWORD: string =
   process.env.INITIAL_ADMIN_PASSWORD || 'admin';
 
+// Fail closed on production startup instead of issuing forgeable sessions or
+// creating an administrator with development credentials.
+if (STAGE === 'PROD') {
+  const isPlaceholder = (value: string) =>
+    /please[\s_-]*(populate|replace)|changeme|your[\s_-]*(jwt|secret|password)|someDefaultKey/i.test(
+      value
+    );
+  if (!process.env.JWT_KEY || isPlaceholder(JWT_KEY) || JWT_KEY.length < 32) {
+    throw new Error('Production requires a JWT_KEY of at least 32 characters');
+  }
+  if (
+    !process.env.INITIAL_ADMIN_PASSWORD ||
+    isPlaceholder(INITIAL_ADMIN_PASSWORD) ||
+    INITIAL_ADMIN_PASSWORD.length < 12
+  ) {
+    throw new Error(
+      'Production requires an INITIAL_ADMIN_PASSWORD of at least 12 characters'
+    );
+  }
+}
+
 export const JWT_EXP: string =
   STAGE === 'PROD' ? (process.env.JWT_EXP ?? '365d') : 'never'; // defaults to never
 

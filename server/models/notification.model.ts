@@ -3,7 +3,7 @@
 // Only this layer accesses the database directly.
 
 import DAC from '../db/dac';
-import { v4 as uuidV4 } from 'uuid';
+import { randomUUID as uuidV4 } from 'node:crypto';
 import {
   ISubscription,
   IBusReport,
@@ -124,29 +124,6 @@ export class NotificationModel {
       throw error;
     }
 
-    // R2: no duplicate subscriptions
-    const existing = await DAC.db.findSubscription(userId, routeId);
-    if (existing) {
-      const error: IAppError = {
-        type: 'ClientError',
-        name: 'DuplicateSubscription',
-        message: `You are already subscribed to Route ${routeId}.`
-      };
-      throw error;
-    }
-
-    // R1: subscription limit
-    const count = await DAC.db.countSubscriptionsByUserId(userId);
-    if (count >= 10) {
-      const error: IAppError = {
-        type: 'ClientError',
-        name: 'SubscriptionLimitReached',
-        message:
-          'Subscription limit reached (10). Please remove a subscription first.'
-      };
-      throw error;
-    }
-
     const subscription: ISubscription = {
       _id: uuidV4(),
       userId,
@@ -154,6 +131,7 @@ export class NotificationModel {
       createdAt: new Date().toISOString()
     };
 
+    // Route uniqueness and the ten-route limit are enforced atomically by the DB.
     return await DAC.db.saveSubscription(subscription);
   }
 
@@ -178,6 +156,29 @@ export class NotificationModel {
       };
       throw error;
     }
+    if (
+      typeof data.vid !== 'string' ||
+      !data.vid.trim() ||
+      data.vid.length > 128 ||
+      typeof data.routeId !== 'string' ||
+      !data.routeId.trim() ||
+      data.routeId.length > 128 ||
+      typeof data.lat !== 'number' ||
+      !Number.isFinite(data.lat) ||
+      Math.abs(data.lat) > 90 ||
+      typeof data.lon !== 'number' ||
+      !Number.isFinite(data.lon) ||
+      Math.abs(data.lon) > 180 ||
+      (data.comment !== undefined &&
+        (typeof data.comment !== 'string' || data.comment.length > 200))
+    ) {
+      throw {
+        type: 'ClientError',
+        name: 'InvalidReportField',
+        message:
+          'Use valid route/bus IDs, numeric coordinates, and a comment of at most 200 characters.'
+      } as IAppError;
+    }
   }
 
   private static assertReportHasAtLeastOneAnswer(
@@ -187,7 +188,7 @@ export class NotificationModel {
       !data.crowdedness &&
       !data.prioritySeating &&
       !data.condition &&
-      !data.comment
+      !data.comment?.trim()
     ) {
       const error: IAppError = {
         type: 'ClientError',
@@ -203,7 +204,8 @@ export class NotificationModel {
     value: string | undefined,
     validValues: readonly string[]
   ): void {
-    if (!value || validValues.includes(value)) return;
+    if (value === undefined || value === '' || validValues.includes(value))
+      return;
 
     const error: IAppError = {
       type: 'ClientError',
@@ -433,8 +435,6 @@ export class NotificationModel {
       lastStatus
     );
 
-    NotificationModel.updateLastKnownStatus(data.vid, data, lastStatus);
-
     // A18: If no field changed, do not publish a notification
     if (changedFields.length === 0) {
       return {
@@ -453,6 +453,9 @@ export class NotificationModel {
         moderatedComment
       )
     );
+
+    // Failed persistence must not suppress a later retry of this status change.
+    NotificationModel.updateLastKnownStatus(data.vid, data, lastStatus);
 
     return {
       report: savedReport,

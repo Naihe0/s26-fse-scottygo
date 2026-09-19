@@ -72,6 +72,18 @@ export class LocationSearch
     this.dropdown = this.querySelector('.location-search-dropdown');
     this.searchContainer = this.querySelector('.location-search-places');
     this.placesInput = this.querySelector('.location-search-places-input');
+    this.querySelectorAll<HTMLElement>('.location-search-item').forEach(
+      (option) => {
+        option.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            option.click();
+          } else if (event.key === 'Escape') {
+            this.close();
+          }
+        });
+      }
+    );
 
     // "Current Location" click
     this.querySelector('.location-search-current')?.addEventListener(

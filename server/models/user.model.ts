@@ -8,7 +8,7 @@ import {
   IAccountStatus,
   IPrivilegeLevel
 } from '../../common/user.interface';
-import { v4 as uuidV4 } from 'uuid';
+import { randomUUID as uuidV4 } from 'node:crypto';
 import DAC from '../db/dac';
 import { IAppError } from '../../common/server.responses';
 import bcrypt from 'bcrypt';

@@ -202,6 +202,16 @@ const fieldValid: Record<IValidationField, boolean> = {
 const validateTimers: Partial<
   Record<ILiveValidationField, ReturnType<typeof setTimeout>>
 > = {};
+const validationVersions: Record<ILiveValidationField, number> = {
+  username: 0,
+  email: 0,
+  password: 0
+};
+
+const cancelValidation = (field: ILiveValidationField): void => {
+  validationVersions[field]++;
+  clearTimeout(validateTimers[field]);
+};
 
 // ---------------------------------------------------------------------------
 // Utility helpers
@@ -281,11 +291,9 @@ const resetValidationState = (): void => {
   fieldValid.password = true;
   fieldValid.confirmPassword = true;
   touched.confirmPassword = false;
-  Object.values(validateTimers).forEach((timer) => {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  });
+  (Object.keys(validationVersions) as ILiveValidationField[]).forEach(
+    cancelValidation
+  );
   clearValidationHints();
 };
 
@@ -343,6 +351,7 @@ const validateFieldDebounced = (
 
   fieldValid[field] = false;
   updateSaveButtonState();
+  const version = validationVersions[field];
 
   validateTimers[field] = setTimeout(async () => {
     try {
@@ -351,7 +360,7 @@ const validateFieldDebounced = (
         { field, value },
         { validateStatus: () => true }
       );
-
+      if (version !== validationVersions[field] || !editing) return;
       if (res.status === 200) {
         fieldValid[field] = true;
         setHint(hintEl, true, `✓ ${successMsg}`);
@@ -363,6 +372,7 @@ const validateFieldDebounced = (
         inputEl.classList.add('form-input--error');
       }
     } catch {
+      if (version !== validationVersions[field] || !editing) return;
       fieldValid[field] = false;
       setHint(hintEl, false, '✗ Could not validate');
       inputEl.classList.add('form-input--error');
@@ -373,6 +383,7 @@ const validateFieldDebounced = (
 };
 
 const validateUsernameField = (): void => {
+  cancelValidation('username');
   if (!editing || !usingProfileFields() || !viewingAccount) return;
 
   const value = fieldUsername.value.trim();
@@ -404,6 +415,7 @@ const validateUsernameField = (): void => {
 };
 
 const validateEmailField = (): void => {
+  cancelValidation('email');
   if (!editing || !usingProfileFields() || !viewingAccount) return;
 
   const value = fieldEmail.value.trim();
@@ -473,6 +485,7 @@ const validateConfirmPassword = (): void => {
 };
 
 const validatePasswordField = (): void => {
+  cancelValidation('password');
   if (!editing) return;
 
   const value = fieldPassword.value;

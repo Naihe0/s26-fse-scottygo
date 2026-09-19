@@ -12,16 +12,16 @@ export class MapControls extends HTMLElement {
   private renderControls(): void {
     this.innerHTML = `
       <div class="control-panel">
-        <button class="circle-btn" id="route-filter-btn" title="Route Filter">
+        <button class="circle-btn" id="route-filter-btn" title="Route Filter" aria-label="Filter routes">
           <span class="material-icons-outlined">directions_bus</span>
         </button>
-        <button class="circle-btn" id="system-filter-btn" title="Transit System Filter">
+        <button class="circle-btn" id="system-filter-btn" title="Transit System Filter" aria-label="Filter transit systems">
           <div class="system-icon">
             <span class="system-text">PRT</span>
             <span class="system-text">CMU</span>
           </div>
         </button>
-        <button class="circle-btn" id="direction-filter-btn" title="Direction Filter">
+        <button class="circle-btn" id="direction-filter-btn" title="Direction Filter" aria-label="Filter route directions">
           <span class="material-icons-outlined">sync_alt</span>
         </button>
         <button

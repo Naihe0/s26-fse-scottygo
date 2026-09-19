@@ -1,87 +1,57 @@
-# This is used to define the continuous integration workflow with GitHub Actions
-# Contents will be provided later
-
-# This workflow will do a clean installation of node dependencies, cache/restore them, build the source code and run tests across different versions of node
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-nodejs
-
 name: CI-CD
 
 on:
   push:
-    branches: ['main']
-  # disable pull request for now
-  # pull_request:
-  # branches: ["main"]
+    branches: [main, codex/render-atlas-setup]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
   integrate:
-    name: Integrate (Check, Build, Test)
-    if: true
+    name: Check, build, and test
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [20.x]
-        # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
+    timeout-minutes: 20
+    services:
+      mongodb:
+        image: mongo:8.0
+        ports: ['27019:27017']
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok'" --health-interval 10s --health-timeout 5s --health-retries 10
+
+
     steps:
-      - run: echo "Job auto-triggered by a ${{ github.event_name }} event..."
-      - run: echo "Running on a ${{ runner.os }} server hosted by GitHub..."
-      - run: echo "For branch ${{ github.ref }} of repo ${{ github.repository }}..."
-      - name: Check out repository code...
-        uses: actions/checkout@v4
-      - name: Create env file...
-        env:
-          DOT_ENV: ${{ secrets.DOT_ENV }}
-        run: |
-          touch .env
-          echo "MY_VAR=xyz" >> .env
-          echo "${{ env.DOT_ENV }}" >> .env
-          echo -- Environment File Diagnostics
-          echo "Lines in .env: $(wc -l < .env)"
-          echo "Keys in .env:"
-          grep -E '^[A-Za-z_][A-Za-z0-9_]*=' .env | cut -d= -f1 | sort
-      - name: Setup Node.js with version ${{ matrix.node-version }}...
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
-      - name: Clean install npm...
-        run: npm ci
-      - name: Check with Eslint...
-        run: npm run lint
-      - name: Build project...
-        run: npm run build
-      # - name: Run client tests...
-      #   if: false
-      #   run: npm run test:client
-      - name: Run server unit tests (loginlogout, manageacct, register, track-bus, visualize-routes)...
-        run: npm run test:unit
-      - name: Run server integration tests...
-        run: npm run test:integration
-      # REST tests require a running server and are not suitable for CI
-      # - name: Run deterministic server rest tests...
-      #   run: npm run test:rest
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run check:paths
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+      # Jest refuses remote DBs and real credentials. Live upstream tests are opt-in.
+      - run: npm run test:ci
+      - run: npm audit --omit=dev --audit-level=high
 
   deploy:
-    # make sure auto-deploy is off in service settings on Render
-    name: Render Deployment - auto-triggered by a ${{ github.event_name }}
-    # set if property to false to prevent deploy job
+    name: Original main deployment
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: integrate
+    runs-on: ubuntu-latest
     env:
       SRV_ID: ${{ secrets.SRV_ID }}
       SRV_KEY: ${{ secrets.SRV_KEY }}
       SRV_TK: ${{ secrets.SRV_TK }}
-    if: true
-    needs: integrate
-    runs-on: ubuntu-latest
     steps:
-      - run: echo "Job auto-triggered by a ${{ github.event_name }} event..."
-      - run: echo "Running on a ${{ runner.os }} server hosted by GitHub..."
-      - run: echo "For branch ${{ github.ref }} of repo ${{ github.repository }}..."
-        # issue a get request first using the deploy hook (with service-id and key)
-        # this is necessary for the service to be found during deployment
-        # hooks/ids/tokens could be read from a github repo secret rather than be out in the open here
-        # github repo secrets is defined under repo Settings > Security > Actions
-      - name: Issue a get request with Render deploy hook make sure deployment is found...
-        run: curl "https://api.render.com/deploy/${{ env.SRV_ID }}?key=${{ env.SRV_KEY }}"
-      - name: Deploying to Render...
+      # Preserve the original main deployment; the personal service tracks its own branch.
+      - name: Invoke existing Render hook
+        run: curl --fail --silent --show-error "https://api.render.com/deploy/${{ env.SRV_ID }}?key=${{ env.SRV_KEY }}"
+      - name: Wait for original Render deployment
         uses: bounceapp/render-action@0.8.0
         with:
           service-id: ${{ env.SRV_ID }}

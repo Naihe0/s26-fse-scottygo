@@ -13,6 +13,7 @@ import Controller from './controller';
 import { Request, Response } from 'express';
 import * as responses from '../../common/server.responses';
 import EmailService from '../services/email.service';
+import { updateSocketAccountPermissions } from '../services/socket-session.service';
 import { SearchContext, UserSearchStrategy } from '../search/search-strategy';
 
 export default class AccountController extends Controller {
@@ -281,7 +282,10 @@ export default class AccountController extends Controller {
     nextStatus: IAccountStatus
   ): Promise<void> {
     if (nextStatus === 'Inactive' && previousStatus === 'Active') {
-      this.forceLogoutUser(updatedUser.credentials.username.toLowerCase());
+      this.forceLogoutUser(
+        updatedUser._id!,
+        'Your account has been deactivated by an administrator'
+      );
       await EmailService.sendAccountInactivatedEmail(
         updatedUser.email,
         updatedUser.credentials.username
@@ -368,7 +372,7 @@ export default class AccountController extends Controller {
       );
       if (!requestingUser) return;
 
-      const q = (req.query.q as string | undefined)?.trim() ?? '';
+      const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
       const context = new SearchContext<string[]>(new UserSearchStrategy());
       const usernames = await context.executeSearch(q);
 
@@ -476,24 +480,17 @@ export default class AccountController extends Controller {
   /**
    * Force logout a user by emitting forceLogout event to their sockets
    */
-  private forceLogoutUser(username: string): void {
+  private forceLogoutUser(userId: string, message: string): void {
     // Find all sockets for this user and emit forceLogout
     const io = Controller.io;
     const sockets = io.sockets.sockets;
 
     sockets.forEach((socket) => {
       // Get user from socket (stored during connection)
-      const socketUser = (socket as unknown as { user?: { username: string } })
-        .user;
-      if (socketUser && socketUser.username.toLowerCase() === username) {
-        socket.emit(
-          'forceLogout',
-          'Your account has been deactivated by an administrator'
-        );
-        // Disconnect after a short delay to allow client to process
-        setTimeout(() => {
-          socket.disconnect(true);
-        }, 500);
+      const socketUser = (socket as unknown as { user?: ITokenPayload }).user;
+      if (socketUser?.userId === userId) {
+        socket.emit('forceLogout', message);
+        socket.disconnect(true);
       }
     });
   }
@@ -533,6 +530,14 @@ export default class AccountController extends Controller {
         targetUsername,
         privilegeLevel
       );
+
+      // A demoted administrator must immediately lose other-account subscriptions.
+      Controller.io.sockets.sockets.forEach((socket) => {
+        const session = (socket as unknown as { user?: ITokenPayload }).user;
+        if (session?.userId === updatedUser._id) {
+          updateSocketAccountPermissions(socket, updatedUser);
+        }
+      });
 
       // Emit account updated event
       this.emitAccountUpdated(updatedUser);
@@ -671,6 +676,11 @@ export default class AccountController extends Controller {
       const updatedUser = await User.updatePassword(
         targetUsername,
         newPassword
+      );
+
+      this.forceLogoutUser(
+        updatedUser._id!,
+        'Your password changed. Please log in again.'
       );
 
       // Emit account updated event

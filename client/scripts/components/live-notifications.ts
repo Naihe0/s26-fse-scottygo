@@ -16,6 +16,7 @@
  */
 
 import { io, Socket } from 'socket.io-client';
+import { escapeHtml } from '../utils/html';
 import type {
   ServerToClientEvents,
   ClientToServerEvents
@@ -163,9 +164,9 @@ function showPopup(notif: INotification): void {
     </button>
     <div class="live-notif-header">
       <span class="live-notif-icon">${NOTIF_ICON}</span>
-      <span class="live-notif-title">${routeTitle} · Bus #${notif.vid}</span>
+      <span class="live-notif-title">${escapeHtml(routeTitle)} · Bus #${escapeHtml(notif.vid ?? '')}</span>
     </div>
-    <p class="live-notif-body">${formatNotificationMessage(notif.message, routeDisplayById)}</p>
+    <p class="live-notif-body">${escapeHtml(formatNotificationMessage(notif.message, routeDisplayById))}</p>
     <div class="live-notif-footer">
       <span class="live-notif-tag">Live Update</span>
       <span class="live-notif-time">${formatElapsed(notif.createdAt)}</span>

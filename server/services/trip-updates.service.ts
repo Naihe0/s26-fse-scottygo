@@ -21,6 +21,8 @@ const GTFSRT_TRIPS_URL = 'https://truetime.portauthority.org/gtfsrt-bus/trips';
 
 /** How often we re-fetch the feed (milliseconds). */
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
+const FETCH_TIMEOUT_MS = 15_000;
+const MAX_FEED_AGE_MS = 90_000;
 
 /** Return a formatted log prefix with ISO timestamp. */
 function tag(): string {
@@ -38,7 +40,7 @@ function logMemoryUsage(): void {
   );
 }
 
-class TripUpdatesService {
+export class TripUpdatesService {
   /**
    * In-memory store: stopId → IPrediction[]
    * Sorted by arrival time (soonest first).
@@ -53,6 +55,8 @@ class TripUpdatesService {
 
   /** Whether an extra poll should run immediately after the current one finishes. */
   private pendingPollTick = false;
+  private stopped = true;
+  private activeRequest: AbortController | null = null;
 
   /** Timestamp of the last successful fetch. */
   private lastFetched: Date | null = null;
@@ -71,7 +75,13 @@ class TripUpdatesService {
    * hasn't been fetched yet.
    */
   getPredictions(stopId: string): IPrediction[] {
-    return this.predictionsByStop.get(stopId) ?? [];
+    const now = Date.now();
+    return (this.predictionsByStop.get(stopId) ?? [])
+      .filter((prediction) => prediction.predictedArrivalTime >= now)
+      .map((prediction) => ({
+        ...prediction,
+        minutes: Math.round((prediction.predictedArrivalTime - now) / 60_000)
+      }));
   }
 
   /** When the feed was last successfully fetched. */
@@ -79,9 +89,13 @@ class TripUpdatesService {
     return this.lastFetched;
   }
 
-  /** True when the last fetch succeeded (or we haven't fetched yet). */
+  /** A live feed is healthy only after a recent successful fetch. */
   isHealthy(): boolean {
-    return this.consecutiveFailures === 0;
+    return (
+      this.consecutiveFailures === 0 &&
+      this.lastFetched !== null &&
+      Date.now() - this.lastFetched.getTime() <= MAX_FEED_AGE_MS
+    );
   }
 
   /** Number of consecutive failed fetches. */
@@ -103,6 +117,7 @@ class TripUpdatesService {
       console.warn(`${tag()} Polling already running`);
       return;
     }
+    this.stopped = false;
 
     console.log(
       `${tag()} Starting polling (every ${POLL_INTERVAL_MS / 1000}s)`
@@ -118,6 +133,11 @@ class TripUpdatesService {
 
   /** Stop the polling loop. */
   stop(): void {
+    this.stopped = true;
+    this.pendingPollTick = false;
+    this.activeRequest?.abort();
+    this.activeRequest = null;
+    this.fetchInProgress = false;
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
@@ -129,6 +149,7 @@ class TripUpdatesService {
 
   /** Run one poll cycle, skipping if a previous cycle is still in progress. */
   private pollTick(): void {
+    if (this.stopped) return;
     if (this.fetchInProgress) {
       this.pendingPollTick = true;
       console.warn(
@@ -146,22 +167,24 @@ class TripUpdatesService {
    * available until the next successful fetch.
    */
   private async fetchAndStore(): Promise<void> {
+    if (this.stopped) return;
+    const request = new AbortController();
+    this.activeRequest = request;
     this.fetchInProgress = true;
+    const timeout = setTimeout(() => request.abort(), FETCH_TIMEOUT_MS);
     try {
       const response = await fetch(GTFSRT_TRIPS_URL, {
-        headers: { Accept: 'application/x-protobuf' }
+        headers: { Accept: 'application/x-protobuf' },
+        signal: request.signal
       });
 
       if (!response.ok) {
-        this.consecutiveFailures++;
-        this.lastError = `HTTP ${response.status}`;
-        console.error(
-          `${tag()} Feed returned HTTP ${response.status} (failures: ${this.consecutiveFailures})`
-        );
-        return;
+        await response.body?.cancel();
+        throw new Error(`HTTP ${response.status}`);
       }
 
       const buffer = await response.arrayBuffer();
+      if (this.activeRequest !== request || this.stopped) return;
       const feed = transit_realtime.FeedMessage.decode(new Uint8Array(buffer));
 
       const nowSec = Math.floor(Date.now() / 1000);
@@ -235,17 +258,26 @@ class TripUpdatesService {
       );
       logMemoryUsage();
     } catch (err) {
+      if (this.activeRequest !== request || this.stopped) return;
       this.consecutiveFailures++;
-      this.lastError = err instanceof Error ? err.message : String(err);
+      this.lastError = request.signal.aborted
+        ? 'Feed request timed out (>15 s)'
+        : err instanceof Error
+          ? err.message
+          : String(err);
       console.error(
         `${tag()} Fetch failed (failures: ${this.consecutiveFailures}):`,
         err
       );
     } finally {
-      this.fetchInProgress = false;
-      if (this.pendingPollTick) {
-        this.pendingPollTick = false;
-        this.fetchAndStore();
+      clearTimeout(timeout);
+      if (this.activeRequest === request) {
+        this.activeRequest = null;
+        this.fetchInProgress = false;
+        if (this.pendingPollTick && !this.stopped) {
+          this.pendingPollTick = false;
+          void this.fetchAndStore();
+        }
       }
     }
   }

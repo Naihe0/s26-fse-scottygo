@@ -1,4 +1,5 @@
-import axios from 'axios';
+import axios, { type AxiosResponse } from 'axios';
+import type { IResponse } from '../../common/server.responses';
 import { authService } from './services/auth.service';
 import type { IMapProvider, IConfig } from '../../common/map.interface';
 import type { IStop, IPrediction } from '../../common/transit.interface';
@@ -12,7 +13,10 @@ import './components/zoom-controls';
 import './components/route-bell';
 import './components/live-notifications';
 import './components/bus-report-form';
-import type { BusReportFormElement } from './components/bus-report-form';
+import type {
+  BusReportFormElement,
+  IBusReportSubmission
+} from './components/bus-report-form';
 import { showToast } from './utils/toast';
 import type { IRouteBellElement } from './components/route-bell';
 import { LocationIndicator } from './components/location-indicator';
@@ -245,7 +249,10 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
       if (prevRoute) {
         await filterController.applyRouteFilter(prevRoute, isCurrent);
       } else {
-        await filterController.restoreDefaultState(getEffectiveLocation(), isCurrent);
+        await filterController.restoreDefaultState(
+          getEffectiveLocation(),
+          isCurrent
+        );
       }
     });
 
@@ -605,7 +612,7 @@ function getRouteToastLabel(routeId: string): string {
   return getRouteTitle(routeId, mapStateManager.getState().availableRoutes);
 }
 
-const registerSubscriptionEvents = (): void => {
+export const registerSubscriptionEvents = (): void => {
   document.addEventListener('bellSubscribe', async (e: Event) => {
     const { routeId } = (e as CustomEvent<{ routeId: string }>).detail;
     const token = localStorage.getItem('token');
@@ -618,6 +625,7 @@ const registerSubscriptionEvents = (): void => {
           validateStatus: () => true
         }
       );
+      if (localStorage.getItem('token') !== token) return;
       if (res.status === 201 && res.data.name === 'RouteSubscribed') {
         authService.addSubscription(routeId);
         document.dispatchEvent(
@@ -645,6 +653,7 @@ const registerSubscriptionEvents = (): void => {
         updateBellState(routeId, false);
       }
     } catch {
+      if (localStorage.getItem('token') !== token) return;
       showSubscriptionToast('Failed to subscribe. Please try again.');
       updateBellState(routeId, false);
     }
@@ -661,6 +670,7 @@ const registerSubscriptionEvents = (): void => {
           validateStatus: () => true
         }
       );
+      if (localStorage.getItem('token') !== token) return;
       if (res.status === 200 || res.status === 404) {
         authService.removeSubscription(routeId);
         document.dispatchEvent(
@@ -674,6 +684,7 @@ const registerSubscriptionEvents = (): void => {
         updateBellState(routeId, true);
       }
     } catch {
+      if (localStorage.getItem('token') !== token) return;
       showSubscriptionToast('Failed to unsubscribe. Please try again.');
       updateBellState(routeId, true);
     }
@@ -710,27 +721,35 @@ const registerBusReportEvents = (): void => {
   });
 
   document.addEventListener('busReportSubmitted', async (e: Event) => {
-    const detail = (e as CustomEvent).detail as Record<string, unknown>;
+    const submission = (e as CustomEvent<IBusReportSubmission>).detail;
     const token = localStorage.getItem('token');
     try {
-      const res = await axios.post('/notifications/reports', detail, {
-        headers: { Authorization: `Bearer ${token}` },
-        validateStatus: () => true
-      });
+      const res = await axios.post(
+        '/notifications/reports',
+        submission.report,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          validateStatus: () => true,
+          timeout: 15000
+        }
+      );
       if (res.status === 201) {
+        submission.onSuccess();
         showSubscriptionToast(
           res.data.message ?? 'Report submitted. Thank you!'
         );
       } else {
         console.error('Report submission failed:', res.status, res.data);
         const serverMsg: string | undefined = res.data?.message;
-        showSubscriptionToast(
+        submission.onError(
           serverMsg ?? 'Failed to submit report. Please try again.'
         );
       }
     } catch (err) {
       console.error('Report submission error:', err);
-      showSubscriptionToast('Failed to submit report. Please try again.');
+      submission.onError(
+        'Failed to submit report. Your draft is saved here; please try again.'
+      );
     }
   });
 };

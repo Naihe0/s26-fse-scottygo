@@ -4,6 +4,8 @@
  * Used for Route Filter in VisRoute feature (Basic Flow steps 7-10, Rule R1)
  */
 
+import { escapeHtml } from '../utils/html';
+
 export interface IRouteSelection {
   route: string | null;
 }
@@ -143,15 +145,15 @@ export class RouteSelectorPanel
       <div class="route-selector-panel panel" style="display: ${displayStyle}; pointer-events: ${pointerEvents};">
         <div class="route-search-wrapper">
           <span class="material-icons-outlined route-search-icon">search</span>
-          <input type="text" class="route-search-input" placeholder="Search route..." value="${this.searchValue}" />
+          <input type="text" class="route-search-input" aria-label="Search routes" placeholder="Search route..." value="${escapeHtml(this.searchValue)}" />
         </div>
 
         <div class="route-list">
           ${this.filteredRoutes
             .map(
               (route) => `
-                <button class="route-btn ${this.selectedRoute === route.id ? 'selected' : ''}" data-route="${route.id}">
-                  ${route.name}
+                <button class="route-btn ${this.selectedRoute === route.id ? 'selected' : ''}" data-route="${escapeHtml(route.id)}">
+                  ${escapeHtml(route.name)}
                 </button>
               `
             )
@@ -178,9 +180,9 @@ export class RouteSelectorPanel
     // Scroll to selected route if one exists
     if (this.selectedRoute) {
       requestAnimationFrame(() => {
-        const selectedBtn = this.querySelector(
-          `.route-btn[data-route="${this.selectedRoute}"]`
-        ) as HTMLElement;
+        const selectedBtn = Array.from(
+          this.querySelectorAll<HTMLElement>('.route-btn')
+        ).find((button) => button.dataset.route === this.selectedRoute);
         if (selectedBtn) {
           selectedBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }

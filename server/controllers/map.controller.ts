@@ -71,7 +71,7 @@ export default class MapController extends Controller {
     res: Response,
     next: (error?: unknown) => void
   ): Promise<void> {
-    this.authenticateToken(req, res, next);
+    await this.authenticateToken(req, res, next);
   }
 
   // Get a User by username
@@ -84,6 +84,28 @@ export default class MapController extends Controller {
     }
 
     try {
+      const token = this.getTokenPayload(req);
+      if (!token) {
+        return res
+          .status(401)
+          .json(this.clientError('MissingToken', 'Token is required'));
+      }
+      const requester = await User.getUserAccountById(token.userId);
+      if (
+        requester.status !== 'Active' ||
+        (requester.privilegeLevel !== 'Administrator' &&
+          requester.credentials.username.toLowerCase() !==
+            username.toLowerCase())
+      ) {
+        return res
+          .status(403)
+          .json(
+            this.clientError(
+              'UnauthorizedRequest',
+              'You can only view your own account'
+            )
+          );
+      }
       const user: IUser | null = await User.getUserForUsername(username);
 
       if (!user) {
@@ -169,7 +191,7 @@ export default class MapController extends Controller {
   }
 
   private requireSearchQuery(req: Request, res: Response): string | null {
-    const q = (req.query.q as string | undefined)?.trim();
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     if (!q) {
       res
         .status(400)

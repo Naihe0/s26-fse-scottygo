@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2021",
+    "lib": ["ES2021", "DOM", "DOM.Iterable"],
+    "types": ["google.maps", "node"],
+    "noEmit": true
+  },
+  "include": ["client/**/*.ts", "common/**/*.ts"]
+}

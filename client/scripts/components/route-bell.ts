@@ -15,7 +15,7 @@ export class RouteBell extends HTMLElement implements IRouteBellElement {
   connectedCallback(): void {
     this.classList.add('is-disabled');
     this.innerHTML = `
-      <button class="circle-btn bell-btn" id="bell-btn" title="Subscribe to route">
+      <button class="circle-btn bell-btn" id="bell-btn" title="Subscribe to route" aria-label="Subscribe to route" aria-pressed="false" disabled>
         <span class="material-icons-outlined">notifications_none</span>
       </button>
     `;
@@ -51,6 +51,12 @@ export class RouteBell extends HTMLElement implements IRouteBellElement {
     const btn = this.querySelector('#bell-btn');
     const icon = btn?.querySelector('.material-icons-outlined');
     if (!btn || !icon) return;
+    (btn as HTMLButtonElement).disabled = !this.currentRouteId;
+    btn.setAttribute('aria-pressed', String(this.subscribed));
+    btn.setAttribute(
+      'aria-label',
+      this.subscribed ? 'Unsubscribe from route' : 'Subscribe to route'
+    );
     icon.textContent = this.subscribed ? 'notifications' : 'notifications_none';
     btn.classList.toggle('bell-subscribed', this.subscribed);
     btn.setAttribute(

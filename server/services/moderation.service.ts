@@ -74,6 +74,7 @@ class ModerationService {
   Comment to analyze: "${comment.replace(/"/g, '\\"')}"`;
 
     const response = await fetch(url, {
+      signal: AbortSignal.timeout(10_000),
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

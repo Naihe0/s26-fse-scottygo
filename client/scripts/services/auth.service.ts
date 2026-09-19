@@ -19,6 +19,16 @@ export class AuthService {
 
   /** Local cache of subscribed route IDs — synced from server on load. */
   private subscribedRoutes = new Set<string>();
+  private subscriptionToken: string | null = null;
+
+  private currentSubscriptionToken(): string | null {
+    const token = localStorage.getItem('token');
+    if (token !== this.subscriptionToken) {
+      this.subscribedRoutes.clear();
+      this.subscriptionToken = token;
+    }
+    return token;
+  }
 
   private constructor() {}
 
@@ -41,13 +51,15 @@ export class AuthService {
 
   /** Fetches the user record for `username`. Returns null on any failure. */
   async getUser(username: string): Promise<IUser | null> {
+    const token = localStorage.getItem('token');
     try {
       const res: AxiosResponse = await axios.request({
         method: 'get',
-        headers: authHeaders(),
-        url: '/users/' + username,
+        headers: { Authorization: `Bearer ${token}` },
+        url: '/users/' + encodeURIComponent(username),
         validateStatus: () => true
       });
+      if (localStorage.getItem('token') !== token) return null;
       const response: IResponse = res.data;
 
       if (res.status === 200 && response.name === 'UserFound') {
@@ -66,6 +78,7 @@ export class AuthService {
       console.error('[AuthService] getUser failed:', res.status, response);
       return null;
     } catch (error) {
+      if (localStorage.getItem('token') !== token) return null;
       console.error('[AuthService] getUser error:', error);
       return null;
     }
@@ -94,16 +107,19 @@ export class AuthService {
 
   /** Returns true when the user is locally known to be subscribed to `routeId`. */
   isRouteSubscribed(routeId: string): boolean {
+    this.currentSubscriptionToken();
     return this.subscribedRoutes.has(routeId);
   }
 
   /** Records a local subscription (call after a successful server subscribe). */
   addSubscription(routeId: string): void {
+    this.currentSubscriptionToken();
     this.subscribedRoutes.add(routeId);
   }
 
   /** Removes a local subscription (call after a successful server unsubscribe). */
   removeSubscription(routeId: string): void {
+    this.currentSubscriptionToken();
     this.subscribedRoutes.delete(routeId);
   }
 
@@ -112,13 +128,14 @@ export class AuthService {
    * the local cache. Call once during app init so bell icons are accurate.
    */
   async syncSubscriptionsFromServer(): Promise<void> {
-    const token = localStorage.getItem('token');
+    const token = this.currentSubscriptionToken();
     if (!token) return;
     try {
       const res = await axios.get('/notifications/subscriptions', {
         headers: authHeaders(),
         validateStatus: () => true
       });
+      if (this.currentSubscriptionToken() !== token) return;
       if (res.status === 200 && res.data.name === 'SubscriptionsRetrieved') {
         this.subscribedRoutes.clear();
         (res.data.payload as { routeId: string }[]).forEach((s) =>

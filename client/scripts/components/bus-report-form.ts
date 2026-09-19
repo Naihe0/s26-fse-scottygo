@@ -7,6 +7,14 @@
  *   form.open('6551', '71A', 40.4418, -79.9440);
  */
 
+import { escapeHtml } from '../utils/html';
+
+export interface IBusReportSubmission {
+  report: Record<string, unknown>;
+  onSuccess(): void;
+  onError(message: string): void;
+}
+
 export interface BusReportFormElement extends HTMLElement {
   open(
     vid: string,
@@ -81,6 +89,8 @@ class BusReportForm extends HTMLElement implements BusReportFormElement {
   private lat = 0;
   private lon = 0;
   private rootListenersAttached = false;
+  private submitting = false;
+  private submissionVersion = 0;
 
   connectedCallback(): void {
     this.render();
@@ -95,6 +105,9 @@ class BusReportForm extends HTMLElement implements BusReportFormElement {
     lon: number,
     routeLabel?: string
   ): void {
+    this.submissionVersion++;
+    this.submitting = false;
+    this.setAttribute('aria-busy', 'false');
     this.vid = vid;
     this.routeId = routeId;
     this.routeLabel = routeLabel || `Route ${routeId}`;
@@ -109,6 +122,9 @@ class BusReportForm extends HTMLElement implements BusReportFormElement {
   }
 
   close(): void {
+    this.submissionVersion++;
+    this.submitting = false;
+    this.setAttribute('aria-busy', 'false');
     this.classList.remove('is-open');
     this.setAttribute('inert', '');
   }
@@ -123,7 +139,7 @@ class BusReportForm extends HTMLElement implements BusReportFormElement {
         <div class="bus-report" role="dialog" aria-modal="true" aria-label="Bus Report">
           <div class="bus-report__header">
             <strong class="bus-report__title">Bus Report</strong>
-            <p class="bus-report__subtitle">Bus ${this.vid} &middot; ${this.routeLabel}</p>
+            <p class="bus-report__subtitle">Bus ${escapeHtml(this.vid)} &middot; ${escapeHtml(this.routeLabel)}</p>
           </div>
           <div class="bus-report__progress">
             ${Array.from(
@@ -135,7 +151,7 @@ class BusReportForm extends HTMLElement implements BusReportFormElement {
           <div class="bus-report__body">
             ${this.renderStepContent(step)}
           </div>
-          <p class="bus-report__error" id="bus-report-error" style="display:none;color:var(--color-error,#d32f2f);font-size:0.85rem;text-align:center;margin:0 0 0.5rem"></p>
+          <p class="bus-report__error" id="bus-report-error" role="alert" style="display:none;color:var(--color-error,#d32f2f);font-size:0.85rem;text-align:center;margin:0 0 0.5rem"></p>
           <div class="bus-report__nav">
             <button
               type="button"
@@ -165,7 +181,7 @@ class BusReportForm extends HTMLElement implements BusReportFormElement {
           id="bus-report-comment"
           placeholder="Add a note..."
           maxlength="200"
-        >${saved}</textarea>
+        >${escapeHtml(saved)}</textarea>
         <p class="bus-report__char-count"><span id="bus-report-char-count">${saved.length}</span> / 200</p>
       `;
     }
@@ -268,10 +284,22 @@ class BusReportForm extends HTMLElement implements BusReportFormElement {
   }
 
   private submitReport(): void {
+    if (this.submitting) return;
     const { crowdedness, prioritySeating, condition, comment } = this.answers;
     const normalizedPrioritySeating =
       prioritySeating === '__NOT_SURE__' ? undefined : prioritySeating;
     const normalizedComment = comment?.trim();
+    if (
+      !crowdedness &&
+      !normalizedPrioritySeating &&
+      !condition &&
+      !normalizedComment
+    ) {
+      this.showError(
+        'Choose a bus condition or add a comment before submitting.'
+      );
+      return;
+    }
 
     const payload: Record<string, unknown> = {
       vid: this.vid,
@@ -285,10 +313,35 @@ class BusReportForm extends HTMLElement implements BusReportFormElement {
     if (condition) payload.condition = condition;
     if (normalizedComment) payload.comment = normalizedComment;
 
+    this.submitting = true;
+    const version = ++this.submissionVersion;
+    this.setSubmissionBusy(true);
+    const detail: IBusReportSubmission = {
+      report: payload,
+      onSuccess: () => {
+        if (version === this.submissionVersion) this.close();
+      },
+      onError: (message) => {
+        if (version !== this.submissionVersion) return;
+        this.submitting = false;
+        this.setSubmissionBusy(false);
+        this.showError(message);
+      }
+    };
     this.dispatchEvent(
-      new CustomEvent('busReportSubmitted', { detail: payload, bubbles: true })
+      new CustomEvent('busReportSubmitted', { detail, bubbles: true })
     );
-    this.close();
+  }
+
+  private setSubmissionBusy(busy: boolean): void {
+    this.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>(
+      'button, textarea'
+    ).forEach((control) => {
+      control.disabled = busy;
+    });
+    this.setAttribute('aria-busy', String(busy));
+    const submit = this.querySelector('#bus-report-next');
+    if (submit) submit.textContent = busy ? 'Submitting...' : 'Submit';
   }
 
   private showError(message: string): void {

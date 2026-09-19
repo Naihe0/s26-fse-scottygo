@@ -327,6 +327,9 @@ export class FilterController {
     const state = this.getCurrentState();
 
     if (this.handleAllSystemsDisabled(state.selectedSystems)) {
+      this.stateManager.reapplyFilters();
+      this.updateRouteSelectorFromState(state.availableRoutes);
+      this.syncURLWithCurrentState();
       return;
     }
 
@@ -1526,6 +1529,7 @@ export class FilterController {
     if (state.selectedRouteId) return;
 
     this.clearRenderedNearbyStopsIfActive();
+    if (!state.selectedSystems.prt && !state.selectedSystems.cmu) return;
 
     // Derive system filter from the active toggles
     const system = this.getNearbySystemFilter(state.selectedSystems);

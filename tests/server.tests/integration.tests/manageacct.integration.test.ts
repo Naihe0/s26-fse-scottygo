@@ -216,6 +216,18 @@ beforeAll(async () => {
   );
 }, 30000);
 
+beforeEach(async () => {
+  const account = await DAC.db.findUserAccountByUsername(
+    member2User.credentials.username
+  );
+  if (account?.status === 'Active') {
+    member2Token = await loginUser(
+      member2User.credentials.username,
+      member2User.credentials.password
+    );
+  }
+});
+
 afterAll(async () => {
   if (app && app.io) {
     await new Promise<void>((resolve) => app.io.close(() => resolve()));
@@ -348,6 +360,14 @@ describe('ManageAcct Integration Tests', () => {
 
     expect(patchRes.status).toBe(200);
     expect((patchRes.data as responses.ISuccess).name).toBe('PasswordUpdated');
+
+    const revoked = await request(
+      'GET',
+      `/account/users/${member2User.credentials.username}`,
+      undefined,
+      member2Token
+    );
+    expect(revoked.status).toBe(401);
 
     // Verify: member can log in with the new password
     const loginRes = await request(

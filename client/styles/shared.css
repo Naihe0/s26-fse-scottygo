@@ -43,6 +43,9 @@ body {
 
 /* Hamburger menu icon */
 .menu-icon {
+  border: 0;
+  padding: 0;
+  background: transparent;
   display: flex;
   flex-direction: column;
   justify-content: space-between;

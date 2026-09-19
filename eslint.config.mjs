@@ -8,6 +8,8 @@ export default [
     ignores: [
       '**/*.js',
       '**/*.mjs',
+      'private/**',
+      'tmp/**',
       '**/.dist',
       '**/.dist-server',
       '**/jest.config.ts',

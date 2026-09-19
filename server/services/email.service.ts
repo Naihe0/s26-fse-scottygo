@@ -3,6 +3,20 @@
 
 import { BREVO_API_KEY, EMAIL_USER, EMAIL_FROM_NAME } from '../env';
 
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[character]!
+  );
+}
+
 export interface IEmailService {
   sendAccountInactivatedEmail(
     email: string,
@@ -37,6 +51,7 @@ class EmailService implements IEmailService {
     html: string
   ): Promise<boolean> {
     const response = await fetch(this.apiUrl, {
+      signal: AbortSignal.timeout(10_000),
       method: 'POST',
       headers: {
         accept: 'application/json',
@@ -83,7 +98,7 @@ class EmailService implements IEmailService {
         `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h2 style="color: #c41230;">Account Deactivated</h2>
-            <p>Hello <strong>${username}</strong>,</p>
+            <p>Hello <strong>${escapeHtml(username)}</strong>,</p>
             <p>Your ${EMAIL_FROM_NAME} account has been deactivated by an administrator.</p>
             <p>If you believe this is an error or would like to request reactivation, 
                please contact your administrator.</p>
@@ -131,7 +146,7 @@ class EmailService implements IEmailService {
         `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h2 style="color: #2e7d32;">Account Reactivated</h2>
-            <p>Hello <strong>${username}</strong>,</p>
+            <p>Hello <strong>${escapeHtml(username)}</strong>,</p>
             <p>Great news! Your ${EMAIL_FROM_NAME} account has been reactivated.</p>
             <p>You can now log in and access all your account features.</p>
             <hr style="border: 1px solid #eee; margin: 20px 0;">

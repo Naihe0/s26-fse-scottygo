@@ -5,6 +5,9 @@
 import type { Config } from 'jest';
 
 const config: Config = {
+  setupFiles: ['<rootDir>/tests/setup-env.ts'],
+  // Suites deliberately reset a shared disposable database and bind fixed ports.
+  maxWorkers: 1,
   clearMocks: true,
   collectCoverage: true,
   coverageDirectory: '.coverage',

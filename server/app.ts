@@ -11,7 +11,7 @@ import alertsService from './services/alerts.service';
 import memoryMonitorService from './services/memory-monitor.service';
 import { TransitModel } from './models/transit.model';
 import { NotificationModel } from './models/notification.model';
-import { JWT_KEY as secretKey, STAGE, BIND_ADDRESS } from './env';
+import { STAGE, BIND_ADDRESS, ENV } from './env';
 import { Server as SocketServer, Socket } from 'socket.io';
 import {
   ClientToServerEvents,
@@ -20,9 +20,11 @@ import {
   ISearchSuggestion
 } from '../common/socket.interface';
 import { ExtendedError } from 'socket.io';
-import jwt from 'jsonwebtoken';
-import { User } from './models/user.model';
-import { ITokenPayload } from '../common/user.interface';
+import {
+  authenticateSocket,
+  configureSocketSession,
+  subscribeSocketToAccount
+} from './services/socket-session.service';
 import {
   NotificationAutocompleteStrategy,
   SearchContext,
@@ -104,7 +106,7 @@ class App {
           return;
         }
         memoryMonitorService.capture('db.init.complete');
-        // I set initOnStart to false if STAGE is 'PROD' in serve.ts so no risk of deleting PROD DB
+        // Resets require explicit opt-in and are forbidden in production.
       }
       // Seed default admin user if it doesn't exist
       // This runs in both PROD and non-PROD to ensure default admin exists
@@ -224,8 +226,12 @@ class App {
   }
 
   private configureMiddlewares() {
-    // Trust reverse-proxy headers (X-Forwarded-*) in hosted environments.
-    this.app.set('trust proxy', true);
+    // Render terminates requests at its ingress proxy. Trust that one hop,
+    // not arbitrary client-supplied entries on the left of X-Forwarded-For.
+    this.app.set(
+      'trust proxy',
+      ENV === 'RENDER' || ENV === 'CODESPACE' ? 1 : false
+    );
 
     // Avoid noisy 404s in browser dev tools for favicon requests.
     this.app.get('/favicon.ico', (_req: Request, res: Response) => {
@@ -324,27 +330,7 @@ class App {
     next();
   }
 
-  public validateToken = (
-    socket: Socket,
-    next: (err?: Error | undefined) => void
-  ) => {
-    const token = socket.handshake.query.token as string;
-    if (!token) {
-      const err = new Error('Authentication error: Token not provided');
-      return next(err);
-    }
-    jwt.verify(token, secretKey, (err, decoded) => {
-      if (err) {
-        const authErr = new Error('Authentication error: Invalid token');
-        return next(authErr);
-      } else {
-        // Store decoded user info on socket for later use
-        (socket as Socket & { user: ITokenPayload }).user =
-          decoded as ITokenPayload;
-        return next();
-      }
-    });
-  };
+  public validateToken = authenticateSocket;
 
   // listen for incoming requests
   public async listen(): Promise<HttpServer> {
@@ -367,62 +353,16 @@ class App {
           `⚡️[Server ${new Date().toISOString()}] A client connected to the socket server with id ${socket.id}`
         );
 
-        // Get user from socket (attached during authentication)
-        const socketUser = (socket as Socket & { user?: ITokenPayload }).user;
-
-        // Auto-join admins to the admin:usernames broadcast room
-        if (socketUser) {
-          User.getUserAccount(socketUser.username)
-            .then((account) => {
-              if (account.privilegeLevel === 'Administrator') {
-                socket.join('admin:usernames');
-              }
-            })
-            .catch(() => {
-              // Ignore — user may have been deleted
-            });
-        }
+        configureSocketSession(socket);
 
         // Handle subscribeAccount event
-        socket.on('subscribeAccount', async (username: string) => {
-          if (!socketUser) {
-            console.log(
-              `[Socket ${new Date().toISOString()}] Unauthorized subscribeAccount attempt for ${username}`
-            );
-            return;
-          }
-
-          try {
-            // Authorization check: Members can only subscribe to their own account
-            const requestingUserAccount = await User.getUserAccount(
-              socketUser.username
-            );
-            const isAdmin =
-              requestingUserAccount.privilegeLevel === 'Administrator';
-            const isOwnAccount =
-              socketUser.username.toLowerCase() === username.toLowerCase();
-
-            if (!isAdmin && !isOwnAccount) {
-              console.log(
-                `[Socket ${new Date().toISOString()}] User ${socketUser.username} unauthorized to subscribe to ${username}`
-              );
-              return;
-            }
-
-            const roomName = `account:${username.toLowerCase()}`;
-            socket.join(roomName);
-            console.log(
-              `[Socket ${new Date().toISOString()}] User ${socketUser.username} subscribed to ${roomName}`
-            );
-          } catch (error) {
-            console.error(
-              `[Socket ${new Date().toISOString()}] Error in subscribeAccount: ${error}`
-            );
-          }
+        socket.on('subscribeAccount', (username: string) => {
+          subscribeSocketToAccount(socket, username);
         });
 
         // Handle unsubscribeAccount event
         socket.on('unsubscribeAccount', (username: string) => {
+          if (typeof username !== 'string' || username.length > 128) return;
           const roomName = `account:${username.toLowerCase()}`;
           socket.leave(roomName);
           console.log(
@@ -432,7 +372,12 @@ class App {
 
         // Handle subscribeRoute event (TUC3 — Observer Pattern R4)
         socket.on('subscribeRoute', (data: { routeId: string }) => {
-          if (!data?.routeId) return;
+          if (
+            typeof data?.routeId !== 'string' ||
+            !data.routeId ||
+            data.routeId.length > 128
+          )
+            return;
           const roomName = `route:${data.routeId}`;
           socket.join(roomName);
           console.log(
@@ -442,7 +387,12 @@ class App {
 
         // Handle unsubscribeRoute event (TUC3)
         socket.on('unsubscribeRoute', (data: { routeId: string }) => {
-          if (!data?.routeId) return;
+          if (
+            typeof data?.routeId !== 'string' ||
+            !data.routeId ||
+            data.routeId.length > 128
+          )
+            return;
           const roomName = `route:${data.routeId}`;
           socket.leave(roomName);
           console.log(
@@ -454,7 +404,10 @@ class App {
         socket.on(
           'searchAutocomplete',
           async (query: string, context: ISearchAutocompleteContext) => {
-            const trimmed = query.trim();
+            const trimmed =
+              typeof query === 'string' && query.length <= 500
+                ? query.trim()
+                : '';
             if (!trimmed) {
               socket.emit('searchSuggestions', []);
               return;

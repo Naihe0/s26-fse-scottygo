@@ -55,8 +55,6 @@ class AlertsService {
   /**
    * Returns the previous alerts so the caller can diff for changes.
    */
-  private previousAlerts: IServiceAlert[] = [];
-
   start(): void {
     if (this.intervalId) return;
     this.isStopping = false;
@@ -102,6 +100,8 @@ class AlertsService {
     const abortController = new AbortController();
     this.fetchAbortController = abortController;
     this.fetchInProgress = true;
+    const deadline = setTimeout(() => abortController.abort(), 15_000);
+    deadline.unref?.();
 
     try {
       const response = await fetch(GTFSRT_ALERTS_URL, {
@@ -120,14 +120,21 @@ class AlertsService {
         if (decoded) newAlerts.push(decoded);
       }
 
-      this.applyFetchedAlerts(newAlerts);
+      if (
+        !this.isStopping &&
+        !abortController.signal.aborted &&
+        this.fetchAbortController === abortController
+      )
+        this.applyFetchedAlerts(newAlerts);
     } catch (err) {
-      this.handleFetchError(err);
+      if (this.fetchAbortController === abortController)
+        this.handleFetchError(err);
     } finally {
+      clearTimeout(deadline);
       if (this.fetchAbortController === abortController) {
         this.fetchAbortController = null;
+        this.fetchInProgress = false;
       }
-      this.fetchInProgress = false;
     }
   }
 
@@ -180,10 +187,8 @@ class AlertsService {
   }
 
   private applyFetchedAlerts(newAlerts: IServiceAlert[]): void {
-    const changed =
-      JSON.stringify(newAlerts) !== JSON.stringify(this.previousAlerts);
+    const changed = JSON.stringify(newAlerts) !== JSON.stringify(this.alerts);
 
-    this.previousAlerts = this.alerts;
     this.alerts = newAlerts;
     this.healthy = true;
     this.lastError = null;
@@ -198,15 +203,22 @@ class AlertsService {
   }
 
   private handleFetchError(err: unknown): void {
-    const isAbortError = err instanceof Error && err.name === 'AbortError';
+    const isAbortError =
+      typeof err === 'object' &&
+      err !== null &&
+      'name' in err &&
+      err.name === 'AbortError';
 
-    if (this.isStopping || isAbortError) {
+    if (this.isStopping) {
       return;
     }
 
     this.healthy = false;
-    this.lastError =
-      err instanceof Error ? err.message : 'Unknown error fetching alerts';
+    this.lastError = isAbortError
+      ? 'Alert feed request timed out'
+      : err instanceof Error
+        ? err.message
+        : 'Unknown error fetching alerts';
     console.error(`${tag()} Failed to fetch alerts:`, this.lastError);
   }
 }

@@ -14,12 +14,7 @@ import DAC from '../../../server/db/dac';
 import { IUserAccount, IPrivilegeLevel } from '../../../common/user.interface';
 import * as responses from '../../../common/server.responses';
 
-// Store reference to original email service before mocking
-const originalEmailService = jest.requireActual(
-  '../../../server/services/email.service'
-).default;
-
-// Mock the email service to avoid sending real emails during most tests
+// Always mock email: automated tests must never send real messages.
 jest.mock('../../../server/services/email.service', () => ({
   __esModule: true,
   default: {
@@ -89,8 +84,7 @@ if (!TEST_DB_URL) {
   );
 }
 
-// Test user data - use EMAIL_USER from env for the one real email test (sends to sender)
-import { EMAIL_USER } from '../../../server/env';
+// Test user data
 
 const adminUser = {
   credentials: { username: 'testadmin', password: 'Admin123!' },
@@ -286,6 +280,20 @@ beforeAll(async () => {
   );
 }, 30000);
 
+// Security-sensitive tests revoke sessions. Later tests start with a fresh login
+// instead of depending on a token issued before deactivation/password reset.
+beforeEach(async () => {
+  const account = await DAC.db.findUserAccountByUsername(
+    member2User.credentials.username
+  );
+  if (account?.status === 'Active') {
+    member2Token = await loginUser(
+      member2User.credentials.username,
+      member2User.credentials.password
+    );
+  }
+});
+
 afterAll(async () => {
   // Clean up sockets
   activeSockets.forEach((socket) => {
@@ -438,6 +446,13 @@ describe('PATCH /account/users/:username/status', () => {
     expect(success.name).toBe('StatusUpdated');
     const account = success.payload as IUserAccount;
     expect(account.status).toBe('Active');
+    const revoked = await request(
+      'GET',
+      `/account/users/${member2User.credentials.username}`,
+      undefined,
+      member2Token
+    );
+    expect(revoked.status).toBe(401);
   });
 
   test('Member can change own status', async () => {
@@ -539,20 +554,6 @@ describe('PATCH /account/users/:username/status', () => {
     expect(mockEmailService.sendAccountReactivatedEmail).toHaveBeenCalledWith(
       member2User.email,
       member2User.credentials.username
-    );
-  });
-
-  test('Send ONE real email to verify email service works', async () => {
-    // Use the real email service for this one test - sends to sender's own email
-    const result = await originalEmailService.sendAccountInactivatedEmail(
-      EMAIL_USER,
-      'TestUser'
-    );
-
-    // Verify email was sent successfully (true) or skipped if not configured (false)
-    expect(typeof result).toBe('boolean');
-    console.log(
-      `[Email Test] Real email ${result ? 'sent' : 'skipped (not configured)'} to ${EMAIL_USER}`
     );
   });
 });

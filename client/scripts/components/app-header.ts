@@ -6,6 +6,23 @@
  *   back  - Boolean attribute. If present, shows a back button that navigates to the previous page.
  */
 export class AppHeader extends HTMLElement {
+  private readonly onOutsideClick = (event: MouseEvent): void => {
+    if (!this.contains(event.target as Node)) this.setMenuOpen(false);
+  };
+
+  private setMenuOpen(open: boolean): void {
+    const button = this.querySelector<HTMLButtonElement>('#menu-icon');
+    button?.classList.toggle('is-active', open);
+    button?.setAttribute('aria-expanded', String(open));
+    this.querySelector('#dropdown-menu')?.classList.toggle('is-active', open);
+    this.querySelector('#dropdown-menu')?.toggleAttribute('inert', !open);
+    this.querySelector('#back-icon')?.classList.toggle('is-hidden', open);
+  }
+
+  disconnectedCallback(): void {
+    document.removeEventListener('click', this.onOutsideClick);
+  }
+
   connectedCallback(): void {
     this.classList.add('app-header');
 
@@ -21,12 +38,12 @@ export class AppHeader extends HTMLElement {
 
     this.innerHTML = `
       ${backButton}
-      <div class="menu-icon" id="menu-icon">
+      <button type="button" class="menu-icon" id="menu-icon" aria-label="Open navigation menu" aria-expanded="false" aria-controls="dropdown-menu">
         <span></span>
         <span></span>
         <span></span>
-      </div>
-      <nav class="dropdown-menu" id="dropdown-menu">
+      </button>
+      <nav class="dropdown-menu" id="dropdown-menu" aria-label="Main navigation" inert>
         <div class="dropdown-header">
           <a href="/" class="dropdown-title-link"><h2>ScottyGo</h2></a>
         </div>
@@ -72,22 +89,28 @@ export class AppHeader extends HTMLElement {
     `;
 
     const menuIcon = this.querySelector<HTMLElement>('#menu-icon');
-    const dropdownMenu = this.querySelector<HTMLElement>('#dropdown-menu');
     const backIcon = this.querySelector<HTMLElement>('#back-icon');
     const logoutBtn = this.querySelector<HTMLElement>('#menu-logout-btn');
 
     menuIcon?.addEventListener('click', () => {
-      menuIcon.classList.toggle('is-active');
-      dropdownMenu?.classList.toggle('is-active');
-      backIcon?.classList.toggle('is-hidden');
+      this.setMenuOpen(menuIcon.getAttribute('aria-expanded') !== 'true');
     });
+
+    this.addEventListener('keydown', (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        this.setMenuOpen(false);
+        menuIcon?.focus();
+      }
+    });
+    document.addEventListener('click', this.onOutsideClick);
 
     backIcon?.addEventListener('click', (e) => {
       e.preventDefault();
       history.back();
     });
 
-    logoutBtn?.addEventListener('click', () => {
+    logoutBtn?.addEventListener('click', (event) => {
+      event.preventDefault();
       localStorage.removeItem('token');
       localStorage.removeItem('username');
       window.location.replace('/auth');

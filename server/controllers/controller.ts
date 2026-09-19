@@ -3,8 +3,7 @@
 import { Router, Response, Request, NextFunction } from 'express';
 import { Server as SocketServer } from 'socket.io';
 import path from 'path';
-import jwt from 'jsonwebtoken';
-import { JWT_KEY as secretKey } from '../env';
+import { authenticateSession } from '../services/authentication.service';
 import type { ILogin, ITokenPayload } from '../../common/user.interface';
 import * as responses from '../../common/server.responses';
 
@@ -88,11 +87,11 @@ abstract class Controller {
    * Shared JWT middleware used by controllers that protect API routes.
    * Attaches decoded token payload to req.user for downstream handlers.
    */
-  protected authenticateToken(
+  protected async authenticateToken(
     req: Request,
     res: Response,
     next: NextFunction
-  ): void {
+  ): Promise<void> {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) {
       res
@@ -102,8 +101,8 @@ abstract class Controller {
     }
 
     try {
-      const decoded = jwt.verify(token, secretKey) as ITokenPayload;
-      (req as Request & { user: ITokenPayload }).user = decoded;
+      const { payload } = await authenticateSession(token);
+      (req as Request & { user: ITokenPayload }).user = payload;
       next();
     } catch {
       res

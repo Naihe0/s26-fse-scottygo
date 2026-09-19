@@ -10,6 +10,7 @@ import tripUpdatesService from '../services/trip-updates.service';
 import tripshotLiveStatusService from '../services/tripshot-livestatus.service';
 import memoryMonitorService from '../services/memory-monitor.service';
 import { TransitModel } from '../models/transit.model';
+import gtfsService from '../services/gtfs.service';
 import { parseLimit } from './transit.controller';
 import * as responses from '../../common/server.responses';
 
@@ -48,8 +49,10 @@ export default class HealthController extends Controller {
     const tripsHealthy = tripUpdatesService.isHealthy();
     const tripshotHealthy = tripshotLiveStatusService.isHealthy();
     const colorsAvailable = TransitModel.colorsAvailable;
+    const gtfsReady = gtfsService.isLoaded();
 
     const status = {
+      gtfs: { ready: gtfsReady },
       memory: memoryMonitorService.getSummary(),
       vehiclePositions: {
         healthy: vehiclesHealthy,
@@ -74,7 +77,7 @@ export default class HealthController extends Controller {
         consecutiveFailures: tripshotLiveStatusService.getConsecutiveFailures(),
         error: tripshotLiveStatusService.getLastError()
       },
-      overall: vehiclesHealthy && tripsHealthy && tripshotHealthy
+      overall: gtfsReady && vehiclesHealthy && tripsHealthy && tripshotHealthy
     };
 
     res.status(200).json(status);
