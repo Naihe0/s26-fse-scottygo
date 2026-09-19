@@ -50,4 +50,14 @@ The application database is `mongodb://127.0.0.1:27017/ScottyGoLocal`. Files are
 
 Unit tests can run with `npm run test:unit`. Integration and REST tests clear database collections. Jest accepts only a loopback MongoDB URL with database `scottygo_test` or `scottygo_test_*`; remote hosts, credentials, and application database names are refused before any application imports. The default is `mongodb://127.0.0.1:27019/scottygo_test`. To reuse the local MongoDB process, set `$env:TEST_DB_URL='mongodb://127.0.0.1:27017/scottygo_test_local'` in your test shell. Jest runs suites sequentially; do not start multiple test commands against the same test database.
 
+The opt-in real-provider suite downloads and streams the GTFS archive, so its shell also needs Git for Windows' `unzip.exe`. The local startup helper configures only its own child process; it does not update an independently opened test shell. With Node 24 already selected, prepare the test shell and run:
+
+```powershell
+$scottyGoGitRoot = Split-Path (Split-Path (Get-Command git.exe).Source)
+$env:Path = "$(Join-Path $scottyGoGitRoot 'usr\bin');$env:Path"
+npm run test:rest:e2e:transitAPI
+```
+
+An `unzip ENOENT` message means that executable is missing from the test process PATH, not that the transit feed is empty. The suite still requires the disposable MongoDB described above and available upstream providers.
+
 This local setup does not change the Render deployment or MongoDB Atlas.

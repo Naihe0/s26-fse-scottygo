@@ -12,6 +12,8 @@ This report records a source, dependency, operations, automated-test, and browse
 
 The detailed reports give evidence paths, severity, implemented behavior, regression coverage, and remaining work. P1 means a serious security, availability, or data-loss issue; P2 is a functional/reliability/accessibility defect; P3 is a maintainability or operational improvement. Priorities reflect this application, not a formal vulnerability scoring exercise.
 
+The subsequent [map exploration and live-tracking improvement cycle](../cycles/README.md) records its use cases, implementation, tests, and release evidence separately from this original audit.
+
 ## How the application works
 
 Parcel builds five browser entry points and one Express server. MongoDB persists accounts, subscriptions, condition reports, notifications, detours, and memory samples. The map combines PRT GTFS schedules and live feeds with CMU TripShot data. Most route and vehicle lookups use process-local caches. Socket.io distributes account changes, report notifications, and autocomplete results. Google Maps provides the map, places, and walking routes. Brevo email and Gemini moderation are optional; moderation has a limited local fallback.
@@ -63,8 +65,8 @@ Detailed workstream checkpoints remain in the linked reports and should not be a
 ## Remaining priorities
 
 1. Make the last-active-administrator invariant atomic across instances; require reauthentication for sensitive profile changes and plan stronger password, mailbox verification, logout/refresh-token policies. The personal deployment already uses seven-day JWTs, whereas the generic server fallback is longer.
-2. Add an atomic GTFS hot-refresh snapshot, previous-service-day overnight scheduling, CMU-aware date/time filtering, and an explicit stale-vehicle UI.
-3. Coordinate visual map restoration on browser hash changes and finish modal focus handling. Decide whether dormant calendar/time/dark controls should ship.
+2. Add an atomic GTFS hot-refresh snapshot, previous-service-day overnight scheduling, and CMU-aware date/time filtering. The subsequent improvement cycle adds explicit stale-vehicle status and expiry.
+3. Finish modal focus handling and decide whether dormant calendar/time/dark controls should ship. The subsequent improvement cycle coordinates visual restoration on history/hash changes and adds accessible map-view sharing.
 4. Define report retention/anonymization, persisted per-vehicle report state, distributed report/auth abuse controls, and indexed pagination as usage grows.
 5. Consolidate duplicated client request/modal/mute handling and split large account/filter/map modules gradually behind behavior tests. The historical [Sigrid refactoring plan](../Sigrid/Top_20_Refactoring_Candidates.md) remains useful context, but its line numbers/complexity measurements are not current.
 6. Review inherited Sigrid workflows tied to the original course organization and the original main-branch Render hook before reusing them for another project. This audit keeps the original service's deployment behavior intact.

@@ -65,6 +65,10 @@ export class FilterController {
   private stopCache = new Map<string, IStop[]>();
   /** Whether bulk data has been loaded */
   private bulkLoaded = false;
+  private allRoutesCache = new Map<string, IRoute>();
+  private viewRevision = 0;
+  private viewRendering = false;
+  private pendingRouteBody: HTMLElement | null = null;
 
   /** Return the stop cache (routeId:DIRECTION → stops) for the search component. */
   getStopsData(): Record<string, IStop[]> {
@@ -179,6 +183,10 @@ export class FilterController {
     selectorRoutes: IRoute[] = availableRoutes,
     useSystemFilter = true
   ): void {
+    if (useSystemFilter)
+      availableRoutes.forEach((route) =>
+        this.allRoutesCache.set(route.id, route)
+      );
     this.stateManager.setAvailableRoutes(availableRoutes);
 
     if (useSystemFilter) {
@@ -209,7 +217,7 @@ export class FilterController {
   /**
    * Initialize - load all transit data from the bulk endpoint in one call
    */
-  async initialize(): Promise<void> {
+  async initialize(renderInitial = true): Promise<void> {
     try {
       console.log('Fetching bulk transit data from backend...');
       const routes = await this.resolveInitialRoutes();
@@ -218,7 +226,7 @@ export class FilterController {
       if (this.transitRecoveryPending) this.showTransitLoadingBanner();
 
       // Render initial routes based on default filters (Rule R2: PRT ON, CMU OFF)
-      await this.renderFilteredRoutes();
+      if (renderInitial) await this.renderFilteredRoutes();
 
       // Start polling service health status every 60 seconds
       this.startHealthPolling();
@@ -1137,7 +1145,11 @@ export class FilterController {
    * Show the Route Info popup for the selected route.
    * Fetches schedule, alerts, and detours from the backend.
    */
-  async showRouteInfoPopup(routeId: string): Promise<void> {
+  async showRouteInfoPopup(
+    routeId: string,
+    isCurrent: () => boolean = () => true
+  ): Promise<void> {
+    if (!isCurrent()) return;
     prepareForNewPopup('route');
 
     const { routeName, routeColor } = this.getRouteInfoContext(routeId);
@@ -1149,8 +1161,20 @@ export class FilterController {
 
     this.attachRouteInfoPopup(popup);
     this.bindRouteInfoMinimize(popup, routeId, routeName, routeColor);
+    this.pendingRouteBody = body;
 
-    await this.loadRouteInfoBody(body, popup, routeId, routeName, routeColor);
+    try {
+      await this.loadRouteInfoBody(
+        body,
+        popup,
+        routeId,
+        routeName,
+        routeColor,
+        isCurrent
+      );
+    } finally {
+      if (this.pendingRouteBody === body) this.pendingRouteBody = null;
+    }
   }
 
   /**
@@ -1351,10 +1375,12 @@ export class FilterController {
     popup: HTMLElement,
     routeId: string,
     routeName: string,
-    routeColor: string
+    routeColor: string,
+    isCurrent: () => boolean
   ): Promise<void> {
     try {
       const schedule = await transitApiService.getRouteSchedule(routeId);
+      if (!isCurrent() || !popup.isConnected) return;
       if (!schedule) {
         this.renderRouteInfoMessage(body, 'Schedule not available');
         return;
@@ -1365,6 +1391,7 @@ export class FilterController {
       // Re-bind minimize after body replaced
       this.bindRouteInfoMinimize(popup, routeId, routeName, routeColor);
     } catch (err) {
+      if (!isCurrent() || !popup.isConnected) return;
       console.error('Error fetching route schedule:', err);
       this.renderRouteInfoMessage(body, 'Failed to load schedule');
     }
@@ -1785,6 +1812,66 @@ export class FilterController {
     await this.showNearbyStops(position, isCurrent);
   }
 
+  /** Revoke both foreground restoration and any older startup recovery. */
+  invalidateView(): void {
+    this.viewRevision++;
+    this.viewRendering = false;
+    if (this.pendingRouteBody?.isConnected) {
+      this.renderRouteInfoMessage(
+        this.pendingRouteBody,
+        'Schedule loading stopped. Select the route again to retry.'
+      );
+    }
+    this.pendingRouteBody = null;
+  }
+
+  /** Automatic GPS restoration must not replace a stop or directions selection. */
+  canRefreshLocation(): boolean {
+    return this.canRecoverMap();
+  }
+
+  /** Restore the entire current filter view without changing its filter values. */
+  async restoreView(
+    position: ILatLng,
+    ownsNavigation: () => boolean
+  ): Promise<boolean> {
+    const revision = ++this.viewRevision;
+    if (!ownsNavigation() || this.directionsController.isActive) return false;
+    this.viewRendering = true;
+    this.clearMapForDefaultState();
+    this.resetNearbyStopsTracking();
+    const predictionSession = PredictionController.getInstance().sessionVersion;
+    const isCurrent = () =>
+      revision === this.viewRevision &&
+      ownsNavigation() &&
+      !this.directionsController.isActive &&
+      predictionSession === PredictionController.getInstance().sessionVersion;
+    try {
+      let routes = this.allRoutesCache.size
+        ? Array.from(this.allRoutesCache.values())
+        : this.getCurrentState().availableRoutes;
+      if (this.shouldHydrateCMURoutes(routes)) {
+        const fetched = await this.fetchAllRoutes();
+        if (!isCurrent()) return false;
+        if (!fetched.length) return false;
+        routes = fetched;
+      }
+      if (!isCurrent()) return false;
+      this.publishInitializedRoutes(routes);
+      this.clearSelectedRouteIfSystemDisabled(this.getCurrentState());
+      this.stateManager.reapplyFilters();
+      const state = this.getCurrentState();
+      if (this.handleAllSystemsDisabled(state.selectedSystems)) return true;
+      if (state.selectedTime) return await this.applyDateTimeFilter(isCurrent);
+      if (state.selectedRouteId)
+        return await this.applyRouteFilter(state.selectedRouteId, isCurrent);
+      const rendered = await this.renderFilteredRoutes(isCurrent);
+      return (await this.showNearbyStops(position, isCurrent)) && rendered;
+    } finally {
+      if (revision === this.viewRevision) this.viewRendering = false;
+    }
+  }
+
   /**
    * Clear active map overlays and polling before restoring default state.
    */
@@ -1988,6 +2075,7 @@ export class FilterController {
 
   private canRecoverMap(): boolean {
     return (
+      !this.viewRendering &&
       !this.directionsController.isActive &&
       !PredictionController.getInstance().hasActiveSelection &&
       !document.getElementById(MAP_POPUP_ID)
@@ -1997,6 +2085,7 @@ export class FilterController {
   private recoveryContext(): string {
     const state = this.getCurrentState();
     return JSON.stringify([
+      this.viewRevision,
       state.selectedRouteId,
       state.selectedDate,
       state.selectedTime,
@@ -2137,6 +2226,7 @@ export class FilterController {
       const state = this.getCurrentState();
       for (const route of freshRoutes) {
         this.routeColorCache.set(route.id, route.color);
+        this.allRoutesCache.set(route.id, route);
       }
       this.stateManager.setAvailableRoutes(freshRoutes);
 

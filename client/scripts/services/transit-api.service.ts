@@ -265,18 +265,22 @@ export class TransitApiService {
   /** GET /transit/vehicles/:routeId — live vehicle positions. */
   async getVehicles(
     routeId: string,
-    timeParam?: string
+    timeParam?: string,
+    signal?: AbortSignal
   ): Promise<IVehicleResult | null> {
     try {
       const url = timeParam
         ? `/transit/vehicles/${routeId}?tm=${encodeURIComponent(timeParam)}`
         : `/transit/vehicles/${routeId}`;
       const res = await axios.get(url, {
+        signal,
+        timeout: 15000,
         headers: authHeaders(),
         validateStatus: () => true
       });
       if (res.status === 200 && res.data.name === 'VehiclesLocated') {
-        return { vehicles: res.data.payload ?? [], source: res.data.source };
+        if (!Array.isArray(res.data.payload)) return null;
+        return { vehicles: res.data.payload, source: res.data.source };
       }
       console.error('[TransitApiService] getVehicles failed:', res.data);
       return null;

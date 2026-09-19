@@ -1,0 +1,42 @@
+.view-link-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.view-link-dialog {
+  width: min(28rem, calc(100vw - 3rem));
+  box-sizing: border-box;
+  padding: 1.5rem;
+  border: 0;
+  border-radius: 1rem;
+  box-shadow: 0 12px 48px #0004;
+  font-family: inherit;
+}
+
+.view-link-dialog::backdrop {
+  background: #0006;
+}
+.view-link-dialog h2 {
+  margin-top: 0;
+}
+.view-link-dialog p {
+  line-height: 1.5;
+}
+.view-link-dialog label {
+  display: block;
+  font-weight: 600;
+}
+.view-link-dialog input {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0.5rem 0 1rem;
+  padding: 0.75rem;
+}
+.view-link-dialog button {
+  padding: 0.6rem 1rem;
+  cursor: pointer;
+}

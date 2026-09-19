@@ -1,0 +1,50 @@
+.live-tracking-status {
+  position: absolute;
+  top: 78px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 25;
+  box-sizing: border-box;
+  max-width: min(360px, calc(100% - 160px));
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.97);
+  color: #374151;
+  box-shadow: 0 2px 8px #00000016;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+  pointer-events: none;
+}
+
+.live-tracking-status[hidden] {
+  display: none;
+}
+.live-tracking-status[data-state='live'] {
+  color: #166534;
+  border-color: #86b99a;
+}
+.live-tracking-status[data-state='delayed'],
+.live-tracking-status[data-state='unavailable'],
+.live-tracking-status[data-state='partial'] {
+  color: #854d0e;
+  border-color: #d4a762;
+}
+.map-container:has(#directions-panel) .live-tracking-status {
+  top: auto;
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+}
+body.dark .live-tracking-status {
+  background: #1f2937;
+  color: #e5e7eb;
+  border-color: #6b7280;
+}
+body.dark .live-tracking-status[data-state='live'] {
+  color: #bbf7d0;
+}
+body.dark .live-tracking-status[data-state='delayed'],
+body.dark .live-tracking-status[data-state='unavailable'],
+body.dark .live-tracking-status[data-state='partial'] {
+  color: #fde68a;
+}

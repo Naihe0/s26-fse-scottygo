@@ -9,6 +9,8 @@ import DAC from '../db/dac';
 import trueTimeService from '../services/truetime.service';
 import gtfsService from '../services/gtfs.service';
 import tripshotService from '../services/tripshot.service';
+import { validateNearbyRadius } from '../services/transit-query-limits';
+import type { IAppError } from '../../common/server.responses';
 import {
   parseTransitDate,
   validateTransitTime
@@ -34,6 +36,9 @@ const COLOR_RETRY_INTERVAL_MS = 5 * 60 * 1000;
 
 /** Maximum number of color retry attempts before giving up until next daily refresh. */
 const COLOR_MAX_RETRIES = 12; // 12 × 5 min = 1 hour of retrying
+
+const DETOUR_GEOMETRY_TTL_MS = 60_000;
+const DETOUR_GEOMETRY_CAPACITY = 64;
 
 // ── Nearby Stops Constants (TUC4 — Discover Stops & Schedules) ─────────
 
@@ -137,6 +142,18 @@ export class TransitModel {
    */
   private static bulkDataCache: IBulkTransitData | null = null;
 
+  private static detourLoad: Promise<IDetour[]> | null = null;
+  private static detourCacheClear: Promise<void> | null = null;
+  private static detourCacheGeneration = 0;
+  private static detourGeometryCache = new Map<
+    string,
+    { value: IDetourGeometry[]; expiresAt: number }
+  >();
+  private static detourGeometryLoads = new Map<
+    string,
+    Promise<IDetourGeometry[]>
+  >();
+
   /** Whether route colors were fetched from TrueTime. */
   static get colorsAvailable(): boolean {
     return TransitModel.hasColors;
@@ -237,6 +254,19 @@ export class TransitModel {
    * would miss even though detours:all was already cached.
    */
   static async getDetours(routeIds?: string[]): Promise<IDetour[]> {
+    if (TransitModel.detourCacheClear) await TransitModel.detourCacheClear;
+    const pending =
+      TransitModel.detourLoad ??
+      TransitModel.loadAllDetours(TransitModel.detourCacheGeneration);
+    TransitModel.detourLoad = pending;
+    try {
+      return TransitModel.filterDetoursByRouteIds(await pending, routeIds);
+    } finally {
+      if (TransitModel.detourLoad === pending) TransitModel.detourLoad = null;
+    }
+  }
+
+  private static async loadAllDetours(generation: number): Promise<IDetour[]> {
     const CACHE_KEY = 'detours:all';
 
     const cached = await readCache<IDetour[]>(CACHE_KEY);
@@ -244,7 +274,7 @@ export class TransitModel {
       console.log(
         `[TransitModel ${new Date().toISOString()}] Detours (${CACHE_KEY}) served from cache`
       );
-      return TransitModel.filterDetoursByRouteIds(cached, routeIds);
+      return cached;
     }
 
     console.log(
@@ -253,12 +283,13 @@ export class TransitModel {
     // Cache ALL route detours at once to limit TrueTime API calls
     try {
       const detours = await trueTimeService.getDetours();
-      await writeCache(CACHE_KEY, 'detours', detours);
+      if (generation === TransitModel.detourCacheGeneration)
+        await writeCache(CACHE_KEY, 'detours', detours);
       console.log(
         `[TransitModel ${new Date().toISOString()}] Cached ${detours.length} detours`
       );
 
-      return TransitModel.filterDetoursByRouteIds(detours, routeIds);
+      return detours;
     } catch (err) {
       console.warn(
         `[TransitModel ${new Date().toISOString()}] Failed to cache detours:`,
@@ -268,14 +299,66 @@ export class TransitModel {
     }
   }
 
+  private static async getDetourGeometry(
+    routeId: string
+  ): Promise<IDetourGeometry[]> {
+    if (TransitModel.detourCacheClear) await TransitModel.detourCacheClear;
+    const cached = TransitModel.detourGeometryCache.get(routeId);
+    if (cached && cached.expiresAt > Date.now()) {
+      // Refresh insertion order for least-recently-used eviction.
+      TransitModel.detourGeometryCache.delete(routeId);
+      TransitModel.detourGeometryCache.set(routeId, cached);
+      return cached.value;
+    }
+    TransitModel.detourGeometryCache.delete(routeId);
+    const existing = TransitModel.detourGeometryLoads.get(routeId);
+    if (existing) return existing;
+    if (TransitModel.detourGeometryLoads.size >= DETOUR_GEOMETRY_CAPACITY) {
+      // Avoid unbounded concurrent provider requests from arbitrary distinct IDs.
+      throw new Error('Detour geometry is busy; please retry shortly');
+    }
+    const generation = TransitModel.detourCacheGeneration;
+    const pending = trueTimeService.getDetourGeometry(routeId).then((value) => {
+      if (generation === TransitModel.detourCacheGeneration) {
+        while (
+          TransitModel.detourGeometryCache.size >= DETOUR_GEOMETRY_CAPACITY
+        ) {
+          const oldest = TransitModel.detourGeometryCache.keys().next().value!;
+          TransitModel.detourGeometryCache.delete(oldest);
+        }
+        TransitModel.detourGeometryCache.set(routeId, {
+          value,
+          expiresAt: Date.now() + DETOUR_GEOMETRY_TTL_MS
+        });
+      }
+      return value;
+    });
+    TransitModel.detourGeometryLoads.set(routeId, pending);
+    try {
+      return await pending;
+    } finally {
+      if (TransitModel.detourGeometryLoads.get(routeId) === pending)
+        TransitModel.detourGeometryLoads.delete(routeId);
+    }
+  }
+
   /**
    * Return detours augmented with geometry for a single route.
    * Geometry is sourced from TrueTime getpatterns (dtrid/dtrpt fields).
    */
   static async getDetoursWithGeometry(routeId: string): Promise<IDetour[]> {
+    const normalizedRouteId =
+      typeof routeId === 'string' ? routeId.trim().toUpperCase() : '';
+    if (!/^[A-Z0-9][A-Z0-9_-]{0,63}$/.test(normalizedRouteId)) {
+      throw {
+        type: 'ClientError',
+        name: 'RouteNotFound',
+        message: 'Invalid route ID'
+      } as IAppError;
+    }
     const [detours, geometry] = await Promise.all([
-      TransitModel.getDetours([routeId]),
-      trueTimeService.getDetourGeometry(routeId).catch((err) => {
+      TransitModel.getDetours([normalizedRouteId]),
+      TransitModel.getDetourGeometry(normalizedRouteId).catch((err) => {
         console.warn(
           `[TransitModel ${new Date().toISOString()}] Failed to fetch detour geometry for ${routeId}:`,
           err
@@ -308,7 +391,7 @@ export class TransitModel {
           description: 'Detour active',
           startdt: '',
           enddt: '',
-          routeIds: [routeId],
+          routeIds: [normalizedRouteId],
           geometry: geom
         });
       }
@@ -462,6 +545,7 @@ export class TransitModel {
     radiusMeters: number = DEFAULT_NEARBY_RADIUS_M,
     filters?: INearbyStopsFilters
   ): Promise<INearbyStopsPayload> {
+    validateNearbyRadius(radiusMeters);
     // 1. Collect candidate routes
     let routes = await TransitModel.getRoutes();
 
@@ -589,7 +673,28 @@ export class TransitModel {
 
   /** Clear all transit cache entries, or only entries of a specific type. */
   static async clearCache(dataType?: ITransitCache['dataType']): Promise<void> {
-    await DAC.db.clearTransitCache(dataType);
+    if (!dataType || dataType === 'detours') {
+      const priorClear = TransitModel.detourCacheClear;
+      const pendingLoad = TransitModel.detourLoad;
+      TransitModel.detourCacheGeneration++;
+      TransitModel.detourGeometryCache.clear();
+      TransitModel.detourGeometryLoads.clear();
+      const clearing = (async () => {
+        // Finish already-started writes before deleting; new reads wait above.
+        await priorClear?.catch(() => undefined);
+        await pendingLoad?.catch(() => undefined);
+        await DAC.db.clearTransitCache(dataType);
+      })();
+      TransitModel.detourCacheClear = clearing;
+      try {
+        await clearing;
+      } finally {
+        if (TransitModel.detourCacheClear === clearing)
+          TransitModel.detourCacheClear = null;
+      }
+    } else {
+      await DAC.db.clearTransitCache(dataType);
+    }
     TransitModel.bulkDataCache = null;
     console.log(
       `[TransitModel ${new Date().toISOString()}] Cache cleared${dataType ? ` (type: ${dataType})` : ''}`

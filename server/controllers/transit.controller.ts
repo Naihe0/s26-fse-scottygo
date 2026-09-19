@@ -9,6 +9,7 @@ import tripUpdatesService from '../services/trip-updates.service';
 import { TransitModel } from '../models/transit.model';
 import gtfsService from '../services/gtfs.service';
 import alertsService from '../services/alerts.service';
+import { validateNearbyRadius } from '../services/transit-query-limits';
 import {
   parseTransitDate,
   validateTransitTime
@@ -405,19 +406,8 @@ export default class BusController extends Controller {
         : typeof rawRadius === 'string' && rawRadius.trim()
           ? Number(rawRadius)
           : NaN;
-    if (
-      radiusMeters !== undefined &&
-      (!Number.isFinite(radiusMeters) || radiusMeters <= 0)
-    ) {
-      res.status(400).json({
-        type: 'ClientError',
-        name: 'OutOfBounds',
-        message: 'radiusMeters must be a positive number'
-      });
-      return;
-    }
-
     try {
+      if (radiusMeters !== undefined) validateNearbyRadius(radiusMeters);
       const filters = this.parseNearbyStopsFilters(req);
       const payload = await TransitModel.getNearbyStops(
         lat,

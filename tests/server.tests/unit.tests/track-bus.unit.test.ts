@@ -23,6 +23,7 @@ import {
   IVehicle
 } from '../../../common/transit.interface';
 import { IAppError } from '../../../common/server.responses';
+import DAC, { type IDatabase } from '../../../server/db/dac';
 
 type MockResponse = Partial<Response> & {
   status: jest.Mock;
@@ -138,6 +139,12 @@ describe('TUC2 – Track Bus in Real-Time unit tests', () => {
   // ── getDetoursWithGeometry ──────────────────────────────────────────
 
   describe('getDetoursWithGeometry', () => {
+    beforeEach(async () => {
+      DAC.db = {
+        clearTransitCache: jest.fn().mockResolvedValue(undefined)
+      } as unknown as IDatabase;
+      await TransitModel.clearCache('detours');
+    });
     const baseDetours: IDetour[] = [
       {
         id: 'det1',

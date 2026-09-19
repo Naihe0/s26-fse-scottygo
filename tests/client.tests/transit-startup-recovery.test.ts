@@ -12,6 +12,7 @@ import type {
   IStop,
   INearbyStopsPayload
 } from '../../common/transit.interface';
+import { registerActivePopup } from '../../client/scripts/utils/map-popup';
 
 let mockState: IMapState;
 const mockRenderer = {
@@ -39,7 +40,10 @@ const mockPredictions = {
   hasActiveSelection: false,
   sessionVersion: 0,
   setRouteColorProvider: jest.fn(),
-  setWalkTimeProvider: jest.fn()
+  setWalkTimeProvider: jest.fn(),
+  stopPolling: jest.fn(() => {
+    mockPredictions.sessionVersion++;
+  })
 };
 const mockPublishRoutes = jest.fn((routes: IRoute[]) => {
   mockState.availableRoutes = routes;
@@ -55,7 +59,8 @@ jest.mock('../../client/scripts/state/map-state', () => ({
   MapStateManager: {
     getInstance: () => ({
       getState: () => ({ ...mockState }),
-      setAvailableRoutes: mockPublishRoutes
+      setAvailableRoutes: mockPublishRoutes,
+      reapplyFilters: jest.fn()
     })
   }
 }));
@@ -76,10 +81,12 @@ jest.mock('../../client/scripts/controllers/prediction-controller', () => ({
 }));
 jest.mock('../../client/scripts/utils/map-popup', () => ({
   MAP_POPUP_ID: 'map-popup',
-  dismissPopup: jest.fn()
+  dismissPopup: jest.fn(),
+  prepareForNewPopup: jest.fn(),
+  registerActivePopup: jest.fn()
 }));
 jest.mock('../../client/scripts/services/auth.service', () => ({
-  AuthService: {}
+  AuthService: { getInstance: () => ({ isRouteSubscribed: () => false }) }
 }));
 jest.mock('../../client/scripts/services/transit-api.service', () => ({
   transitApiService: {
@@ -90,7 +97,8 @@ jest.mock('../../client/scripts/services/transit-api.service', () => ({
     getStops: jest.fn(),
     getDetourGeometry: jest.fn(),
     getNearbyStops: jest.fn(),
-    filterRoutesByDateTime: jest.fn()
+    filterRoutesByDateTime: jest.fn(),
+    getRouteSchedule: jest.fn()
   }
 }));
 
@@ -476,4 +484,75 @@ describe('Transit readiness recovery', () => {
       expect(api.getRoutes).toHaveBeenCalledTimes(2);
     }
   );
+
+  test('full view restoration keeps recovered route colors and CMU metadata', async () => {
+    api.getBulkData.mockReset().mockResolvedValue(warmBulk);
+    api.getHealth
+      .mockReset()
+      .mockResolvedValue(health(true))
+      .mockResolvedValueOnce({
+        ...health(true),
+        trueTimeColors: { available: false }
+      });
+    await controller.initialize();
+    await tick();
+    const colored = { ...route, color: '#112233' };
+    const shuttle = {
+      ...route,
+      id: 'CMU-test',
+      system: 'CMU' as const,
+      color: '#C41230'
+    };
+    api.getRoutes.mockResolvedValue([colored, shuttle]);
+    await tick(60000);
+    mockState.selectedRouteId = route.id;
+    await controller.restoreView(position, () => true);
+    expect(mockState.availableRoutes).toEqual(
+      expect.arrayContaining([colored, shuttle])
+    );
+    expect(mockTracker.startPolling).toHaveBeenLastCalledWith(
+      route.id,
+      '#112233'
+    );
+  });
+
+  test.each(['stop', 'popup', 'directions'] as const)(
+    'passive GPS restoration is deferred while a %s selection is active',
+    (kind) => {
+      if (kind === 'stop') mockPredictions.hasActiveSelection = true;
+      if (kind === 'directions') mockDirections.isActive = true;
+      if (kind === 'popup')
+        document.body.insertAdjacentHTML(
+          'beforeend',
+          '<div id="map-popup"></div>'
+        );
+      expect(controller.canRefreshLocation()).toBe(false);
+    }
+  );
+
+  test('canceled route schedule loading becomes retryable and cannot rebind an obsolete popup', async () => {
+    document.body.insertAdjacentHTML(
+      'beforeend',
+      '<div class="map-container"></div>'
+    );
+    const pending = deferred<null>();
+    api.getRouteSchedule.mockReturnValueOnce(pending.promise);
+    let current = true;
+    const request = controller.showRouteInfoPopup(route.id, () => current);
+    expect(document.querySelector('.map-popup__body')!.textContent).toContain(
+      'Loading schedule'
+    );
+    current = false;
+    controller.invalidateView();
+    jest.mocked(registerActivePopup).mockClear();
+    expect(document.querySelector('.map-popup__body')!.textContent).toContain(
+      'Select the route again to retry'
+    );
+    pending.resolve(null);
+    await request;
+    expect(document.querySelector('.map-popup__body')!.textContent).toContain(
+      'Select the route again to retry'
+    );
+    expect(registerActivePopup).not.toHaveBeenCalled();
+  });
 });

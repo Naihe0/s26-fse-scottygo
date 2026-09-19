@@ -235,13 +235,19 @@ export class TransitSearch extends HTMLElement {
   }
 
   private clearSearch(): void {
-    if (this.searchInput) this.searchInput.value = '';
-    if (this.clearBtn) this.clearBtn.classList.remove('is-visible');
-    this.hideDropdown();
+    this.setSelection(null);
     this.dispatchEvent(
       new CustomEvent('search', { detail: { query: '' }, bubbles: true })
     );
     this.searchInput?.focus();
+  }
+
+  /** Synchronize navigation without emitting another search or moving focus. */
+  setSelection(routeId: string | null): void {
+    if (this.searchInput) this.searchInput.value = routeId ?? '';
+    this.clearBtn?.classList.toggle('is-visible', !!routeId);
+    this.hideDropdown();
+    if (this.dropdown) this.dropdown.replaceChildren();
   }
 
   private buildTemplate(): string {

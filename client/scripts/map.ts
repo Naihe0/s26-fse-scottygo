@@ -38,6 +38,9 @@ import type {
 // Import state management and controllers
 import { MapStateManager } from './state/map-state';
 import { URLSyncManager } from './state/url-sync';
+import { MapNavigationCoordinator } from './state/map-navigation';
+import { synchronizeMapFilterControls } from './state/map-filter-controls';
+import { mapSignInPath } from './utils/map-auth-return';
 import { FilterController } from './controllers/filter-controller';
 import { DirectionsController } from './controllers/directions-controller';
 import { RouteRenderer } from './renderers/route-renderer';
@@ -99,6 +102,23 @@ const filterController = FilterController.getInstance();
 const directionsController = DirectionsController.getInstance();
 const routeRenderer = RouteRenderer.getInstance();
 const vehicleTracker = VehicleTracker.getInstance();
+const mapNavigation = new MapNavigationCoordinator({
+  getState: () => mapStateManager.getState(),
+  updateFilters: (filters) => mapStateManager.updateFilters(filters),
+  resetFilters: () => mapStateManager.resetFilters(),
+  writeURL: (mode) =>
+    urlSyncManager.updateURL(mapStateManager.getState(), mode),
+  synchronizeControls: () => synchronizeFilterControls(),
+  invalidateRendering: () => filterController.invalidateView(),
+  directionsActive: () => directionsController.isActive,
+  directionsSession: () => directionsController.sessionVersion,
+  render: (isCurrent) =>
+    filterController.restoreView(getEffectiveLocation(), isCurrent),
+  showRouteInfo: (route, isCurrent) =>
+    filterController.showRouteInfoPopup(route, isCurrent),
+  onError: () =>
+    showToast('Some map data could not load. Try your selection again.')
+});
 
 function showSubscriptionToast(message: string): void {
   showToast(message);
@@ -156,7 +176,7 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
   e.preventDefault();
   const loggedIn: boolean = await authService.isLoggedIn(); // Check if user logged in
   if (!loggedIn) {
-    window.location.replace('/auth'); // Redirect to auth page
+    window.location.replace(mapSignInPath());
     return;
   }
 
@@ -236,24 +256,9 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
       }
     });
     directionsController.setExitCallback(async () => {
-      // A4: Exit directions mode → restore previous map state
-      const session = directionsController.sessionVersion;
-      const isCurrent = () =>
-        directionsController.sessionVersion === session &&
-        !directionsController.isActive;
       enableFilterControls();
       removeDirectionsPanel();
-
-      // If a route was selected before directions, re-apply that filter
-      const prevRoute = mapStateManager.getState().selectedRouteId;
-      if (prevRoute) {
-        await filterController.applyRouteFilter(prevRoute, isCurrent);
-      } else {
-        await filterController.restoreDefaultState(
-          getEffectiveLocation(),
-          isCurrent
-        );
-      }
+      await mapNavigation.restore();
     });
 
     // Initialize toggle panels
@@ -261,6 +266,14 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
 
     // Initialize URL sync and restore state from URL
     urlSyncManager.initialize();
+    urlSyncManager.onRestore(() => {
+      void mapNavigation.restore();
+    });
+    window.addEventListener('pagehide', () => mapNavigation.stop());
+    window.addEventListener('pageshow', (event) => {
+      if (event.persisted) mapNavigation.resume();
+    });
+    synchronizeFilterControls();
 
     // Set up route selector update callback before initializing filter controller
     filterController.setRouteSelectorCallback((routes) => {
@@ -274,7 +287,7 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
     });
 
     // Initialize filter controller (fetches and renders routes)
-    await filterController.initialize();
+    await filterController.initialize(false);
 
     // Sync subscription state from server so bell icons are accurate
     await authService.syncSubscriptionsFromServer();
@@ -298,15 +311,7 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
       }
     });
 
-    // After initialization, if a route was restored from URL, apply route filter
-    // to render stops/polylines and show the route info popup (same as a fresh
-    // route selection — keeps the popup tab visible after a page refresh).
-    const restoredState = mapStateManager.getState();
-    if (restoredState.selectedRouteId) {
-      console.log('Restoring route from URL:', restoredState.selectedRouteId);
-      await filterController.applyRouteFilter(restoredState.selectedRouteId);
-      await filterController.showRouteInfoPopup(restoredState.selectedRouteId);
-    }
+    await mapNavigation.start();
 
     // Request user location for centering map
     requestUserLocation();
@@ -418,6 +423,30 @@ function closeAllPanels(): void {
   hidePanelIfOpen(panels.route);
 }
 
+function synchronizeFilterControls(): void {
+  dismissRoutePickPopup();
+  synchronizeMapFilterControls(mapStateManager.getState());
+}
+
+function selectRoute(routeId: string | null, showInfo = false): void {
+  if (directionsController.isActive) return;
+  const systems = { ...mapStateManager.getState().selectedSystems };
+  if (routeId) systems[routeId.startsWith('CMU-') ? 'cmu' : 'prt'] = true;
+  void mapNavigation.commit(
+    { selectedRouteId: routeId, selectedSystems: systems },
+    showInfo
+  );
+}
+
+function refreshNearbyLocationView(): void {
+  if (
+    !mapStateManager.getState().selectedRouteId &&
+    filterController.canRefreshLocation()
+  ) {
+    void mapNavigation.restore();
+  }
+}
+
 type PanelCollection = ReturnType<typeof getPanels>;
 type PanelName = keyof PanelCollection;
 type ToggleablePanel = {
@@ -484,24 +513,19 @@ const registerTransitSearchEvents = (): void => {
     console.log('Search query:', query);
 
     if (!query) {
-      // Clear route-filter visual selection and restore default nearby-stops view.
-      const routeSelector = document.querySelector(
-        'route-selector-panel'
-      ) as IRouteSelectorElement | null;
-      routeSelector?.clearSelection();
-      void filterController.restoreDefaultState(getEffectiveLocation());
+      selectRoute(null);
     }
   });
 
   document.addEventListener('searchSelectRoute', (e: Event) => {
     const { routeId } = (e as CustomEvent).detail;
-    mapStateManager.updateFilter('selectedRouteId', routeId);
-    void filterController.applyRouteFilter(routeId);
+    selectRoute(routeId);
   });
 
   document.addEventListener('searchSelectStop', (e: Event) => {
     const { stop } = (e as CustomEvent).detail as { stop: IStop | undefined };
-    if (!stop) return;
+    if (!stop || directionsController.isActive) return;
+    mapNavigation.cancel();
     mapProvider.setCenter({ lat: stop.lat, lng: stop.lon });
     void filterController.showStopDetailsFromSearch(stop);
   });
@@ -533,16 +557,8 @@ const registerFilterPanelToggleEvents = (): void => {
     );
   });
 
-  document.addEventListener('clearFilters', async () => {
-    console.log('Clear all filters clicked');
-    closeAllPanels();
-    // Clear route selector visual state
-    const routeSelector = document.querySelector(
-      'route-selector-panel'
-    ) as IRouteSelectorElement;
-    if (routeSelector) routeSelector.clearSelection();
-    await filterController.restoreDefaultState(getEffectiveLocation());
-    urlSyncManager.clearURL();
+  document.addEventListener('clearFilters', () => {
+    if (!directionsController.isActive) void mapNavigation.clear();
   });
 };
 
@@ -581,15 +597,16 @@ const registerZoomAndMapEvents = (): void => {
 };
 
 const registerFilterApplicationEvents = (): void => {
-  document.addEventListener('systemFilterApplied', async (e: Event) => {
+  document.addEventListener('systemFilterApplied', (e: Event) => {
+    if (directionsController.isActive) return;
     const customEvent = e as CustomEvent;
     const { prt, cmu } = customEvent.detail;
     console.log('System filters applied - PRT:', prt, 'CMU:', cmu);
-    mapStateManager.updateFilter('selectedSystems', { prt, cmu });
-    await filterController.applySystemFilter();
+    void mapNavigation.commit({ selectedSystems: { prt, cmu } });
   });
 
-  document.addEventListener('directionFilterApplied', async (e: Event) => {
+  document.addEventListener('directionFilterApplied', (e: Event) => {
+    if (directionsController.isActive) return;
     const customEvent = e as CustomEvent;
     const { inbound, outbound } = customEvent.detail;
     console.log(
@@ -598,8 +615,7 @@ const registerFilterApplicationEvents = (): void => {
       'Outbound:',
       outbound
     );
-    mapStateManager.updateFilter('selectedDirections', { inbound, outbound });
-    await filterController.applyDirectionFilter();
+    void mapNavigation.commit({ selectedDirections: { inbound, outbound } });
   });
 };
 
@@ -755,18 +771,10 @@ const registerBusReportEvents = (): void => {
 };
 
 const registerRouteSelectionEvents = (): void => {
-  document.addEventListener('routeSelected', async (e: Event) => {
+  document.addEventListener('routeSelected', (e: Event) => {
     const customEvent = e as CustomEvent<IRouteSelection>;
     const route = customEvent.detail.route;
-    if (!route) {
-      console.log('Route deselected, returning to nearby stops view');
-      await filterController.restoreDefaultState(getEffectiveLocation());
-      return;
-    }
-    console.log('Route selected:', route);
-    mapStateManager.updateFilter('selectedRouteId', route);
-    await filterController.applyRouteFilter(route);
-    await filterController.showRouteInfoPopup(route);
+    selectRoute(route, true);
   });
 };
 
@@ -821,7 +829,7 @@ const registerLocationSearchEvents = (): void => {
     hideUserLocationMarker();
     addPlannedLocationMarker(lat, lng, label);
     filterController.setUserLocation(plannedLoc);
-    filterController.showNearbyStops(plannedLoc);
+    void mapNavigation.restore();
     directionsController.updatePlannedLocation(plannedLoc);
     mapProvider.setCenter(plannedLoc);
     showSubscriptionToast(`Location set: ${label}`);
@@ -836,7 +844,7 @@ const registerLocationSearchEvents = (): void => {
     if (state.currentLocation) {
       showUserLocationMarker();
       filterController.setUserLocation(state.currentLocation);
-      await filterController.restoreDefaultState(state.currentLocation);
+      await mapNavigation.restore();
       mapProvider.setCenter(state.currentLocation);
       showSubscriptionToast('Using current location');
     }
@@ -886,7 +894,7 @@ function requestUserLocation(): void {
 
               // TUC4 Step 2: Show nearby stops within 1km of user location
               filterController.setUserLocation({ lat, lng });
-              filterController.showNearbyStops({ lat, lng });
+              refreshNearbyLocationView();
             } else {
               console.log(
                 'Custom planned location active — GPS blue dot suppressed on load'
@@ -958,7 +966,7 @@ function centerOnCmuCampus(): void {
     'CMU Campus'
   );
   filterController.setUserLocation(CMU_CAMPUS_DEFAULT);
-  filterController.showNearbyStops(CMU_CAMPUS_DEFAULT);
+  refreshNearbyLocationView();
   directionsController.updatePlannedLocation(CMU_CAMPUS_DEFAULT);
 }
 
@@ -1064,7 +1072,7 @@ function restorePlannedLocationMarker(): void {
 
   // Use planned location for nearby stops, map center, and directions
   filterController.setUserLocation({ lat, lng });
-  filterController.showNearbyStops({ lat, lng });
+  refreshNearbyLocationView();
   directionsController.updatePlannedLocation({ lat, lng });
   mapProvider.setCenter({ lat, lng });
   mapProvider.setZoom(15);
@@ -1117,7 +1125,7 @@ function showPlannedLocationPopup(
       const state = mapStateManager.getState();
       if (state.currentLocation) {
         filterController.setUserLocation(state.currentLocation);
-        await filterController.restoreDefaultState(state.currentLocation);
+        await mapNavigation.restore();
         mapProvider.setCenter(state.currentLocation);
       }
       showSubscriptionToast('Using current location');

@@ -1,3 +1,5 @@
+@import './live-tracking.css';
+
 :root {
   --primary: #c41230;
   --bg-light: #f3f4f6;
@@ -726,9 +728,19 @@ body.dark .filter-label {
 }
 
 .toggle-switch input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  margin: 0;
   opacity: 0;
-  width: 0;
-  height: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+.toggle-switch input:focus-visible + .slider {
+  outline: 3px solid #2563eb;
+  outline-offset: 3px;
 }
 
 .slider {

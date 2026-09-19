@@ -6,8 +6,26 @@ import type {
   IResponse
 } from '../../common/server.responses';
 import { isSuccess } from '../../common/server.responses';
+import { authService } from './services/auth.service';
+import { returnToMapView, sanitizeMapViewHash } from './utils/map-auth-return';
 
 export {};
+
+// A shared view can reach this page with an already valid session. Leave the
+// ordinary sign-in page unchanged and validate before following this handoff.
+if (
+  sanitizeMapViewHash(window.location.hash) &&
+  localStorage.getItem('token')
+) {
+  void authService
+    .isLoggedIn()
+    .then((loggedIn) => {
+      if (loggedIn) returnToMapView();
+    })
+    .catch(() => {
+      /* Keep sign-in available when session validation fails. */
+    });
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -474,7 +492,7 @@ const confirmAgreement = async (
 const redirectToDirectory = (message: string): void => {
   setStatus(message);
   window.setTimeout(() => {
-    window.location.href = '/';
+    returnToMapView();
   }, 1200);
 };
 

@@ -29,7 +29,13 @@ const mockTracker = {
   startPolling: jest.fn(),
   refreshDirectionVisibility: jest.fn()
 };
-const mockPublishRoutes = jest.fn();
+const mockPublishRoutes = jest.fn((routes: IRoute[]) => {
+  mockState.availableRoutes = routes;
+  mockState.filteredRoutes = routes.filter(
+    (route) =>
+      !mockState.selectedRouteId || route.id === mockState.selectedRouteId
+  );
+});
 const mockSyncURL = jest.fn();
 jest.mock('../../client/scripts/state/map-state', () => ({
   MapStateManager: {
@@ -38,7 +44,8 @@ jest.mock('../../client/scripts/state/map-state', () => ({
       updateFilter: (key: string, value: unknown) => {
         (mockState as unknown as Record<string, unknown>)[key] = value;
       },
-      setAvailableRoutes: mockPublishRoutes
+      setAvailableRoutes: mockPublishRoutes,
+      reapplyFilters: jest.fn()
     })
   }
 }));
@@ -244,5 +251,23 @@ describe('Map restoration after exiting directions', () => {
       route.id,
       route.color
     );
+  });
+
+  test('a newer full-view restoration owns the graphics and polling after an old nearby request finishes', async () => {
+    mockState.selectedRouteId = null;
+    const pending = pauseRequest<INearbyStopsPayload>();
+    api.getNearbyStops.mockImplementationOnce(pending.run);
+    const oldView = controller.restoreView(position, () => true);
+    await pending.reached;
+    controller.invalidateView();
+    mockState.selectedRouteId = route.id;
+    await controller.restoreView(position, () => true);
+    jest.clearAllMocks();
+    pending.reply(nearby);
+    await oldView;
+    expect(mockRenderer.renderStopMarkers).not.toHaveBeenCalled();
+    expect(mockRenderer.renderRouteGeometry).not.toHaveBeenCalled();
+    expect(mockTracker.startPolling).not.toHaveBeenCalled();
+    expect(mockRenderer.clearAllRoutes).not.toHaveBeenCalled();
   });
 });

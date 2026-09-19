@@ -25,11 +25,15 @@ import type { IMapProvider, IMapMarker } from '../../../common/map.interface';
 import type { IVehicle } from '../../../common/transit.interface';
 import { MapStateManager } from '../state/map-state';
 import { createBusIcon } from '../utils/bus-icon';
-import { transitApiService } from '../services/transit-api.service';
+import {
+  transitApiService,
+  type IServiceHealth,
+  type IVehicleResult
+} from '../services/transit-api.service';
+import { LiveTrackingStatus } from '../components/live-tracking-status';
 import {
   MAP_POPUP_ID,
   createMapPopup,
-  closeMapPopup,
   dismissPopup,
   minimizePopup,
   prepareForNewPopup,
@@ -37,6 +41,11 @@ import {
 } from '../utils/map-popup';
 import { getRouteTitle } from '../utils/route-display';
 import { showToast } from '../utils/toast';
+
+const POLL_MS = 30_000;
+const REQUEST_TIMEOUT_MS = 15_000;
+const MAX_POSITION_AGE_MS = 90_000;
+const MAX_CLOCK_SKEW_MS = 30_000;
 
 export class VehicleTracker {
   private static instance: VehicleTracker;
@@ -47,21 +56,35 @@ export class VehicleTracker {
 
   private pollingInterval: number | null = null;
   private pollingGeneration = 0;
+  private request: AbortController | null = null;
+  private requestDeadline: number | null = null;
+  private expiryTimer: number | null = null;
+  private pageSuspended = false;
+  private sessionToken: string | null = null;
+  private readonly trackingStatus = new LiveTrackingStatus();
+  private partialTracking = false;
+  private delayedTracking = false;
   private currentRouteId: string | null = null;
   private currentRouteColor = '#4285F4';
   private routeColorMap = new Map<string, string>();
   private multiRouteIds: string[] = [];
-  private multiRoutePollingInterval: number | null = null;
   private vehicleMarkers = new Map<string, IMapMarker>(); // vehicleId → marker
   private vehicleData = new Map<string, IVehicle>(); // vehicleId → vehicle data for icon rebuilds
-  private hasShownStaticToast = false;
-  private hasShownNoVehiclesToast = false;
   private currentZoom = 14;
   private openPopupVehicleId: string | null = null;
   private popupUpdatedInterval: number | null = null;
 
   private constructor() {
     this.stateManager = MapStateManager.getInstance();
+    document.addEventListener('visibilitychange', () => this.resumeOrPause());
+    window.addEventListener('pagehide', () => {
+      this.pageSuspended = true;
+      this.resumeOrPause();
+    });
+    window.addEventListener('pageshow', () => {
+      this.pageSuspended = false;
+      this.resumeOrPause();
+    });
   }
 
   static getInstance(): VehicleTracker {
@@ -104,154 +127,261 @@ export class VehicleTracker {
    * @param routeColor Hex color of the route used to tint the bus icon.
    */
   startPolling(routeId: string, routeColor = '#4285F4'): void {
+    if (!this.mapProvider) return;
+    this.stopPolling();
+    this.currentRouteId = routeId;
     this.currentRouteColor = routeColor;
     this.routeColorMap.set(routeId, routeColor);
-    if (!this.mapProvider) {
-      console.error('Map provider not initialized');
-      return;
-    }
-
-    // Stop previous polling
-    this.stopPolling();
-
-    this.currentRouteId = routeId;
-    this.hasShownStaticToast = false;
-    this.hasShownNoVehiclesToast = false;
-
-    // Initial fetch
-    this.updateVehiclePositions();
-
-    // Poll every 30 seconds (matches GTFS-RT feed refresh rate)
-    this.pollingInterval = window.setInterval(() => {
-      this.updateVehiclePositions();
-    }, 30000);
-
-    console.log(`Started vehicle polling for route ${routeId}`);
+    this.sessionToken = localStorage.getItem('token');
+    this.resumeOrPause();
   }
 
-  /**
-   * Stop polling vehicle positions
-   */
+  /** Stop the session, including requests, expiry checks and hidden-page resume. */
   stopPolling(): void {
-    // SDK/network requests may finish after timers and markers are cleared.
-    this.pollingGeneration++;
-    if (this.pollingInterval !== null) {
-      clearInterval(this.pollingInterval);
-      this.pollingInterval = null;
-      console.log('Stopped vehicle polling');
-    }
-
-    this.stopMultiRoutePolling();
-
-    // Clear all vehicle markers
-    this.clearVehicles();
+    this.cancelPendingWork();
     this.currentRouteId = null;
-    this.hasShownStaticToast = false;
-    this.hasShownNoVehiclesToast = false;
+    this.multiRouteIds = [];
+    this.clearVehicles();
+    this.trackingStatus.hide();
   }
 
-  /**
-   * Start polling vehicle positions for multiple routes simultaneously.
-   * Used during directions mode to show selected bus locations.
-   */
+  /** Track selected buses during directions using one shared polling cycle. */
   startMultiRoutePolling(
     routeIds: string[],
     routeColors?: Map<string, string>
   ): void {
-    if (!this.mapProvider || routeIds.length === 0) return;
-
+    if (!this.mapProvider) return;
     this.stopPolling();
-    this.multiRouteIds = [...routeIds];
-    if (routeColors) {
-      routeColors.forEach((color, id) => this.routeColorMap.set(id, color));
-    }
-
-    // Initial fetch
-    this.updateMultiRoutePositions();
-
-    // Poll every 30 seconds
-    this.multiRoutePollingInterval = window.setInterval(() => {
-      this.updateMultiRoutePositions();
-    }, 30000);
-
-    console.log(
-      `Started multi-route vehicle polling for routes: ${routeIds.join(', ')}`
-    );
+    this.multiRouteIds = [...new Set(routeIds)];
+    routeColors?.forEach((color, id) => this.routeColorMap.set(id, color));
+    this.sessionToken = localStorage.getItem('token');
+    this.resumeOrPause();
   }
 
-  /**
-   * Stop multi-route polling as part of stopping the current polling session.
-   */
-  private stopMultiRoutePolling(): void {
-    if (this.multiRoutePollingInterval !== null) {
-      clearInterval(this.multiRoutePollingInterval);
-      this.multiRoutePollingInterval = null;
-    }
-    this.multiRouteIds = [];
+  private trackedRoutes(): string[] {
+    return this.currentRouteId ? [this.currentRouteId] : this.multiRouteIds;
   }
 
-  /**
-   * Fetch and render vehicle positions for all multi-route IDs.
-   * Collects vehicles from every route first, then renders in a single
-   * pass so that `removeStaleVehicles` doesn't discard one route's
-   * markers while processing the next.
-   */
-  private async updateMultiRoutePositions(): Promise<void> {
-    if (!this.mapProvider || this.multiRouteIds.length === 0) return;
-
-    const generation = this.pollingGeneration;
-    const allVehicles: IVehicle[] = [];
-    for (const routeId of this.multiRouteIds) {
-      const result = await transitApiService.getVehicles(routeId);
-      if (generation !== this.pollingGeneration) return;
-      if (result !== null) {
-        allVehicles.push(...result.vehicles);
-      }
-    }
-    this.renderVehicles(allVehicles);
+  private cancelPendingWork(): void {
+    this.pollingGeneration++;
+    this.request?.abort();
+    this.request = null;
+    if (this.pollingInterval !== null)
+      window.clearTimeout(this.pollingInterval);
+    if (this.requestDeadline !== null)
+      window.clearTimeout(this.requestDeadline);
+    if (this.expiryTimer !== null) window.clearTimeout(this.expiryTimer);
+    this.pollingInterval = this.requestDeadline = this.expiryTimer = null;
   }
 
-  /**
-   * Fetch and update vehicle positions from backend
-   */
-  private async updateVehiclePositions(): Promise<void> {
-    if (!this.currentRouteId || !this.mapProvider) return;
-
-    const generation = this.pollingGeneration;
-    const state = this.stateManager.getState();
-    let timeParam: string | undefined;
-
-    // Add time parameter if time filter is applied (Rule R3)
-    if (state.selectedTime && state.selectedDate) {
-      timeParam = this.formatTimeForAPI(state.selectedDate, state.selectedTime);
+  private resumeOrPause(): void {
+    if (!this.trackedRoutes().length) return;
+    this.cancelPendingWork();
+    this.clearVehicles();
+    if (this.sessionToken !== localStorage.getItem('token')) {
+      this.stopPolling();
+      return;
     }
-
-    const result = await transitApiService.getVehicles(
-      this.currentRouteId,
-      timeParam
-    );
-    if (generation !== this.pollingGeneration || result === null) return;
-
-    // Check if data is from static cache (A2: PRT API Down)
-    if (result.source === 'static' && !this.hasShownStaticToast) {
-      this.showToast(
-        'Real-time tracking unavailable. Showing scheduled times only.'
+    if (document.hidden || this.pageSuspended) {
+      this.trackingStatus.show(
+        'paused',
+        'Live tracking paused while this tab is hidden.'
       );
-      this.hasShownStaticToast = true;
+      return;
     }
+    this.trackingStatus.show('loading', 'Checking live bus locations...');
+    void this.pollVehicles();
+  }
 
-    const { vehicles } = result;
-    if (vehicles.length === 0) {
-      if (!this.hasShownNoVehiclesToast) {
-        this.showToast('No active buses found for this route');
-        this.hasShownNoVehiclesToast = true;
+  private isCurrent(generation: number): boolean {
+    return (
+      generation === this.pollingGeneration &&
+      this.sessionToken === localStorage.getItem('token') &&
+      !document.hidden &&
+      !this.pageSuspended &&
+      !!this.trackedRoutes().length
+    );
+  }
+
+  /** One bounded cycle; a new one is scheduled only after this one finishes. */
+  private async pollVehicles(): Promise<void> {
+    const generation = this.pollingGeneration;
+    if (!this.isCurrent(generation)) {
+      if (generation === this.pollingGeneration) this.stopPolling();
+      return;
+    }
+    const routeIds = [...this.trackedRoutes()];
+    const request = new AbortController();
+    this.request = request;
+    const aborted = new Promise<null>((resolve) => {
+      request.signal.addEventListener('abort', () => resolve(null), {
+        once: true
+      });
+    });
+    this.requestDeadline = window.setTimeout(
+      () => request.abort(),
+      REQUEST_TIMEOUT_MS
+    );
+    try {
+      const state = this.stateManager.getState();
+      const timeParam =
+        this.currentRouteId && state.selectedTime && state.selectedDate
+          ? this.formatTimeForAPI(state.selectedDate, state.selectedTime)
+          : undefined;
+      const results = await Promise.race([
+        Promise.all([
+          transitApiService.getHealth(request.signal),
+          Promise.all(
+            routeIds.map((routeId) =>
+              transitApiService.getVehicles(routeId, timeParam, request.signal)
+            )
+          )
+        ]),
+        aborted
+      ]);
+      if (!this.isCurrent(generation)) return;
+      if (!results) {
+        this.showUnavailable();
+      } else {
+        this.applyResults(routeIds, results[0], results[1]);
       }
-    } else {
-      this.hasShownNoVehiclesToast = false;
+    } catch {
+      if (this.isCurrent(generation)) this.showUnavailable();
+    } finally {
+      // An old cycle must never clear a newer session's timers or request.
+      if (this.request === request) {
+        if (this.requestDeadline !== null)
+          window.clearTimeout(this.requestDeadline);
+        this.requestDeadline = null;
+        this.request = null;
+      }
+      request.abort();
+      if (this.isCurrent(generation)) {
+        this.pollingInterval = window.setTimeout(() => {
+          this.pollingInterval = null;
+          void this.pollVehicles();
+        }, POLL_MS);
+      } else if (
+        generation === this.pollingGeneration &&
+        this.sessionToken !== localStorage.getItem('token')
+      ) {
+        this.stopPolling();
+      }
     }
+  }
 
+  private showUnavailable(): void {
+    this.clearVehicles();
+    this.trackingStatus.show(
+      'unavailable',
+      'Live tracking unavailable. Retrying automatically.'
+    );
+  }
+
+  private isFresh(vehicle: IVehicle): boolean {
+    const age = Date.now() - Date.parse(vehicle.lastUpdate);
+    return (
+      vehicle.source === 'live' &&
+      Number.isFinite(age) &&
+      age >= -MAX_CLOCK_SKEW_MS &&
+      age < MAX_POSITION_AGE_MS &&
+      Number.isFinite(vehicle.lat) &&
+      Math.abs(vehicle.lat) <= 90 &&
+      Number.isFinite(vehicle.lon) &&
+      Math.abs(vehicle.lon) <= 180
+    );
+  }
+
+  private applyResults(
+    routeIds: string[],
+    health: IServiceHealth | null,
+    results: (IVehicleResult | null)[]
+  ): void {
+    const vehicles: IVehicle[] = [];
+    let unavailable = 0;
+    let delayed = false;
+    routeIds.forEach((routeId, index) => {
+      const provider = routeId.startsWith('CMU-')
+        ? health?.tripshotLiveStatus
+        : health?.vehiclePositions;
+      const result = results[index];
+      if (!provider?.healthy || !result || result.source === 'static') {
+        unavailable++;
+        return;
+      }
+      result.vehicles.forEach((vehicle) => {
+        if (this.isFresh(vehicle)) vehicles.push(vehicle);
+        else delayed = true;
+      });
+    });
+    this.partialTracking = unavailable > 0;
+    this.delayedTracking = delayed;
     this.stateManager.setActiveVehicles(vehicles);
     this.renderVehicles(vehicles);
+    if (unavailable === routeIds.length) {
+      this.trackingStatus.show(
+        'unavailable',
+        'Live tracking unavailable. Retrying automatically.'
+      );
+    } else {
+      this.updateTrackingStatus(vehicles.length);
+    }
+    this.scheduleExpiry();
+  }
+
+  private updateTrackingStatus(count: number): void {
+    if (this.partialTracking) {
+      this.trackingStatus.show(
+        'partial',
+        'Some live bus locations are unavailable. Retrying automatically.'
+      );
+    } else if (this.delayedTracking) {
+      this.trackingStatus.show(
+        'delayed',
+        count
+          ? 'Some bus locations are delayed. Only fresh locations are shown.'
+          : 'Bus locations are delayed. Waiting for fresh updates.'
+      );
+    } else if (count === 0) {
+      this.trackingStatus.show(
+        'empty',
+        'No active buses reported for this selection.'
+      );
+    } else {
+      this.trackingStatus.show(
+        'live',
+        `${count} live ${count === 1 ? 'bus' : 'buses'} on selected ${this.trackedRoutes().length === 1 ? 'route' : 'routes'}`
+      );
+    }
+  }
+
+  /** Never leave a green live marker behind while a network request stalls. */
+  private scheduleExpiry(): void {
+    if (this.expiryTimer !== null) window.clearTimeout(this.expiryTimer);
+    this.expiryTimer = null;
+    if (!this.vehicleData.size) return;
+    const generation = this.pollingGeneration;
+    const expiresAt = Math.min(
+      ...[...this.vehicleData.values()].map(
+        (vehicle) => Date.parse(vehicle.lastUpdate) + MAX_POSITION_AGE_MS
+      )
+    );
+    this.expiryTimer = window.setTimeout(
+      () => {
+        this.expiryTimer = null;
+        if (!this.isCurrent(generation)) return;
+        const vehicles = [...this.vehicleData.values()].filter((vehicle) =>
+          this.isFresh(vehicle)
+        );
+        if (vehicles.length !== this.vehicleData.size)
+          this.delayedTracking = true;
+        this.stateManager.setActiveVehicles(vehicles);
+        this.renderVehicles(vehicles);
+        this.updateTrackingStatus(vehicles.length);
+        this.scheduleExpiry();
+      },
+      Math.max(1, expiresAt - Date.now())
+    );
   }
 
   /**
@@ -367,6 +497,9 @@ export class VehicleTracker {
    * Clear all vehicle markers from map
    */
   clearVehicles(): void {
+    if (this.expiryTimer !== null) window.clearTimeout(this.expiryTimer);
+    this.expiryTimer = null;
+    this.stateManager.setActiveVehicles([]);
     this.vehicleMarkers.forEach((marker) => marker.remove());
     this.vehicleMarkers.clear();
     this.vehicleData.clear();
@@ -781,14 +914,16 @@ export class VehicleTracker {
   private closeVehiclePopup(): void {
     this.openPopupVehicleId = null;
     this.stopPopupUpdatedTicker();
-    closeMapPopup();
+    dismissPopup('bus');
   }
 
   /**
    * Check if currently polling
    */
   isPolling(): boolean {
-    return this.pollingInterval !== null;
+    return (
+      this.trackedRoutes().length > 0 && !document.hidden && !this.pageSuspended
+    );
   }
 
   /**

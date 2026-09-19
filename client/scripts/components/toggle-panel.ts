@@ -24,6 +24,7 @@ export interface ITogglePanelElement extends HTMLElement {
   toggle(): void;
   isOpen(): boolean;
   getState(): Map<string, boolean>;
+  setState(state: Record<string, boolean>): void;
 }
 
 export class TogglePanel extends HTMLElement implements ITogglePanelElement {
@@ -151,10 +152,9 @@ export class TogglePanel extends HTMLElement implements ITogglePanelElement {
     if (panel) {
       console.log('Hiding panel:', this.config?.eventName);
       panel.classList.remove('visible');
-      setTimeout(() => {
-        panel.style.display = 'none';
-        this.isVisible = false;
-      }, 300);
+      panel.style.display = 'none';
+      this.isVisible = false;
+      this.resetToggles();
     }
   }
 
@@ -207,6 +207,11 @@ export class TogglePanel extends HTMLElement implements ITogglePanelElement {
    */
   getState(): Map<string, boolean> {
     return new Map(this.state);
+  }
+
+  setState(state: Record<string, boolean>): void {
+    this.state = new Map(Object.entries(state));
+    this.resetToggles();
   }
 
   /**

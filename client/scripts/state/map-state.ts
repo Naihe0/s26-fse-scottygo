@@ -280,19 +280,23 @@ export class MapStateManager {
     try {
       const raw = localStorage.getItem(MapStateManager.PLANNED_LOCATION_KEY);
       if (!raw) return null;
-      const data = JSON.parse(raw) as {
-        lat: number;
-        lng: number;
-        label: string;
-      };
+      const data: unknown = JSON.parse(raw);
+      if (!data || typeof data !== 'object') return null;
+      const { lat, lng, label } = data as Record<string, unknown>;
       if (
-        typeof data.lat !== 'number' ||
-        typeof data.lng !== 'number' ||
-        typeof data.label !== 'string'
+        typeof lat !== 'number' ||
+        !Number.isFinite(lat) ||
+        Math.abs(lat) > 90 ||
+        typeof lng !== 'number' ||
+        !Number.isFinite(lng) ||
+        Math.abs(lng) > 180 ||
+        typeof label !== 'string' ||
+        !label.trim() ||
+        label.length > 512
       ) {
         return null;
       }
-      return { location: { lat: data.lat, lng: data.lng }, label: data.label };
+      return { location: { lat, lng }, label: label.trim() };
     } catch {
       return null;
     }

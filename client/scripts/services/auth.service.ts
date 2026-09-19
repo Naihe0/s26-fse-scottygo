@@ -8,6 +8,7 @@
 import axios, { AxiosResponse } from 'axios';
 import type { IUser, IUserAccount } from '../../../common/user.interface';
 import type { IResponse } from '../../../common/server.responses';
+import { mapSignInPath } from '../utils/map-auth-return';
 
 function authHeaders(): { Authorization: string } {
   const token = localStorage.getItem('token');
@@ -71,7 +72,7 @@ export class AuthService {
         console.error('[AuthService] Unauthorized:', response.message);
         localStorage.removeItem('token');
         localStorage.removeItem('username');
-        window.location.replace('/auth');
+        window.location.replace(mapSignInPath());
         return null;
       }
 

@@ -3,6 +3,11 @@
  * Provides filter controls for route, calendar, time, and direction
  */
 
+import { MapStateManager } from '../state/map-state';
+import { URLSyncManager } from '../state/url-sync';
+import { copyViewLink } from '../utils/copy-view-link';
+import { showToast } from '../utils/toast';
+
 export class MapControls extends HTMLElement {
   connectedCallback(): void {
     this.renderControls();
@@ -32,7 +37,11 @@ export class MapControls extends HTMLElement {
         >
           <span class="system-text">CLEAR</span>
         </button>
+        <button class="circle-btn" id="copy-view-link-btn" type="button" title="Copy view link" aria-label="Copy view link">
+          <span class="material-icons-outlined" aria-hidden="true">link</span>
+        </button>
       </div>
+      <span class="view-link-status" role="status" aria-live="polite"></span>
     `;
   }
 
@@ -54,6 +63,18 @@ export class MapControls extends HTMLElement {
     clearBtn?.addEventListener('click', () =>
       this.emitFilterEvent('clearFilters')
     );
+    const copyBtn = this.querySelector<HTMLButtonElement>(
+      '#copy-view-link-btn'
+    )!;
+    copyBtn.addEventListener('click', () => {
+      const url = URLSyncManager.getInstance().getViewLink(
+        MapStateManager.getInstance().getState()
+      );
+      void copyViewLink(url, copyBtn, (message) => {
+        this.querySelector('.view-link-status')!.textContent = message;
+        showToast(message);
+      });
+    });
   }
 
   private emitFilterEvent(eventName: string): void {

@@ -22,6 +22,7 @@ export interface IRouteSelectorElement extends HTMLElement {
   isOpen(): boolean;
   setRoutes(routes: IRouteOption[]): void;
   clearSelection(): void;
+  setSelection(route: string | null): void;
 }
 
 export class RouteSelectorPanel
@@ -31,6 +32,7 @@ export class RouteSelectorPanel
   private routes: IRouteOption[] = [];
   private filteredRoutes: IRouteOption[] = [];
   private selectedRoute: string | null = null;
+  private committedRoute: string | null = null;
   private isVisible = false;
   private searchValue = '';
   private searchRequestId = 0;
@@ -91,10 +93,9 @@ export class RouteSelectorPanel
       console.log('Hiding route selector panel');
       panel.classList.remove('visible');
       panel.style.pointerEvents = 'none'; // Disable pointer events
-      setTimeout(() => {
-        panel.style.display = 'none';
-        this.isVisible = false;
-      }, 300);
+      panel.style.display = 'none';
+      this.isVisible = false;
+      this.setSelection(this.committedRoute);
     }
   }
 
@@ -120,6 +121,7 @@ export class RouteSelectorPanel
    * Allow setting routes dynamically
    */
   setRoutes(routes: IRouteOption[]): void {
+    this.searchRequestId++;
     this.routes = routes;
     this.filteredRoutes = [...routes];
     this.searchValue = '';
@@ -130,10 +132,16 @@ export class RouteSelectorPanel
    * Clear the current route selection
    */
   clearSelection(): void {
-    this.selectedRoute = null;
-    this.querySelectorAll('.route-btn').forEach((b) => {
-      b.classList.remove('selected');
-    });
+    this.setSelection(null);
+  }
+
+  setSelection(route: string | null): void {
+    this.searchRequestId++;
+    this.selectedRoute = route;
+    this.committedRoute = route;
+    this.searchValue = '';
+    this.filteredRoutes = [...this.routes];
+    this.render();
   }
 
   private render(): void {
@@ -152,7 +160,7 @@ export class RouteSelectorPanel
           ${this.filteredRoutes
             .map(
               (route) => `
-                <button class="route-btn ${this.selectedRoute === route.id ? 'selected' : ''}" data-route="${escapeHtml(route.id)}">
+                <button class="route-btn ${this.selectedRoute === route.id ? 'selected' : ''}" data-route="${escapeHtml(route.id)}" aria-pressed="${this.selectedRoute === route.id}">
                   ${escapeHtml(route.name)}
                 </button>
               `
@@ -223,6 +231,12 @@ export class RouteSelectorPanel
           });
           (e.currentTarget as HTMLElement).classList.add('selected');
         }
+        this.querySelectorAll<HTMLElement>('.route-btn').forEach((button) => {
+          button.setAttribute(
+            'aria-pressed',
+            String(button.dataset.route === this.selectedRoute)
+          );
+        });
       });
     });
 
@@ -236,6 +250,7 @@ export class RouteSelectorPanel
     // OK button - dispatch routeSelected event (null when deselected)
     this.querySelector('#route-ok')?.addEventListener('click', (e) => {
       e.stopPropagation();
+      this.committedRoute = this.selectedRoute;
       const routeSelection: IRouteSelection = {
         route: this.selectedRoute
       };

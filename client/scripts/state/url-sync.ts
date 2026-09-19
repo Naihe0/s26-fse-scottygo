@@ -10,6 +10,8 @@ import { MapStateManager } from './map-state';
 export class URLSyncManager {
   private static instance: URLSyncManager;
   private stateManager: MapStateManager;
+  private restoreListeners = new Set<() => void>();
+  private lastRestoredURL = '';
 
   private constructor() {
     this.stateManager = MapStateManager.getInstance();
@@ -28,9 +30,18 @@ export class URLSyncManager {
    */
   private setupListeners(): void {
     // Listen for hash changes (back/forward navigation)
-    window.addEventListener('hashchange', () => {
+    const restore = () => {
+      if (this.lastRestoredURL === window.location.href) return;
       this.restoreStateFromURL();
-    });
+      this.restoreListeners.forEach((listener) => listener());
+    };
+    window.addEventListener('hashchange', restore);
+    window.addEventListener('popstate', restore);
+  }
+
+  onRestore(listener: () => void): () => void {
+    this.restoreListeners.add(listener);
+    return () => this.restoreListeners.delete(listener);
   }
 
   /**
@@ -152,11 +163,21 @@ export class URLSyncManager {
   /**
    * Update URL from current state (without triggering hashchange)
    */
-  updateURL(state: Readonly<IMapState>): void {
+  updateURL(
+    state: Readonly<IMapState>,
+    mode: 'replace' | 'push' = 'replace'
+  ): void {
     const newHash = this.buildURL(state);
     if (window.location.hash !== newHash) {
-      history.replaceState(null, '', newHash);
+      if (mode === 'push') history.pushState(null, '', newHash);
+      else history.replaceState(null, '', newHash);
     }
+    this.lastRestoredURL = window.location.href;
+  }
+
+  /** Serialize only public filters; never forward query strings or location data. */
+  getViewLink(state: Readonly<IMapState>): string {
+    return `${window.location.origin}${window.location.pathname}${this.buildURL(state)}`;
   }
 
   /**
@@ -170,6 +191,7 @@ export class URLSyncManager {
    * Restore state from URL (called on page load or hash change)
    */
   restoreStateFromURL(): Partial<IMapState> {
+    this.lastRestoredURL = window.location.href;
     const urlState = this.parseURL();
     if (Object.keys(urlState).length > 0) {
       this.stateManager.updateFilters(urlState);

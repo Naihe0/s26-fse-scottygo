@@ -26,6 +26,23 @@ interface TrueTimeError {
   msg: string;
 }
 
+/** The API guide defines this exact error as an empty result, not a failed feed. */
+function validateDetourErrors(errors?: TrueTimeError[]): void {
+  if (
+    errors?.some(
+      (error) =>
+        error.msg?.trim().toLowerCase() !== 'no data found for parameter(s)'
+    )
+  ) {
+    const error: IAppError = {
+      type: 'ServerError',
+      name: 'UpstreamError',
+      message: 'TrueTime could not return detour data'
+    };
+    throw error;
+  }
+}
+
 interface TrueTimeRoute {
   rt: string;
   rtnm: string;
@@ -230,6 +247,7 @@ class TrueTimeService implements ITrueTimeService {
       error?: TrueTimeError[];
     }>('getpatterns', { rt: routeId, rtpidatafeed: RTPI_DATA_FEED });
 
+    validateDetourErrors(data.error);
     if (!data.ptr || data.ptr.length === 0) {
       return [];
     }
@@ -358,6 +376,7 @@ class TrueTimeService implements ITrueTimeService {
       error?: TrueTimeError[];
     }>('getdetours', params);
 
+    validateDetourErrors(data.error);
     if (!data.dtrs || data.dtrs.length === 0) {
       return [];
     }
