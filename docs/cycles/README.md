@@ -36,7 +36,7 @@ Each workstream records its use cases and acceptance criteria before implementat
 
 ### Execution record
 
-Implementation and local acceptance are complete. Production verification and completion will be recorded here after the release succeeds.
+**Cycle complete:** discovery, use-case planning, implementation, automated/browser testing, production rollout, and post-release verification all completed on 2026-09-19.
 
 - Browser baseline: selecting route 61C, then Clear all filters, returned the URL to the bare application path while the search input still displayed `61C`.
 - Saved-location recovery: validates parsed structure, finite geographic bounds, and a nonempty label of at most 512 characters. Valid labels are trimmed. Fourteen tests pass for reload, GPS denial, malformed storage, geographic boundaries, and blocked storage.
@@ -49,3 +49,19 @@ Implementation and local acceptance are complete. Production verification and co
 - Live tracking visibly distinguished fresh bus counts from delayed provider locations during browser checks. Deterministic tests cover failures, partial results, hidden-page pause/resume, timeout, cancellation, and expiry; browser observations do not establish all provider failure states.
 - The local HTTP endpoint returned **400 / OutOfBounds** for a 10,001-meter nearby-stop query, matching the shared validation limit.
 - Full dependency audit: **zero known vulnerabilities**. This cycle adds no runtime packages.
+
+### Production release
+
+- Application commit: [`b4231d6`](https://github.com/Naihe0/s26-fse-scottygo/commit/b4231d6630d1043550425d9a1992bc333f130b8a), pushed to `codex/render-atlas-setup`.
+- Personal service: [scottygo-ningrui](https://scottygo-ningrui.onrender.com). Render marked [deployment `dep-danctj17lnhs73e3g15g`](https://dashboard.render.com/web/srv-dan0p6jm8hqs739kant0/deploys/dep-danctj17lnhs73e3g15g) **Live**, with a displayed deployment duration of 57.7 seconds.
+- Cold-start acceptance: the new process reported schedules not ready at 35 seconds uptime. The open map showed its loading message and later populated **106 stop markers without a reload**. GTFS readiness was observed at 111 seconds; live-feed readiness followed. These observations describe this rollout, not a startup-time guarantee.
+- All **14 hosted smoke checks passed**: five pages, 14 referenced assets, fresh PRT/CMU feeds, TrueTime colors, 102 PRT routes, 15 CMU routes, Atlas persistence, administrator authentication/authorization, and Maps configuration.
+- Hosted browser acceptance confirmed Copy view link returned the canonical `61C` map URL, Clear all filters emptied search, and Back restored route 61C plus its stop graphics. Live tracking displayed eight fresh buses, then accurately reported partial delayed data as provider timestamps aged.
+- Hosted directions acceptance: selecting the Forbes/Morewood stop on route 61C produced a **21-minute walking route**. Back updated the desired filter view while preserving the active walking route. Exit applied that restored default view, and the transit-system panel remained responsive. This checks the original selected-stop freeze regression as well as navigation during directions.
+- Hosted oversized-radius acceptance returned **400 / OutOfBounds** for 10,001 meters.
+- The temporary local application and MongoDB were stopped. No listeners remained on app/test/database ports 8080, 8180, 8383, 27017, or 27019. No production schema migration or credential/settings change was needed.
+- Rollback target if a later issue appears: previous application commit `4b303a1` / Render deployment `dep-dan2uccs728c73afusvg`. This cycle has no data migration to reverse. Subsequent verification-only documentation is committed with `[skip render]` so recording results does not restart the verified application.
+
+### Limits and next candidates
+
+This completes the selected scope, not every item in the repository audit backlog. Remaining candidates include atomic last-administrator enforcement, GTFS hot refresh and overnight service handling, modal focus consistency, report retention, and shorter detour metadata freshness. Geometry caching/coalescing is process-local; detour metadata still follows its existing 24-hour policy. Vehicle polling pauses in background tabs, while the separate filter health poll remains unchanged. Live provider outages and real GPS travel were covered with controlled regressions rather than induced in production. Hosted GitHub Actions remains disabled on this fork; the recorded checks ran locally.
