@@ -47,6 +47,14 @@ import { DirectionsController } from './controllers/directions-controller';
 import { RouteRenderer } from './renderers/route-renderer';
 import { VehicleTracker } from './trackers/vehicle-tracker';
 import { getRouteTitle } from './utils/route-display';
+import {
+  GeolocationController,
+  type LocationFailure
+} from './services/geolocation-controller';
+import {
+  showLocationFeedback,
+  clearLocationFeedback
+} from './components/location-feedback';
 
 // Export empty object to treat as module
 export {};
@@ -577,7 +585,14 @@ const registerZoomAndMapEvents = (): void => {
   });
 
   document.addEventListener('recenter', () => {
-    console.log('Recenter clicked');
+    const state = mapStateManager.getState();
+    if (
+      !mapStateManager.hasCustomPlannedLocation() &&
+      (!state.gpsPermissionGranted || !state.currentLocation)
+    ) {
+      retryUserLocation();
+      return;
+    }
     const loc = getEffectiveLocation();
     mapProvider.setCenter(loc);
     mapProvider.setZoom(15);
@@ -715,7 +730,7 @@ const registerBusReportEvents = (): void => {
     if (!state.gpsPermissionGranted) {
       showModal(
         'GPS Required',
-        'Bus report submission requires GPS access. Please enable location services and reload the page.'
+        'Bus report submission needs your current location. Tap the location button on the map to try again. If permission is blocked, allow location in your browser and device settings first.'
       );
       return;
     }
@@ -837,117 +852,130 @@ const registerLocationSearchEvents = (): void => {
   });
 
   // User reset to current GPS location
-  document.addEventListener('locationReset', async () => {
-    console.log('Planned location reset to current GPS');
-    removePlannedLocationMarker();
-    directionsController.updatePlannedLocation(null);
-    const state = mapStateManager.getState();
-    if (state.currentLocation) {
-      showUserLocationMarker();
-      filterController.setUserLocation(state.currentLocation);
-      await mapNavigation.restore();
-      mapProvider.setCenter(state.currentLocation);
-      showSubscriptionToast('Using current location');
-    }
-  });
+  document.addEventListener('locationReset', () => void useCurrentLocation());
 };
 
-// Request user's geographic location (VisRoute Basic Flow step 2-3)
-// Uses watchPosition for continuous updates (TUC4 Step 8)
-let watchId: number | null = null;
+// One owned watch can recover after settings changes, timeouts, and page restore.
+let locationController: GeolocationController | null = null;
 let initialLocationSet = false;
+let recenterOnNextFix = false;
+let locationRetryNeeded = false;
 
-function requestUserLocation(): void {
-  if ('geolocation' in navigator) {
-    watchId = navigator.geolocation.watchPosition(
-      (position) => {
-        const lat = position.coords.latitude;
-        const lng = position.coords.longitude;
-
-        // Update state manager with current GPS location
-        mapStateManager.setCurrentLocation({ lat, lng });
-
-        // First position: center map and validate area
-        if (!initialLocationSet) {
-          initialLocationSet = true;
-          console.log('User location:', lat, lng);
-
-          if (isInPittsburghArea(lat, lng)) {
-            userLocation = { lat, lng };
-
-            // If the user has a custom planned location (mocked location),
-            // don't override the map center, blue dot, or nearby stops —
-            // those were already set correctly by restorePlannedLocationMarker().
-            if (!mapStateManager.hasCustomPlannedLocation()) {
-              mapProvider.setCenter({ lat, lng });
-              mapProvider.setZoom(15);
-              addUserLocationMarker(lat, lng);
-
-              console.log('Centered map on user location');
-
-              // TUC4 Step 2: Show nearby stops within 1km of user location
-              filterController.setUserLocation({ lat, lng });
-              refreshNearbyLocationView();
-            } else {
-              console.log(
-                'Custom planned location active — GPS blue dot suppressed on load'
-              );
-            }
-          } else {
-            showModal(
-              'Location Out of Bounds',
-              'This transit app only supports the Pittsburgh bus system.'
-            );
-            mapProvider.setCenter({ lat: 40.4406, lng: -80.0112 });
-            mapProvider.setZoom(14);
-            console.log('Centering on default Pittsburgh location');
-          }
-        } else {
-          // Subsequent positions: update marker, feed directions controller
-          userLocation = { lat, lng };
-          if (userLocationMarker) {
-            userLocationMarker.setPosition({ lat, lng });
-          } else if (!mapStateManager.hasCustomPlannedLocation()) {
-            // Only create the blue dot if no mocked location is active
-            addUserLocationMarker(lat, lng);
-          }
-          // Keep filter controller in sync for walk-time estimates
-          filterController.setUserLocation({ lat, lng });
-        }
-
-        // Always feed location to directions controller (TUC4 Step 8)
-        directionsController.updateUserLocation({ lat, lng });
-        vehicleTracker.updateUserLocation({ lat, lng });
-      },
-      (error) => {
-        if (initialLocationSet) return; // Only show error on first failure
-        console.warn('Location access denied:', error.message);
-
-        // Mark GPS as denied in state manager — defaults planned location to CMU
-        mapStateManager.setGpsDenied();
-
-        showModal(
-          'Location Access Denied',
-          'Location access denied. Centering on CMU Campus by default. Bus report submission is disabled without GPS access.'
-        );
-        // Center on CMU campus and show nearby stops
-        centerOnCmuCampus();
-      },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 5000, // Accept cached position up to 5s old
-        timeout: 10000
+export function requestUserLocation(retry = false): void {
+  if (!locationController) {
+    locationController = new GeolocationController({
+      onPosition: handleUserPosition,
+      onError: handleLocationFailure
+    });
+    window.addEventListener('pagehide', () => locationController?.stop());
+    window.addEventListener('pageshow', (event) => {
+      if (event.persisted) requestUserLocation(true);
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && locationRetryNeeded) {
+        requestUserLocation(true);
       }
-    );
-  } else {
-    console.warn('Geolocation not supported');
-    mapStateManager.setGpsDenied();
-    showModal(
-      'Geolocation Unavailable',
-      'Geolocation is not supported by your browser. Centering on CMU Campus.'
-    );
-    centerOnCmuCampus();
+    });
   }
+  if (retry) locationController.retry();
+  else locationController.start();
+}
+
+function retryUserLocation(): void {
+  clearLocationFeedback();
+  recenterOnNextFix = true;
+  showToast('Finding your location…');
+  requestUserLocation(true);
+}
+
+function handleUserPosition(position: GeolocationPosition): void {
+  const location = {
+    lat: position.coords.latitude,
+    lng: position.coords.longitude
+  };
+  locationRetryNeeded = false;
+  clearLocationFeedback();
+  mapStateManager.setCurrentLocation(location);
+  userLocation = location;
+  const customLocation = mapStateManager.hasCustomPlannedLocation();
+
+  if (!initialLocationSet || recenterOnNextFix) {
+    initialLocationSet = true;
+    recenterOnNextFix = false;
+    if (!customLocation) {
+      removePlannedLocationMarker();
+      directionsController.updatePlannedLocation(null);
+      if (isInPittsburghArea(location.lat, location.lng)) {
+        mapProvider.setCenter(location);
+        mapProvider.setZoom(15);
+        addUserLocationMarker(location.lat, location.lng);
+        filterController.setUserLocation(location);
+        refreshNearbyLocationView();
+      } else {
+        showModal(
+          'Location Out of Bounds',
+          'This transit app only supports the Pittsburgh bus system.'
+        );
+        mapProvider.setCenter({ lat: 40.4406, lng: -80.0112 });
+        mapProvider.setZoom(14);
+      }
+    }
+  } else if (!customLocation) {
+    addUserLocationMarker(location.lat, location.lng);
+    filterController.setUserLocation(location);
+  }
+  directionsController.updateUserLocation(location);
+  vehicleTracker.updateUserLocation(location);
+}
+
+function handleLocationFailure(kind: LocationFailure): void {
+  locationRetryNeeded = kind !== 'unsupported';
+  const hadLocation = Boolean(mapStateManager.getState().currentLocation);
+  const permissionLost = kind === 'denied' || kind === 'unsupported';
+  if (!hadLocation || permissionLost) {
+    mapStateManager.setGpsUnavailable();
+    userLocation = null;
+    initialLocationSet = false;
+    hideUserLocationMarker();
+    directionsController.updateUserLocation(null);
+    vehicleTracker.updateUserLocation(null);
+    const origin = getEffectiveLocation();
+    filterController.setUserLocation(origin);
+    directionsController.updatePlannedLocation(origin);
+    if (permissionLost && directionsController.isActive) {
+      directionsController.exitDirections();
+    }
+    if (
+      !hadLocation &&
+      !mapStateManager.hasCustomPlannedLocation() &&
+      !directionsController.isActive
+    ) {
+      centerOnCmuCampus();
+    }
+  }
+  showLocationFeedback(kind, retryUserLocation, hadLocation && !permissionLost);
+}
+
+async function useCurrentLocation(): Promise<void> {
+  removePlannedLocationMarker();
+  directionsController.updatePlannedLocation(null);
+  const state = mapStateManager.getState();
+  if (!state.gpsPermissionGranted || !state.currentLocation) {
+    retryUserLocation();
+    return;
+  }
+  addUserLocationMarker(state.currentLocation.lat, state.currentLocation.lng);
+  filterController.setUserLocation(state.currentLocation);
+  await mapNavigation.restore();
+  const latest = mapStateManager.getState();
+  if (
+    mapStateManager.hasCustomPlannedLocation() ||
+    !latest.gpsPermissionGranted ||
+    !latest.currentLocation
+  )
+    return;
+  mapProvider.setCenter(latest.currentLocation);
+  showSubscriptionToast('Using current location');
 }
 
 function centerOnCmuCampus(): void {
@@ -1093,19 +1121,10 @@ function showPlannedLocationPopup(
   // Remove button
   document
     .getElementById('planned-location-remove')
-    ?.addEventListener('click', async () => {
+    ?.addEventListener('click', () => {
       dismissPlannedLocationPopup();
-      removePlannedLocationMarker();
       mapStateManager.resetPlannedLocationToCurrent();
-      directionsController.updatePlannedLocation(null);
-      showUserLocationMarker();
-      const state = mapStateManager.getState();
-      if (state.currentLocation) {
-        filterController.setUserLocation(state.currentLocation);
-        await mapNavigation.restore();
-        mapProvider.setCenter(state.currentLocation);
-      }
-      showSubscriptionToast('Using current location');
+      void useCurrentLocation();
     });
 
   // Close on outside click

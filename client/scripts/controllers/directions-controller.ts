@@ -142,10 +142,10 @@ export class DirectionsController {
    * Update the user's current position (called from map.ts watchPosition).
    * While in directions mode this triggers deviation & arrival checks.
    */
-  updateUserLocation(position: ILatLng): void {
+  updateUserLocation(position: ILatLng | null): void {
     this.userLocation = position;
 
-    if (!this._isActive || !this.selectedStop) return;
+    if (!position || !this._isActive || !this.selectedStop) return;
 
     // Deviation/arrival checks use real GPS, not planned location
     const distToStop = this.haversine(position, {

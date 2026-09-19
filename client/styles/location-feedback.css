@@ -1,0 +1,144 @@
+.location-feedback {
+  position: absolute;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 600;
+  box-sizing: border-box;
+  width: min(380px, calc(100% - 32px));
+  max-height: calc(100% - 100px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px;
+  border: 1px solid #d8dee8;
+  border-radius: 18px;
+  background: #fff;
+  color: #334155;
+  box-shadow: 0 8px 32px #0f172a26;
+  font-size: 14px;
+  line-height: 1.55;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.location-feedback h2 {
+  margin: 0 30px 8px 0;
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.location-feedback p {
+  margin: 0 0 12px;
+}
+
+.location-feedback__fallback {
+  color: #475569;
+}
+
+.location-feedback button,
+.location-feedback summary {
+  min-width: 44px;
+  min-height: 44px;
+  box-sizing: border-box;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.location-feedback button {
+  font: inherit;
+}
+
+.location-feedback .location-feedback__dismiss {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #475569;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.location-feedback__dismiss:hover {
+  background: #f1f5f9;
+}
+
+.location-feedback__help {
+  margin-bottom: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.location-feedback__help summary {
+  padding: 12px 0;
+  color: #334155;
+  font-weight: 600;
+}
+
+.location-feedback__help ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.location-feedback__help li + li {
+  margin-top: 10px;
+}
+
+.location-feedback .location-feedback__retry {
+  width: 100%;
+  padding: 10px 16px;
+  border: 1px solid #a30f29;
+  border-radius: 12px;
+  background: #b71230;
+  color: #fff;
+  font-weight: 600;
+}
+
+.location-feedback__retry:hover {
+  background: #970d26;
+}
+
+.location-feedback :is(button, summary):focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.location-feedback [hidden] {
+  display: none;
+}
+
+body.dark .location-feedback {
+  border-color: #475569;
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+body.dark .location-feedback h2 {
+  color: #f8fafc;
+}
+
+body.dark .location-feedback__fallback,
+body.dark .location-feedback__dismiss,
+body.dark .location-feedback__help summary {
+  color: #cbd5e1;
+}
+
+body.dark .location-feedback__help {
+  border-color: #475569;
+}
+
+body.dark .location-feedback__dismiss:hover {
+  background: #334155;
+}
+
+body.dark .location-feedback :is(button, summary):focus-visible {
+  outline-color: #93c5fd;
+}
+
+@media (max-width: 480px) {
+  .location-feedback {
+    padding: 18px;
+  }
+}

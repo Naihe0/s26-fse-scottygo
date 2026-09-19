@@ -40,11 +40,15 @@ type StateChangeListener = (state: IMapState) => void;
 export class MapStateManager {
   private static instance: MapStateManager;
   private state: IMapState;
+  // Display labels are not provenance: the automatic campus fallback and a
+  // rider's explicitly selected campus can share the same label/coordinates.
+  private hasExplicitPlannedLocation: boolean;
   private listeners: Set<StateChangeListener> = new Set();
 
   private constructor() {
     // Restore persisted planned location from localStorage
     const saved = this.loadPlannedLocation();
+    this.hasExplicitPlannedLocation = saved !== null;
 
     // Initialize with default state (Rule R2: PRT ON, CMU OFF)
     this.state = {
@@ -191,12 +195,9 @@ export class MapStateManager {
     this.state.currentLocation = location;
     this.state.gpsPermissionGranted = true;
     // If no custom planned location is set, keep planned = current GPS
-    if (!this.state.plannedLocation) {
+    if (!this.hasExplicitPlannedLocation) {
       this.state.plannedLocation = location;
       this.state.plannedLocationLabel = 'Current Location';
-    } else if (this.state.plannedLocationLabel === 'Current Location') {
-      // User hasn't set a custom location — track GPS continuously
-      this.state.plannedLocation = location;
     }
     this.notifyListeners();
   }
@@ -205,16 +206,14 @@ export class MapStateManager {
    * Whether the user has set a custom planned location (not just GPS default)
    */
   hasCustomPlannedLocation(): boolean {
-    return (
-      this.state.plannedLocationLabel !== null &&
-      this.state.plannedLocationLabel !== 'Current Location'
-    );
+    return this.hasExplicitPlannedLocation;
   }
 
   /**
    * Set a user-chosen planned location
    */
   setPlannedLocation(location: ILatLng, label: string): void {
+    this.hasExplicitPlannedLocation = true;
     this.state.plannedLocation = location;
     this.state.plannedLocationLabel = label;
     this.savePlannedLocation(location, label);
@@ -225,6 +224,7 @@ export class MapStateManager {
    * Reset planned location back to current GPS location
    */
   resetPlannedLocationToCurrent(): void {
+    this.hasExplicitPlannedLocation = false;
     this.state.plannedLocation = this.state.currentLocation;
     this.state.plannedLocationLabel = this.state.currentLocation
       ? 'Current Location'
@@ -234,17 +234,23 @@ export class MapStateManager {
   }
 
   /**
-   * Mark GPS as denied and set default planned location to CMU campus
+   * Invalidate an unavailable GPS fix without changing an explicit selection.
+   * The automatic campus fallback is never persisted as a rider's choice.
    */
-  setGpsDenied(): void {
+  setGpsUnavailable(): void {
     this.state.gpsPermissionGranted = false;
     this.state.currentLocation = null;
     // Default planned location to CMU Pittsburgh campus
-    if (!this.state.plannedLocation) {
+    if (!this.hasExplicitPlannedLocation) {
       this.state.plannedLocation = { lat: 40.4433, lng: -79.9436 };
       this.state.plannedLocationLabel = 'CMU Campus';
     }
     this.notifyListeners();
+  }
+
+  /** Compatibility alias for callers handling denied GPS permission. */
+  setGpsDenied(): void {
+    this.setGpsUnavailable();
   }
 
   /**

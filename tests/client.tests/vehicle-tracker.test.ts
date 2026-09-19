@@ -9,6 +9,7 @@ import {
 import type { IMapMarker, IMapProvider } from '../../common/map.interface';
 import type { IVehicle } from '../../common/transit.interface';
 import { dismissPopup } from '../../client/scripts/utils/map-popup';
+import { showToast } from '../../client/scripts/utils/toast';
 
 const mockSetActiveVehicles = jest.fn();
 jest.mock('../../client/scripts/state/map-state', () => ({
@@ -32,6 +33,7 @@ jest.mock('../../client/scripts/utils/bus-icon', () => ({
   })
 }));
 jest.mock('../../client/scripts/utils/map-popup', () => ({
+  ...jest.requireActual('../../client/scripts/utils/map-popup'),
   dismissPopup: jest.fn()
 }));
 jest.mock('../../client/scripts/utils/toast', () => ({ showToast: jest.fn() }));
@@ -103,6 +105,8 @@ describe('live vehicle freshness and polling lifecycle', () => {
       remove: jest.fn()
     }));
     tracker = VehicleTracker.getInstance();
+    tracker.setAdminProximityBypass(false);
+    tracker.updateUserLocation(null);
     tracker.initialize({
       getZoom: () => 14,
       onZoomChanged: jest.fn(),
@@ -116,6 +120,44 @@ describe('live vehicle freshness and polling lifecycle', () => {
     jest.restoreAllMocks();
     jest.useRealTimers();
   });
+
+  test.each([false, true])(
+    'an open bus popup cannot report with cleared GPS (admin bypass: %s)',
+    async (isAdmin) => {
+      const report = jest.fn();
+      document.addEventListener('busReport', report);
+      try {
+        tracker.setAdminProximityBypass(isAdmin);
+        tracker.updateUserLocation({ lat: 40.44, lng: -79.94 });
+        getVehicles.mockResolvedValue({ vehicles: [vehicle('reportable')] });
+        tracker.startPolling('61C');
+        await tick();
+        const marker = addMarker.mock.results[0].value;
+        jest.mocked(marker.onClick).mock.calls[0][0]();
+        const reportButton = document.querySelector<HTMLButtonElement>(
+          '.map-popup__action-btn--report'
+        )!;
+        reportButton.click();
+        expect(report).toHaveBeenCalledTimes(1);
+
+        tracker.updateUserLocation(null);
+        reportButton.click();
+        expect(report).toHaveBeenCalledTimes(1);
+        expect(showToast).toHaveBeenCalledWith(
+          expect.stringContaining('Location access is required')
+        );
+
+        tracker.updateUserLocation({ lat: 40.4401, lng: -79.94 });
+        reportButton.click();
+        expect(report).toHaveBeenCalledTimes(2);
+        expect((report.mock.calls[1][0] as CustomEvent).detail.lat).toBe(
+          40.4401
+        );
+      } finally {
+        document.removeEventListener('busReport', report);
+      }
+    }
+  );
 
   test('fresh live buses render with accessible persistent status', async () => {
     getVehicles.mockResolvedValue({ vehicles: [vehicle('fresh')] });

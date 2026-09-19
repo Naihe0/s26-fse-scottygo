@@ -118,7 +118,7 @@ export class VehicleTracker {
   /**
    * Update the cached user location (called from map.ts watchPosition).
    */
-  updateUserLocation(position: { lat: number; lng: number }): void {
+  updateUserLocation(position: { lat: number; lng: number } | null): void {
     this.userLocation = position;
   }
 

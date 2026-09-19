@@ -89,6 +89,49 @@ describe('Walking directions lifecycle', () => {
     jest.useRealTimers();
   });
 
+  test('cleared GPS cannot start directions from a stale fix; a new fix restores the origin', async () => {
+    controller.updatePlannedLocation(null);
+    controller.updateUserLocation(null);
+    const warning = jest
+      .spyOn(console, 'warn')
+      .mockImplementation(() => undefined);
+    await expect(controller.startDirections(stop)).resolves.toBe(false);
+    expect(request).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith(
+      'Choose a starting location before requesting directions.'
+    );
+
+    jest.advanceTimersByTime(600);
+    const recovered = { lat: 40.43, lng: -79.95 };
+    controller.updateUserLocation(recovered);
+    request.mockResolvedValue(route);
+    await expect(controller.startDirections(stop)).resolves.toBe(true);
+    expect(request.mock.calls[0][0]).toEqual(recovered);
+    warning.mockRestore();
+  });
+
+  test('clearing GPS during active directions does not run arrival or deviation checks', async () => {
+    controller.updatePlannedLocation(null);
+    request.mockResolvedValue(route);
+    await controller.startDirections(stop);
+    expect(() => controller.updateUserLocation(null)).not.toThrow();
+    expect(controller.isActive).toBe(true);
+    expect(controller.targetStop).toEqual(stop);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(restoreMap).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalled();
+    expect(jest.getTimerCount()).toBe(1);
+  });
+
+  test('an explicit planned origin remains usable after GPS is cleared', async () => {
+    const planned = { lat: 40.46, lng: -79.96 };
+    controller.updatePlannedLocation(planned);
+    controller.updateUserLocation(null);
+    request.mockResolvedValue(route);
+    await expect(controller.startDirections(stop)).resolves.toBe(true);
+    expect(request.mock.calls[0][0]).toEqual(planned);
+  });
+
   test.each([
     ['denial', new Error('REQUEST_DENIED')],
     ['timeout', new DOMException('Request timed out', 'TimeoutError')],

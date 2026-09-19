@@ -1,5 +1,6 @@
 @import './live-tracking.css';
 @import './map-key.css';
+@import './location-feedback.css';
 
 :root {
   --primary: #c41230;

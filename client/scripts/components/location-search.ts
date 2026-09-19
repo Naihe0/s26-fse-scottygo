@@ -10,9 +10,6 @@
  */
 import { MapStateManager } from '../state/map-state';
 
-/** CMU Pittsburgh campus center — default when GPS is denied */
-const CMU_CAMPUS = { lat: 40.4433, lng: -79.9436 };
-
 export interface ILocationSearchElement extends HTMLElement {
   /** Provide the Google Maps map instance for Places Autocomplete binding */
   setMap(map: google.maps.Map): void;
@@ -166,24 +163,10 @@ export class LocationSearch
   }
 
   private handleCurrentLocationClick(): void {
-    const state = this.stateManager.getState();
-    if (state.gpsPermissionGranted && state.currentLocation) {
-      this.stateManager.resetPlannedLocationToCurrent();
-      this.dispatchEvent(new CustomEvent('locationReset', { bubbles: true }));
-    } else {
-      // GPS not available — default to CMU campus
-      this.stateManager.setPlannedLocation(CMU_CAMPUS, 'CMU Campus');
-      this.dispatchEvent(
-        new CustomEvent('locationSelected', {
-          detail: {
-            lat: CMU_CAMPUS.lat,
-            lng: CMU_CAMPUS.lng,
-            label: 'CMU Campus'
-          },
-          bubbles: true
-        })
-      );
-    }
+    this.stateManager.resetPlannedLocationToCurrent();
+    // The map owns GPS recovery. An unavailable fix is a request to retry,
+    // not an explicit choice to persist the automatic campus fallback.
+    this.dispatchEvent(new CustomEvent('locationReset', { bubbles: true }));
     this.close();
   }
 

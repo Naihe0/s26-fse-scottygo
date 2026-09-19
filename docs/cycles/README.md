@@ -1,5 +1,10 @@
 # Improvement cycles
 
+## Safari location recovery follow-up
+
+Correct location error classification, retries after settings changes, and recovery
+from the automatic campus fallback. See the [findings and verification](2026-09-19-location-recovery.md).
+
 ## iPhone map layout follow-up
 
 The user-reported missing header and bottom gap prompted a focused viewport fix.
