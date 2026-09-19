@@ -11,12 +11,9 @@
   --gray-800: #1f2937;
 }
 
-html,
-body {
-  height: 100vh;
-  height: 100dvh;
+html {
+  height: 100%;
   overflow: hidden;
-  position: fixed;
   width: 100%;
 }
 
@@ -32,8 +29,9 @@ body {
     sans-serif;
   height: 100vh;
   height: 100dvh;
-  max-height: 100vh;
-  max-height: 100dvh;
+  min-height: 0;
+  width: 100%;
+  position: relative;
   display: flex;
   flex-direction: column;
   background-color: var(--bg-light);
@@ -46,29 +44,36 @@ body.dark {
   background-color: var(--bg-dark);
 }
 
+/* Keep the root in normal flow: fixing both html and body can displace the
+   entire app when WebKit sizes the page beneath the browser's toolbars. */
+app-header {
+  flex: 0 0 auto;
+  z-index: 1000;
+}
+
 /* Content Styles */
 .content {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   position: relative;
   overflow: hidden;
+  z-index: 0;
 }
 
 .map-container {
   position: relative;
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
   width: 100%;
-  height: 100%;
 }
 
 #map {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  inset: 0;
   z-index: 1;
   touch-action: none;
 }
@@ -108,7 +113,10 @@ body.dark .panel {
   height: 48px;
   border-radius: 50%;
   border: none;
+  -webkit-appearance: none;
+  appearance: none;
   background: white;
+  color: var(--gray-700);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3609,4 +3617,21 @@ body.dark .tutorial-popup__dismiss {
 
 body.dark .tutorial-popup__dismiss:hover {
   color: #9ca3af;
+}
+
+/* WebKit zooms small editable fields on focus, which can pan the map shell. */
+@media (max-width: 1024px) {
+  .search-box input,
+  .route-search-input,
+  .location-search-places-input,
+  .bus-report__textarea {
+    font-size: 16px;
+  }
+}
+
+/* Leave the bottom filter button reachable on short landscape screens. */
+@media (min-width: 700px) and (max-height: 500px) {
+  map-key {
+    left: 112px;
+  }
 }
