@@ -1,6 +1,6 @@
 # Cycle 2 — A clearer, quieter transit map
 
-Status: implementation and automated verification complete; browser acceptance and release in progress. Planned before implementation on 2026-09-19.
+Status: implemented, tested, and deployed on 2026-09-19. Use cases were planned before implementation.
 
 The user requested another complete improvement cycle and specifically asked for circular bus icons with directional triangles, a more visible self-location marker, and more refined routes/stops. This cycle prioritizes the map's visual hierarchy and the rendering behavior behind it. Deployment target: the personal `scottygo-ningrui` Render service.
 
@@ -44,4 +44,18 @@ The user requested another complete improvement cycle and specifically asked for
 - A late route-color refresh also updates existing stop rings and their later zoom-sized icons, preserving click listeners and avoiding unnecessary marker replacement.
 - Local mobile directions computed a **six-minute walk** to Centre/Millvale, exited cleanly, and left direction controls responsive. Selecting outbound-only route 71C produced **56 stop markers** and the matching URL; browser Back restored the prior filter view.
 
-Production commit, hosted checks, final directions acceptance, and cleanup will be recorded after rollout. Larger backend/account/schedule items remain in the [audit backlog](../audit/README.md).
+## Production release
+
+- Application commit: `21cb07f5651d827098d8535504b864efdc992206` on `codex/render-atlas-setup`.
+- [Personal production service](https://scottygo-ningrui.onrender.com): Render deployment `dep-danddoijnfac738pu6i0` is **Live**, following a successful 56.3-second automatic deployment. No database migration or deployment setting change was needed.
+- All **14 hosted smoke checks passed**, covering five pages, their 14 referenced JavaScript/CSS assets, fresh PRT/CMU feeds, TrueTime colors, 102 PRT routes, 15 CMU routes, Atlas persistence, admin authentication/authorization, and Maps configuration.
+- The browser opened during schedule initialization and showed the loading notice. Without a reload, it recovered to 104 route-71C stop markers and five live buses. The health endpoint then reported GTFS ready and a 237.2 MB peak RSS at 206 seconds uptime, with no critical-memory signal. These are startup observations, not a sustained load benchmark.
+- Desktop production review confirmed circular bus badges with independent heading triangles, centered blue GPS visibility, compact stop rings, cased route lines, and the quieter base map. The map key opens, closes with Escape, and restores focus; the GPS wrapper has `pointer-events: none`.
+- Production directions from the Centre/Millvale stop completed with a six-minute walk and exited cleanly. Direction controls stayed responsive, and outbound-only 71C displayed 56 stops with the correct shared-view URL. Mobile layout acceptance was performed locally at 390 × 844; the hosted check used the browser's 1662 × 1000 viewport because its override did not apply to this tab.
+- Browser Back restored the unfiltered 71C URL and all 104 stops. Provider vehicle freshness varied during acceptance; the existing delayed-location notice appeared and stale buses were hidden. The cold-start route-filter attempt logged an error while GTFS was unavailable, then recovered automatically as observed above.
+- Owned local app PID 9236 and disposable MongoDB PID 32940 were verified and stopped; MongoDB used graceful shutdown. No listeners remain on ports 8080, 8180, 8383, 27017, or 27019.
+- Rollback target: previous application commit `b4231d6630d1043550425d9a1992bc333f130b8a`, Render deployment `dep-danctj17lnhs73e3g15g`.
+
+## Remaining tradeoffs
+
+White route casing uses two polylines per segment. Closely spaced opposite-direction stops can still overlap at low zoom; direction filters and zoom separate them. The GPS pointer pass-through depends on Google Maps' generated role/ARIA markup and needs a browser recheck when migrating the SDK. Existing Google legacy Marker/Autocomplete deprecation warnings remain; this cycle does not migrate those APIs. Larger backend/account/schedule items remain in the [audit backlog](../audit/README.md).
