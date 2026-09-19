@@ -46,6 +46,7 @@ export class VehicleTracker {
   private userLocation: { lat: number; lng: number } | null = null;
 
   private pollingInterval: number | null = null;
+  private pollingGeneration = 0;
   private currentRouteId: string | null = null;
   private currentRouteColor = '#4285F4';
   private routeColorMap = new Map<string, string>();
@@ -132,6 +133,8 @@ export class VehicleTracker {
    * Stop polling vehicle positions
    */
   stopPolling(): void {
+    // SDK/network requests may finish after timers and markers are cleared.
+    this.pollingGeneration++;
     if (this.pollingInterval !== null) {
       clearInterval(this.pollingInterval);
       this.pollingInterval = null;
@@ -157,8 +160,8 @@ export class VehicleTracker {
   ): void {
     if (!this.mapProvider || routeIds.length === 0) return;
 
-    this.stopMultiRoutePolling();
-    this.multiRouteIds = routeIds;
+    this.stopPolling();
+    this.multiRouteIds = [...routeIds];
     if (routeColors) {
       routeColors.forEach((color, id) => this.routeColorMap.set(id, color));
     }
@@ -177,7 +180,7 @@ export class VehicleTracker {
   }
 
   /**
-   * Stop multi-route polling (called by stopPolling or independently).
+   * Stop multi-route polling as part of stopping the current polling session.
    */
   private stopMultiRoutePolling(): void {
     if (this.multiRoutePollingInterval !== null) {
@@ -196,9 +199,11 @@ export class VehicleTracker {
   private async updateMultiRoutePositions(): Promise<void> {
     if (!this.mapProvider || this.multiRouteIds.length === 0) return;
 
+    const generation = this.pollingGeneration;
     const allVehicles: IVehicle[] = [];
     for (const routeId of this.multiRouteIds) {
       const result = await transitApiService.getVehicles(routeId);
+      if (generation !== this.pollingGeneration) return;
       if (result !== null) {
         allVehicles.push(...result.vehicles);
       }
@@ -212,6 +217,7 @@ export class VehicleTracker {
   private async updateVehiclePositions(): Promise<void> {
     if (!this.currentRouteId || !this.mapProvider) return;
 
+    const generation = this.pollingGeneration;
     const state = this.stateManager.getState();
     let timeParam: string | undefined;
 
@@ -224,7 +230,7 @@ export class VehicleTracker {
       this.currentRouteId,
       timeParam
     );
-    if (result === null) return;
+    if (generation !== this.pollingGeneration || result === null) return;
 
     // Check if data is from static cache (A2: PRT API Down)
     if (result.source === 'static' && !this.hasShownStaticToast) {

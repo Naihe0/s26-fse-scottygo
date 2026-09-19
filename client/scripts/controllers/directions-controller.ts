@@ -6,8 +6,6 @@
  * arrival detection, and directions-mode state (R1–R5).
  */
 
-/// <reference types="google.maps" />
-
 import type {
   IMapProvider,
   IMapPolyline,
@@ -17,13 +15,8 @@ import type { IStop, IPrediction } from '../../../common/transit.interface';
 import { RouteRenderer } from '../renderers/route-renderer';
 import { VehicleTracker } from '../trackers/vehicle-tracker';
 import { closeMapPopup } from '../utils/map-popup';
-
-/** Result of a Google Directions API call */
-export interface IDirectionsResult {
-  polyline: ILatLng[];
-  durationSeconds: number;
-  distanceMeters: number;
-}
+import { requestWalkingDirections } from '../services/walking-directions.service';
+export type { IDirectionsResult } from '../services/walking-directions.service';
 
 /** Minimum interval between automatic reroute requests (R3) */
 const AUTO_REROUTE_THROTTLE_MS = 45_000;
@@ -56,13 +49,16 @@ export class DirectionsController {
   // Timing / throttle state
   private lastRerouteTime = 0;
   private periodicRerouteInterval: number | null = null;
+  private deferredRerouteTimeout: number | null = null;
   private lastDirectionsTap = 0;
+  private sessionId = 0;
 
   // In-flight request abort controller (R2)
   private inflightAbort: AbortController | null = null;
 
   // Callback to show toast
   private toastCallback: ((message: string) => void) | null = null;
+  private loadingCallback: ((loading: boolean) => void) | null = null;
   // Callback to update the directions info panel
   private infoPanelCallback:
     | ((
@@ -70,6 +66,7 @@ export class DirectionsController {
           durationMin: number;
           eta: string;
           predictions: IPrediction[];
+          warnings?: string[];
         } | null
       ) => void)
     | null = null;
@@ -97,6 +94,11 @@ export class DirectionsController {
     this.toastCallback = cb;
   }
 
+  /** Show a cancellable panel while the initial walking route is loading. */
+  setLoadingCallback(cb: (loading: boolean) => void): void {
+    this.loadingCallback = cb;
+  }
+
   /** Register a callback for directions info updates (duration + ETA + selected bus predictions) */
   setInfoPanelCallback(
     cb: (
@@ -104,6 +106,7 @@ export class DirectionsController {
         durationMin: number;
         eta: string;
         predictions: IPrediction[];
+        warnings?: string[];
       } | null
     ) => void
   ): void {
@@ -118,6 +121,11 @@ export class DirectionsController {
   /** Whether directions mode is currently active */
   get isActive(): boolean {
     return this._isActive;
+  }
+
+  /** Invalidates asynchronous map restoration across every start/exit cycle. */
+  get sessionVersion(): number {
+    return this.sessionId;
   }
 
   /** The stop currently being navigated to, if any */
@@ -180,20 +188,27 @@ export class DirectionsController {
   async startDirections(
     stop: IStop,
     selectedPredictions: IPrediction[] = []
-  ): Promise<void> {
+  ): Promise<boolean> {
     // R1: Tap debounce
     const now = Date.now();
-    if (now - this.lastDirectionsTap < TAP_DEBOUNCE_MS) return;
+    if (now - this.lastDirectionsTap < TAP_DEBOUNCE_MS) return false;
     this.lastDirectionsTap = now;
 
     if (!this.mapProvider || !this.getDirectionsOrigin()) {
       console.warn(
         '[DirectionsController] No map provider or location for directions'
       );
-      return;
+      this.toastCallback?.(
+        'Choose a starting location before requesting directions.'
+      );
+      return false;
     }
 
     // Enter directions mode
+    const session = ++this.sessionId;
+    this.stopPeriodicReroute();
+    this.cancelInflightRequest();
+    this.removeWalkingPolyline();
     this._isActive = true;
     this.selectedStop = stop;
     this._selectedPredictions = selectedPredictions;
@@ -202,12 +217,19 @@ export class DirectionsController {
     this.routeRenderer.clearAllRoutes();
     this.vehicleTracker.stopPolling();
     closeMapPopup();
+    this.loadingCallback?.(true);
 
     // Fetch and render initial route
-    await this.fetchAndRenderRoute();
+    const rendered = await this.fetchAndRenderRoute();
+    if (session !== this.sessionId || !this._isActive) return false;
+    if (!rendered) {
+      this.exitDirections();
+      return false;
+    }
 
     // Start periodic reroute (Step 9: every 120s)
     this.startPeriodicReroute();
+    return true;
   }
 
   /**
@@ -215,6 +237,8 @@ export class DirectionsController {
    * Clears walking path, restores stops/routes.
    */
   exitDirections(): void {
+    const wasActive = this._isActive;
+    this.sessionId++;
     this._isActive = false;
     this.selectedStop = null;
     this._selectedPredictions = [];
@@ -227,12 +251,17 @@ export class DirectionsController {
 
     // Remove walking path polyline
     this.removeWalkingPolyline();
+    if (wasActive) {
+      this.vehicleTracker.stopPolling();
+      this.routeRenderer.clearAllRoutes();
+    }
 
     // Clear info panel
+    this.loadingCallback?.(false);
     this.infoPanelCallback?.(null);
 
     // Notify map.ts to restore routes/stops
-    this.exitCallback?.();
+    if (wasActive) this.exitCallback?.();
   }
 
   // ── Private helpers ──────────────────────────────────────────────────
@@ -240,13 +269,24 @@ export class DirectionsController {
   /**
    * Fetch directions from Google Directions API and render on map.
    */
-  private async fetchAndRenderRoute(): Promise<void> {
+  private async fetchAndRenderRoute(): Promise<boolean> {
     const origin = this.getDirectionsOrigin();
-    if (!this.mapProvider || !origin || !this.selectedStop) return;
+    if (!this.mapProvider || !origin || !this.selectedStop || !this._isActive)
+      return false;
 
     // R2: Cancel any in-flight request
     this.cancelInflightRequest();
-    this.inflightAbort = new AbortController();
+    this.clearDeferredReroute();
+    const request = new AbortController();
+    this.inflightAbort = request;
+    const session = this.sessionId;
+    // Throttle failed attempts too, so GPS updates cannot flood the provider.
+    this.lastRerouteTime = Date.now();
+    const isCurrent = () =>
+      this._isActive &&
+      this.sessionId === session &&
+      this.inflightAbort === request &&
+      !request.signal.aborted;
 
     const destination: ILatLng = {
       lat: this.selectedStop.lat,
@@ -254,26 +294,25 @@ export class DirectionsController {
     };
 
     try {
-      const result = await this.fetchDirections(
+      const result = await requestWalkingDirections(
         origin,
         destination,
-        this.inflightAbort.signal
+        request.signal
       );
 
-      if (!result) return;
+      if (!isCurrent()) return false;
 
-      this.walkingPath = result.polyline;
-      this.lastRerouteTime = Date.now();
-
-      // Remove old polyline and render new one
-      this.removeWalkingPolyline();
-      this.walkingPolyline = this.mapProvider.addPolyline({
+      // Keep the previous route if rendering the replacement fails.
+      const polyline = this.mapProvider.addPolyline({
         path: result.polyline,
         color: '#4285F4',
         weight: 7,
         opacity: 0.9,
         zIndex: 10
       });
+      this.removeWalkingPolyline();
+      this.walkingPolyline = polyline;
+      this.walkingPath = result.polyline;
 
       // Update info panel with duration + ETA
       const durationMin = Math.ceil(result.durationSeconds / 60);
@@ -282,114 +321,44 @@ export class DirectionsController {
         hour: '2-digit',
         minute: '2-digit'
       });
+      this.loadingCallback?.(false);
+      if (!isCurrent()) return false;
       this.infoPanelCallback?.({
         durationMin,
         eta: etaStr,
-        predictions: this._selectedPredictions
+        predictions: this._selectedPredictions,
+        warnings: result.warnings ?? []
       });
+      return true;
     } catch (err) {
-      if ((err as Error).name === 'AbortError') return; // cancelled
+      if (!isCurrent()) return false;
       console.error('[DirectionsController] Failed to fetch directions:', err);
-    }
-  }
-
-  /**
-   * Call Google Directions API (client-side, walking mode).
-   * Uses the REST Directions API via fetch.
-   */
-  private async fetchDirections(
-    origin: ILatLng,
-    destination: ILatLng,
-    signal: AbortSignal
-  ): Promise<IDirectionsResult | null> {
-    // Use the Google Maps DirectionsService (already loaded with the SDK)
-    return new Promise((resolve, reject) => {
-      if (
-        typeof google === 'undefined' ||
-        !google.maps ||
-        !google.maps.DirectionsService
-      ) {
-        console.error('[DirectionsController] Google Maps SDK not loaded');
-        resolve(null);
-        return;
-      }
-
-      // Handle abort
-      if (signal.aborted) {
-        reject(new DOMException('Aborted', 'AbortError'));
-        return;
-      }
-
-      const service = new google.maps.DirectionsService();
-
-      const onAbort = () => {
-        reject(new DOMException('Aborted', 'AbortError'));
-      };
-      signal.addEventListener('abort', onAbort, { once: true });
-
-      service.route(
-        {
-          origin: { lat: origin.lat, lng: origin.lng },
-          destination: { lat: destination.lat, lng: destination.lng },
-          travelMode: google.maps.TravelMode.WALKING
-        },
-        (result, status) => {
-          signal.removeEventListener('abort', onAbort);
-
-          if (signal.aborted) {
-            reject(new DOMException('Aborted', 'AbortError'));
-            return;
-          }
-
-          if (
-            status === google.maps.DirectionsStatus.OK &&
-            result?.routes?.[0]
-          ) {
-            const route = result.routes[0];
-            const leg = route.legs[0];
-
-            // Decode overview polyline path
-            const polyline: ILatLng[] = route.overview_path.map(
-              (p: google.maps.LatLng) => ({
-                lat: p.lat(),
-                lng: p.lng()
-              })
-            );
-
-            resolve({
-              polyline,
-              durationSeconds: leg.duration?.value ?? 0,
-              distanceMeters: leg.distance?.value ?? 0
-            });
-          } else {
-            console.warn(
-              '[DirectionsController] Directions request failed:',
-              status
-            );
-            resolve(null);
-          }
-        }
+      this.toastCallback?.(
+        this.walkingPolyline
+          ? 'Could not update walking directions. Keeping your current route.'
+          : err instanceof Error && err.name === 'TimeoutError'
+            ? 'Walking directions took too long. Please try again.'
+            : 'Walking directions are unavailable. Please try again.'
       );
-    });
+      return false;
+    } finally {
+      if (this.inflightAbort === request) this.inflightAbort = null;
+    }
   }
 
   /** Handle path deviation (A5) with throttle (R3) */
   private handleDeviation(): void {
-    const now = Date.now();
-    const elapsed = now - this.lastRerouteTime;
+    if (!this._isActive || this.inflightAbort) return;
+    const elapsed = Date.now() - this.lastRerouteTime;
 
     if (elapsed >= AUTO_REROUTE_THROTTLE_MS) {
-      console.log('[DirectionsController] Path deviation detected – rerouting');
-      this.fetchAndRenderRoute();
-    } else {
-      // Delay reroute until throttle period expires
-      const delay = AUTO_REROUTE_THROTTLE_MS - elapsed;
-      console.log(
-        `[DirectionsController] Deviation reroute deferred by ${delay}ms (R3)`
-      );
-      setTimeout(() => {
-        if (this._isActive) this.fetchAndRenderRoute();
-      }, delay);
+      void this.fetchAndRenderRoute();
+    } else if (this.deferredRerouteTimeout === null) {
+      // Coalesce repeated GPS updates into one delayed reroute.
+      this.deferredRerouteTimeout = window.setTimeout(() => {
+        this.deferredRerouteTimeout = null;
+        this.handleDeviation();
+      }, AUTO_REROUTE_THROTTLE_MS - elapsed);
     }
   }
 
@@ -404,19 +373,7 @@ export class DirectionsController {
   private startPeriodicReroute(): void {
     this.stopPeriodicReroute();
     this.periodicRerouteInterval = window.setInterval(() => {
-      if (!this._isActive) return;
-
-      const elapsed = Date.now() - this.lastRerouteTime;
-      if (elapsed >= AUTO_REROUTE_THROTTLE_MS) {
-        console.log('[DirectionsController] Periodic reroute (120s)');
-        this.fetchAndRenderRoute();
-      } else {
-        // Defer per R3
-        const delay = AUTO_REROUTE_THROTTLE_MS - elapsed;
-        setTimeout(() => {
-          if (this._isActive) this.fetchAndRenderRoute();
-        }, delay);
-      }
+      this.handleDeviation();
     }, PERIODIC_REROUTE_MS);
   }
 
@@ -425,6 +382,14 @@ export class DirectionsController {
     if (this.periodicRerouteInterval !== null) {
       clearInterval(this.periodicRerouteInterval);
       this.periodicRerouteInterval = null;
+    }
+    this.clearDeferredReroute();
+  }
+
+  private clearDeferredReroute(): void {
+    if (this.deferredRerouteTimeout !== null) {
+      window.clearTimeout(this.deferredRerouteTimeout);
+      this.deferredRerouteTimeout = null;
     }
   }
 

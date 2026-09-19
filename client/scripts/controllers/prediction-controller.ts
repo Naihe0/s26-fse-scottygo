@@ -210,8 +210,11 @@ export class PredictionController {
       const selectedPreds = ctx.displayPredictions.filter((_, idx) =>
         ctx.selectedIndices.has(idx)
       );
-      await this.directionsController.startDirections(stop, selectedPreds);
-      if (selectedPreds.length > 0) {
+      const started = await this.directionsController.startDirections(
+        stop,
+        selectedPreds
+      );
+      if (started && selectedPreds.length > 0) {
         await this.renderSelectedBusRoutes(selectedPreds);
       }
     });
@@ -515,8 +518,11 @@ export class PredictionController {
         const selectedPreds = displayPredictions.filter((_, i) =>
           selectedIndices.has(i)
         );
-        await this.directionsController.startDirections(stop, selectedPreds);
-        if (selectedPreds.length > 0) {
+        const started = await this.directionsController.startDirections(
+          stop,
+          selectedPreds
+        );
+        if (started && selectedPreds.length > 0) {
           await this.renderSelectedBusRoutes(selectedPreds);
         }
       });
@@ -532,11 +538,18 @@ export class PredictionController {
   private async renderSelectedBusRoutes(
     predictions: IPrediction[]
   ): Promise<void> {
+    const target = this.directionsController.targetStop;
+    const isCurrent = () =>
+      this.directionsController.isActive &&
+      this.directionsController.targetStop === target &&
+      this.directionsController.selectedPredictions === predictions;
+    if (!isCurrent()) return;
     const routeIds = [...new Set(predictions.map((p) => p.routeId))];
     const state = this.stateManager.getState();
 
     for (const routeId of routeIds) {
       const geometry = await transitApiService.getPatterns(routeId);
+      if (!isCurrent()) return;
       if (geometry) {
         const route = state.availableRoutes.find((r) => r.id === routeId);
         const color = route?.color || this.getRouteColor(routeId);
@@ -545,6 +558,7 @@ export class PredictionController {
 
       for (const direction of ['INBOUND', 'OUTBOUND']) {
         const stops = await transitApiService.getStops(routeId, direction);
+        if (!isCurrent()) return;
         if (stops.length > 0) {
           this.routeRenderer.renderStopMarkers(
             routeId,

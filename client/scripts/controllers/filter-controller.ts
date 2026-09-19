@@ -469,13 +469,16 @@ export class FilterController {
    * Ensure route metadata exists in state (useful after back-navigation when
    * URL state restores a CMU route before CMU routes have been prefetched).
    */
-  private async ensureRouteAvailable(routeId: string): Promise<IRoute | null> {
+  private async ensureRouteAvailable(
+    routeId: string,
+    isCurrent: () => boolean
+  ): Promise<IRoute | null> {
     let state = this.getCurrentState();
     let route = this.findAvailableRoute(routeId, state);
     if (route) return route;
 
     const routes = await this.fetchAllRoutes();
-    if (routes.length === 0) {
+    if (!isCurrent() || routes.length === 0) {
       return null;
     }
 
@@ -490,17 +493,33 @@ export class FilterController {
   /**
    * Apply route filter (single route selection - Rule R1)
    */
-  async applyRouteFilter(routeId: string): Promise<void> {
+  async applyRouteFilter(
+    routeId: string,
+    isCurrent: () => boolean = () => true
+  ): Promise<void> {
+    if (!isCurrent()) return;
     try {
       console.log('Applying route filter:', routeId);
 
-      const selectedRoute = await this.ensureRouteAvailable(routeId);
+      const selectedRoute = await this.ensureRouteAvailable(routeId, isCurrent);
+      if (!isCurrent()) return;
       this.prepareMapForRouteSelection();
 
-      await this.renderRouteGeometryForSelection(routeId, selectedRoute);
-      await this.renderRouteStopsForSelection(routeId, selectedRoute);
+      await this.renderRouteGeometryForSelection(
+        routeId,
+        selectedRoute,
+        isCurrent
+      );
+      if (!isCurrent()) return;
+      await this.renderRouteStopsForSelection(
+        routeId,
+        selectedRoute,
+        isCurrent
+      );
+      if (!isCurrent()) return;
 
-      await this.fetchAndShowDetours(routeId);
+      await this.fetchAndShowDetours(routeId, isCurrent);
+      if (!isCurrent()) return;
       this.startVehiclePollingForSelectedRoute(routeId);
 
       this.syncURLWithCurrentState();
@@ -537,9 +556,11 @@ export class FilterController {
    */
   private async renderRouteGeometryForSelection(
     routeId: string,
-    selectedRoute: IRoute | null
+    selectedRoute: IRoute | null,
+    isCurrent: () => boolean
   ): Promise<void> {
     const geometry = await this.fetchRouteGeometry(routeId);
+    if (!isCurrent()) return;
     if (!geometry) {
       console.error('Failed to fetch geometry for route', routeId);
       // Continue anyway to show stops and vehicles
@@ -563,10 +584,11 @@ export class FilterController {
    */
   private async renderRouteStopsForSelection(
     routeId: string,
-    selectedRoute: IRoute | null
+    selectedRoute: IRoute | null,
+    isCurrent: () => boolean
   ): Promise<void> {
     if (selectedRoute) {
-      await this.applyDirectionFilter();
+      await this.applyDirectionFilter(isCurrent);
       return;
     }
 
@@ -575,7 +597,7 @@ export class FilterController {
       state.selectedDirections,
       this.getFallbackDirectionsForRoute(routeId)
     );
-    await this.refreshStopMarkers(routeId, enabledDirections);
+    await this.refreshStopMarkers(routeId, enabledDirections, isCurrent);
   }
 
   /**
@@ -592,17 +614,21 @@ export class FilterController {
   /**
    * Fetch detours for the given route and display a banner if any are active.
    */
-  private async fetchAndShowDetours(routeId: string): Promise<void> {
+  private async fetchAndShowDetours(
+    routeId: string,
+    isCurrent: () => boolean
+  ): Promise<void> {
     try {
       const geometryDetours =
         await transitApiService.getDetourGeometry(routeId);
+      if (!isCurrent()) return;
       this.routeRenderer.clearDetourPolylines(routeId);
       if (geometryDetours.some((d) => (d.geometry?.length ?? 0) > 0)) {
         this.routeRenderer.renderDetourGeometry(routeId, geometryDetours);
       }
     } catch (error) {
       console.error('Error fetching detours:', error);
-      this.routeRenderer.clearDetourPolylines(routeId);
+      if (isCurrent()) this.routeRenderer.clearDetourPolylines(routeId);
     }
   }
 
@@ -787,16 +813,19 @@ export class FilterController {
    */
   private async refreshStopMarkers(
     routeId: string,
-    directions: string[]
+    directions: string[],
+    isCurrent: () => boolean
   ): Promise<void> {
+    if (!isCurrent()) return;
     this.clearDirectionalStopMarkers(routeId);
 
     for (const direction of directions) {
       const shouldContinue = await this.renderDirectionStopMarkers(
         routeId,
-        direction
+        direction,
+        isCurrent
       );
-      if (!shouldContinue) {
+      if (!isCurrent() || !shouldContinue) {
         return;
       }
     }
@@ -815,12 +844,13 @@ export class FilterController {
    */
   private async renderDirectionStopMarkers(
     routeId: string,
-    direction: string
+    direction: string,
+    isCurrent: () => boolean
   ): Promise<boolean> {
     const stops = await this.fetchStops(routeId, direction);
 
     // Guard against deselection that may have occurred during the async fetch
-    if (this.getCurrentState().selectedRouteId !== routeId) {
+    if (!isCurrent() || this.getCurrentState().selectedRouteId !== routeId) {
       return false;
     }
 
@@ -836,7 +866,10 @@ export class FilterController {
   /**
    * Apply direction filter
    */
-  async applyDirectionFilter(): Promise<void> {
+  async applyDirectionFilter(
+    isCurrent: () => boolean = () => true
+  ): Promise<void> {
+    if (!isCurrent()) return;
     const state = this.getCurrentState();
 
     if (!state.selectedRouteId) {
@@ -865,9 +898,11 @@ export class FilterController {
         routeId,
         selectedRoute.directions,
         state.selectedDirections,
-        directions
+        directions,
+        isCurrent
       );
 
+      if (!isCurrent()) return;
       this.vehicleTracker.refreshDirectionVisibility();
 
       this.syncURLWithCurrentState();
@@ -883,14 +918,15 @@ export class FilterController {
     routeId: string,
     routeDirections: string[],
     selectedDirections: { inbound: boolean; outbound: boolean },
-    directionsToRender: string[]
+    directionsToRender: string[],
+    isCurrent: () => boolean
   ): Promise<void> {
     this.updateDirectionVisibility(
       routeId,
       routeDirections,
       selectedDirections
     );
-    await this.refreshStopMarkers(routeId, directionsToRender);
+    await this.refreshStopMarkers(routeId, directionsToRender, isCurrent);
   }
 
   /**
@@ -1478,7 +1514,11 @@ export class FilterController {
    * Called once when the user's location is first obtained (TUC4 Step 2).
    * Stops are cleared automatically when a route is explicitly selected.
    */
-  async showNearbyStops(position: ILatLng): Promise<void> {
+  async showNearbyStops(
+    position: ILatLng,
+    isCurrent: () => boolean = () => true
+  ): Promise<void> {
+    if (!isCurrent()) return;
     this.userLocation = position;
 
     // Don't show nearby stops if a route is already selected (TUC1 takes precedence)
@@ -1496,13 +1536,14 @@ export class FilterController {
         position.lng,
         system
       );
-      if (!nearbyData || nearbyData.stops.length === 0) return;
+      if (!isCurrent() || !nearbyData || nearbyData.stops.length === 0) return;
 
       this.collectNearbyRouteIds(nearbyData.stops);
 
       this.hideRoutesWithoutNearbyStops(state.availableRoutes);
 
-      await this.renderNearbyRouteGeometries(state.availableRoutes);
+      await this.renderNearbyRouteGeometries(state.availableRoutes, isCurrent);
+      if (!isCurrent()) return;
 
       const stopsByRoute = this.groupNearbyStopsByRoute(nearbyData.stops);
       this.renderNearbyStopMarkers(stopsByRoute);
@@ -1584,9 +1625,13 @@ export class FilterController {
   /**
    * Render route geometry for nearby routes that are not currently rendered.
    */
-  private async renderNearbyRouteGeometries(routes: IRoute[]): Promise<void> {
+  private async renderNearbyRouteGeometries(
+    routes: IRoute[],
+    isCurrent: () => boolean
+  ): Promise<void> {
     for (const routeId of this.nearbyRouteIds) {
-      await this.renderNearbyRouteGeometry(routeId, routes);
+      if (!isCurrent()) return;
+      await this.renderNearbyRouteGeometry(routeId, routes, isCurrent);
     }
   }
 
@@ -1595,7 +1640,8 @@ export class FilterController {
    */
   private async renderNearbyRouteGeometry(
     routeId: string,
-    routes: IRoute[]
+    routes: IRoute[],
+    isCurrent: () => boolean
   ): Promise<void> {
     if (this.routeRenderer.hasRouteGeometry(routeId)) {
       return;
@@ -1603,7 +1649,7 @@ export class FilterController {
 
     try {
       const geometry = await this.fetchRouteGeometry(routeId);
-      if (!geometry) {
+      if (!isCurrent() || !geometry) {
         return;
       }
 
@@ -1674,13 +1720,17 @@ export class FilterController {
    * Called when exiting directions mode or any overlay that replaced the
    * default view.
    */
-  async restoreDefaultState(position: ILatLng): Promise<void> {
+  async restoreDefaultState(
+    position: ILatLng,
+    isCurrent: () => boolean = () => true
+  ): Promise<void> {
+    if (!isCurrent()) return;
     this.clearMapForDefaultState();
     this.resetFiltersForDefaultState();
     this.resetNearbyStopsTracking();
 
     // Re-show nearby stops with their route geometry (no vehicles)
-    await this.showNearbyStops(position);
+    await this.showNearbyStops(position, isCurrent);
   }
 
   /**

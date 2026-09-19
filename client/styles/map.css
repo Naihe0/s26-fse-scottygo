@@ -2685,6 +2685,12 @@ body.dark .map-popup__directions-btn:hover {
   color: #6b7280;
 }
 
+.directions-panel__warning {
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 8px 0 0;
+}
+
 body.dark .directions-panel {
   background: rgba(31, 41, 55, 0.97);
   color: #f3f4f6;

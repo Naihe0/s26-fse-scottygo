@@ -62,8 +62,12 @@ connection: it creates username `admin` only when that account is absent, and
 does not reset an existing administrator's password on restart. Unset or empty
 values retain the legacy `admin` password fallback for local/test compatibility.
 
-`GOOGLE_MAPS_KEY` is needed for the map interface; the client loads Maps JavaScript
-with Places and uses Directions. `TRUETIME_KEY` enables PRT route colors and
+`GOOGLE_MAPS_KEY` is needed for the map interface; enable Maps JavaScript API,
+Places, and Routes API for its Google Cloud project and authorize the service
+hostname. Walking directions use the current Routes library (`Route.computeRoutes`)
+because new projects cannot activate the legacy Directions service. Requests time
+out after 15 seconds and restore the map on failure; they can also be cancelled
+from the loading panel. `TRUETIME_KEY` enables PRT route colors and
 detours. PRT live feeds and CMU shuttle feeds do not need keys. Optional settings
 are `BREVO_API_KEY` with `EMAIL_USER` for account-status email, and `GEMINI_API_KEY`
 for AI moderation (otherwise a keyword filter is used). `JWT_EXP` defaults to

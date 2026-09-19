@@ -217,17 +217,35 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
     // Set up directions controller callbacks
     directionsController.setToastCallback(showToast);
     directionsController.setInfoPanelCallback(updateDirectionsPanel);
+    directionsController.setLoadingCallback((loading) => {
+      if (loading) {
+        updateDirectionsPanel({
+          durationMin: 0,
+          eta: '',
+          predictions: [],
+          loading: true
+        });
+      } else if (
+        document.getElementById('directions-panel')?.dataset.loading === 'true'
+      ) {
+        removeDirectionsPanel();
+      }
+    });
     directionsController.setExitCallback(async () => {
       // A4: Exit directions mode → restore previous map state
+      const session = directionsController.sessionVersion;
+      const isCurrent = () =>
+        directionsController.sessionVersion === session &&
+        !directionsController.isActive;
       enableFilterControls();
       removeDirectionsPanel();
 
       // If a route was selected before directions, re-apply that filter
       const prevRoute = mapStateManager.getState().selectedRouteId;
       if (prevRoute) {
-        await filterController.applyRouteFilter(prevRoute);
+        await filterController.applyRouteFilter(prevRoute, isCurrent);
       } else {
-        await filterController.restoreDefaultState(getEffectiveLocation());
+        await filterController.restoreDefaultState(getEffectiveLocation(), isCurrent);
       }
     });
 
@@ -1159,7 +1177,13 @@ function getRouteBadgeColor(routeId: string): string {
 }
 
 function updateDirectionsPanel(
-  info: { durationMin: number; eta: string; predictions: IPrediction[] } | null
+  info: {
+    durationMin: number;
+    eta: string;
+    predictions: IPrediction[];
+    warnings?: string[];
+    loading?: boolean;
+  } | null
 ): void {
   // Remove existing panel
   removeDirectionsPanel();
@@ -1175,6 +1199,7 @@ function updateDirectionsPanel(
   const panel = document.createElement('div');
   panel.id = 'directions-panel';
   panel.className = 'directions-panel';
+  panel.dataset.loading = String(Boolean(info.loading));
 
   const stopName = directionsController.targetStop?.stopName ?? 'Selected Stop';
 
@@ -1202,15 +1227,28 @@ function updateDirectionsPanel(
   panel.innerHTML = `
     <div class="directions-panel__header">
       <span class="material-icons-outlined directions-panel__icon">directions_walk</span>
-      <strong class="directions-panel__title">Walking to ${stopName}</strong>
+      <strong class="directions-panel__title"></strong>
       <button class="directions-panel__close" aria-label="Exit directions">&times;</button>
     </div>
     <div class="directions-panel__info">
-      <span class="directions-panel__duration">${info.durationMin} min walk</span>
-      <span class="directions-panel__eta">ETA ${info.eta}</span>
+      ${
+        info.loading
+          ? '<span role="status">Finding a walking route…</span>'
+          : `<span class="directions-panel__duration">${info.durationMin} min walk</span>
+           <span class="directions-panel__eta">ETA ${info.eta}</span>`
+      }
     </div>
     ${predictionsHTML}
   `;
+
+  panel.querySelector('.directions-panel__title')!.textContent =
+    `Walking to ${stopName}`;
+  for (const warning of info.warnings ?? []) {
+    const text = document.createElement('p');
+    text.className = 'directions-panel__warning';
+    text.textContent = warning;
+    panel.appendChild(text);
+  }
 
   const container = document.querySelector('.map-container');
   if (container) container.appendChild(panel);
