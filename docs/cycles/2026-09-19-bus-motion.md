@@ -53,4 +53,12 @@ A private three-minute live-feed replay covered seven snapshots and 56 observati
 
 ## Release
 
-Production deployment and hosted smoke verification are pending. Record the verified commit, Render deployment, final test totals, and rollback reference here when the release is complete.
+Released to [ScottyGo](https://scottygo-ningrui.onrender.com) from commit `e3691c10937178cbbd30535db8af6562ee99a4fb` on `codex/render-atlas-setup`. Render deployment `dep-dankbdff3r2c73e4gnbg` is **Live**, with a 55.6-second deployment duration. The original separate deployment was not changed.
+
+After startup, `/transit/health` reported ready GTFS and healthy live feeds. All **14 production smoke checks passed**: five application pages, 14 frontend assets, transit readiness, TrueTime colors, 102 PRT routes, 15 CMU routes, current Atlas persistence, administrator login/authorization, and Maps configuration. The deployed vehicle API supplied exact trip-shape IDs for all four observed 61C buses. The private smoke record is `private/bus-motion-deployment-smoke.jsonl`.
+
+Hosted browser verification confirmed the updated map key and four unique 61C bus markers. Selecting bus 3532 changed zoom 13 to 17, opened its delayed-position age, and disabled stale reporting. At 390 × 664, its single marker occupied y=223–267 above the popup at y=358.4, with no horizontal overflow. The browser's existing location permission also produced the closer initial GPS view at zoom 18; no permission settings were changed. The deployed map was left open at normal browser dimensions.
+
+Local preview/application servers and the disposable test MongoDB were shut down after verification. Temporary browser viewport overrides were reset; ignored fixtures and replay files remain local. No production bus reports, subscriptions, schema changes, credentials, or account settings were changed in this cycle.
+
+Rollback reference: application commit `9064216550f5db909850e0499316083ba78dcf07`, previously live Render deployment `dep-danf3l2jnfac738rgmug` (the prior location-recovery release).
