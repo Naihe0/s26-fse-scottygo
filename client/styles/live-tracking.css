@@ -5,17 +5,60 @@
   transform: translateX(-50%);
   z-index: 25;
   box-sizing: border-box;
-  max-width: min(360px, calc(100% - 160px));
-  padding: 8px 12px;
+  max-width: min(320px, calc(100% - 140px));
   border: 1px solid #d1d5db;
-  border-radius: 10px;
+  border-radius: 18px;
   background: rgba(255, 255, 255, 0.97);
   color: #374151;
   box-shadow: 0 2px 8px #00000016;
   font-size: 12px;
   line-height: 1.4;
   text-align: center;
-  pointer-events: none;
+  pointer-events: auto;
+}
+.live-tracking-status__summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+}
+.live-tracking-status__summary::-webkit-details-marker,
+.bus-popup__more > summary::-webkit-details-marker {
+  display: none;
+}
+.live-tracking-status__summary::after,
+.bus-popup__more > summary::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-2px);
+  flex-shrink: 0;
+}
+.live-tracking-status[open] > summary::after,
+.bus-popup__more[open] > summary::after {
+  transform: rotate(225deg) translate(-2px, -1px);
+}
+.live-tracking-status__label {
+  min-width: 0;
+}
+.live-tracking-status__message {
+  margin: 0;
+  padding: 0 12px 12px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.live-tracking-status__summary:focus-visible,
+.bus-popup__more > summary:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+  border-radius: 10px;
 }
 
 .live-tracking-status[hidden] {
@@ -50,13 +93,64 @@ body.dark .live-tracking-status[data-state='partial'] {
 }
 
 .bus-position-state {
-  padding: 9px 10px;
-  margin-bottom: 6px;
-  border-radius: 10px;
+  display: inline-block;
+  padding: 5px 9px;
+  margin: 0;
+  border-radius: 8px;
   background: #f1f5f9;
   color: #475569;
   font-size: 12px;
+  line-height: 1.4;
+  font-weight: 500;
+}
+.bus-popup__content {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.map-popup:has(.bus-popup__content) .map-popup__header,
+.map-popup:has(.bus-popup__content) .map-popup__subheader,
+.map-popup:has(.bus-popup__content) .map-popup__actions {
+  flex-shrink: 0;
+}
+.bus-popup__next-stop {
+  margin: 8px 0 0;
+  color: #475569;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.bus-popup__more > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 40px;
+  padding: 0 4px;
+  list-style: none;
+  cursor: pointer;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+.bus-position-explanation {
+  margin: 0 0 8px;
+  font-size: 12px;
   line-height: 1.5;
+  color: #64748b;
+}
+.bus-popup__more .map-popup__row {
+  gap: 12px;
+}
+.bus-popup__more .map-popup__value {
+  text-align: right;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.map-popup:has(.bus-popup__content) .map-popup__actions {
+  margin-top: 2px;
+}
+.map-popup:has(.bus-popup__content) .map-popup__action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .bus-position-state[data-state='estimated'] {
   background: #eff6ff;
@@ -72,6 +166,13 @@ body.dark .live-tracking-status[data-state='partial'] {
 body.dark .bus-position-state {
   background: #334155;
   color: #e2e8f0;
+}
+body.dark .bus-popup__next-stop,
+body.dark .bus-popup__more > summary {
+  color: #cbd5e1;
+}
+body.dark .bus-position-explanation {
+  color: #94a3b8;
 }
 body.dark .bus-position-state[data-state='estimated'] {
   background: #172c4b;

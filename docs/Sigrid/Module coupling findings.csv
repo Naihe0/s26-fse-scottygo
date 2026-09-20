@@ -1,5 +1,0 @@
-Description,Severity,Status,Issue age,File,Technology,Lines of code,Fan-in
-Fan-in of 26 for module with 404 lines of code,MEDIUM,RAW,8,client/scripts/renderers/route-renderer.ts,TypeScript,404,26
-Fan-in of 26 for module with 121 lines of code,MEDIUM,RAW,8,client/scripts/state/map-state.ts,TypeScript,121,26
-Fan-in of 18 for module with 694 lines of code,LOW,RAW,8,server/models/user.model.ts,TypeScript,694,18
-Fan-in of 14 for module with 143 lines of code,LOW,RAW,8,common/server.responses.ts,TypeScript,143,14

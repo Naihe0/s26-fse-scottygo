@@ -1,5 +1,0 @@
-Description,Severity,Status,Issue age,File,Technology,Lines of code
-Interface module with 781 lines of code,MEDIUM,RAW,8,client/scripts/controllers/filter-controller.ts,TypeScript,781
-Interface module with 143 lines of code,MEDIUM,RAW,8,common/server.responses.ts,TypeScript,143
-Interface module with 74 lines of code,MEDIUM,RAW,8,common/map.interface.ts,TypeScript,74
-Interface module with 22 lines of code,MEDIUM,RAW,8,common/user.interface.ts,TypeScript,22

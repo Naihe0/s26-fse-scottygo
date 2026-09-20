@@ -325,9 +325,18 @@ export class VehicleTracker {
   private showUnavailable(): void {
     this.stopAnimation();
     this.trackedRoutes().forEach((id) => this.unavailableRoutes.add(id));
+    this.vehicleData.forEach((vehicle, vid) => {
+      this.motion.pause(
+        vid,
+        this.displayedPositions.get(vid) ?? {
+          lat: vehicle.lat,
+          lng: vehicle.lon
+        }
+      );
+    });
     this.partialTracking = true;
     this.pruneExpiredVehicles();
-    this.updateDisplayedVehicles(true);
+    this.updateDisplayedVehicles();
     this.updateTrackingStatus(this.vehicleData.size);
     this.scheduleExpiry();
   }
@@ -455,6 +464,21 @@ export class VehicleTracker {
     });
     this.partialTracking = unavailable > 0;
     const retained = [...vehicles.values()];
+    retained.forEach((vehicle) => {
+      if (
+        this.unavailableRoutes.has(
+          this.vehicleOwners.get(vehicle.vid) ?? vehicle.routeId
+        )
+      ) {
+        this.motion.pause(
+          vehicle.vid,
+          this.displayedPositions.get(vehicle.vid) ?? {
+            lat: vehicle.lat,
+            lng: vehicle.lon
+          }
+        );
+      }
+    });
     this.delayedTracking =
       retained.some((vehicle) => !this.isFresh(vehicle)) ||
       results.some((result) => !!result?.vehicles.length && !retained.length);
@@ -478,7 +502,7 @@ export class VehicleTracker {
       this.trackingStatus.show(
         'delayed',
         count
-          ? 'Clock-marked bus locations are delayed. Check a bus for its update age.'
+          ? 'GPS updates are delayed. Route estimates may still move; tap a bus for its GPS age.'
           : 'Bus locations are delayed. Waiting for fresh updates.'
       );
     } else if (count === 0) {
@@ -621,7 +645,7 @@ export class VehicleTracker {
       if (!marker) return;
       const fresh = this.isFresh(vehicle);
       const allowEstimate =
-        fresh &&
+        this.sourceTime(vehicle) !== null &&
         !forceRaw &&
         !this.motionPreference?.matches &&
         !document.hidden &&
@@ -638,11 +662,14 @@ export class VehicleTracker {
         lng: vehicle.lon
       };
       const heading = estimate ? estimate.heading : vehicle.heading;
-      const status: BusPositionStatus = !fresh
-        ? 'delayed'
-        : estimated
+      // Feed age governs reporting permissions; the motion model separately
+      // decides whether a delayed but recently received fix supports motion.
+      const status: BusPositionStatus =
+        estimated && (estimate?.moving || fresh)
           ? 'estimated'
-          : 'reported';
+          : fresh
+            ? 'reported'
+            : 'delayed';
       const previous = this.displayedPositions.get(vid);
       if (
         !previous ||
@@ -877,16 +904,35 @@ export class VehicleTracker {
     );
     subheader.textContent = this.getRouteSubheaderText(vehicle.routeId);
 
-    // Detail rows
-    const details = document.createElement('div');
-    details.className = 'map-popup__details';
+    // Keep the default card short; native disclosure retains keyboard access.
+    const content = document.createElement('div');
+    content.className = 'bus-popup__content';
     const positionState = document.createElement('p');
     positionState.className = 'bus-position-state';
-    details.append(positionState);
+    const nextStop = document.createElement('p');
+    nextStop.className = 'bus-popup__next-stop';
+    nextStop.hidden = true;
+    content.append(positionState, nextStop);
+
+    const more = document.createElement('details');
+    more.className = 'bus-popup__more';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Details';
+    const explanation = document.createElement('p');
+    explanation.className = 'bus-position-explanation';
+    const details = document.createElement('div');
+    details.className = 'map-popup__details';
 
     this.addDetailRow(details, 'Status', '', 'bus-reported-status');
     this.addDetailRow(details, 'Speed', '', 'bus-reported-speed');
-    this.addDetailRow(details, 'Next Stop', '', 'bus-reported-stop');
+    this.addDetailRow(details, 'Stop', '', 'bus-reported-stop');
+    this.addDetailRow(
+      details,
+      'Source',
+      vehicle.source === 'live'
+        ? `${vehicle.routeId.startsWith('CMU-') ? 'CMU' : 'PRT'} live GPS`
+        : 'Schedule'
+    );
 
     // Last update
     const timeText = this.formatElapsedTime(vehicle);
@@ -902,15 +948,9 @@ export class VehicleTracker {
       );
     }
 
-    popup.appendChild(details);
-
-    // Source badge — only for scheduled (live uses the green dot instead)
-    if (vehicle.source !== 'live') {
-      const badge = document.createElement('div');
-      badge.className = `map-popup__source map-popup__source--${vehicle.source}`;
-      badge.textContent = 'SCHEDULED';
-      popup.appendChild(badge);
-    }
+    more.append(summary, explanation, details);
+    content.append(more);
+    popup.append(content);
 
     // Action buttons — Report only available for live buses (server validates against GTFS-RT)
     const actions = document.createElement('div');
@@ -928,7 +968,7 @@ export class VehicleTracker {
       ${reportBtnHtml}
       <button class="map-popup__action-btn map-popup__action-btn--check">
         <span class="material-icons-outlined">task_alt</span>
-        <strong>Check</strong>
+        <strong>Alerts</strong>
       </button>
     `;
     popup.appendChild(actions);
@@ -1105,6 +1145,13 @@ export class VehicleTracker {
     vid: string,
     vehicle: IVehicle
   ): void {
+    const more = popup.querySelector<HTMLDetailsElement>('.bus-popup__more');
+    more?.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || !more.open) return;
+      event.preventDefault();
+      more.open = false;
+      more.querySelector('summary')?.focus();
+    });
     const minimizeBtn = popup.querySelector('.map-popup__minimize');
     if (minimizeBtn) {
       minimizeBtn.addEventListener('click', () => {
@@ -1166,18 +1213,49 @@ export class VehicleTracker {
 
     const fresh = this.isFresh(vehicle);
     const estimated = this.displayedStatuses.get(vehicle.vid) === 'estimated';
+    const positionKind = estimated
+      ? 'estimated'
+      : fresh
+        ? 'reported'
+        : 'delayed';
     const status = popup.querySelector<HTMLElement>('.bus-position-state');
     if (status) {
-      status.dataset.state = !fresh
-        ? 'delayed'
-        : estimated
-          ? 'estimated'
-          : 'reported';
-      status.textContent = !fresh
-        ? `Delayed position · ${this.formatElapsedTime(vehicle)}. This bus may have moved.`
-        : estimated
-          ? 'Estimated position between GPS reports. Speed and stop details below are from the latest report.'
-          : 'Latest reported position. Speed and stop details below are from the latest report.';
+      status.dataset.state = positionKind;
+      const label = {
+        estimated: 'Estimated',
+        reported: 'Reported',
+        delayed: 'Delayed'
+      }[positionKind];
+      const age =
+        this.sourceTime(vehicle) === null
+          ? 'GPS age unknown'
+          : `GPS ${this.formatElapsedTime(vehicle)}`;
+      status.textContent = `${label} · ${age}`;
+    }
+    const explanation = popup.querySelector('.bus-position-explanation');
+    if (explanation) {
+      explanation.textContent = estimated
+        ? 'Movement is estimated along the route between GPS reports. Older reports mean less certainty. Details below come from the last report.'
+        : !fresh
+          ? 'Position updates are paused; this bus may have moved. Reporting becomes available when fresh GPS returns.'
+          : 'Showing the latest GPS report. Speed and stop details are from that report.';
+      if (estimated && !fresh)
+        explanation.textContent += ' Reporting needs a fresher GPS update.';
+    }
+    const nextStop = popup.querySelector<HTMLElement>('.bus-popup__next-stop');
+    if (nextStop) {
+      nextStop.hidden = !vehicle.currentStopId;
+      const prefix =
+        vehicle.currentStatus === 'STOPPED_AT'
+          ? 'At stop'
+          : vehicle.currentStatus === 'INCOMING_AT'
+            ? 'Approaching stop'
+            : vehicle.currentStatus === 'IN_TRANSIT_TO'
+              ? 'Next stop'
+              : 'Reported stop';
+      nextStop.textContent = vehicle.currentStopId
+        ? `${prefix} #${vehicle.currentStopId}`
+        : '';
     }
     const report = popup.querySelector<HTMLButtonElement>(
       '.map-popup__action-btn--report'

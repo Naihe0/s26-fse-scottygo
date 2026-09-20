@@ -25,7 +25,7 @@ export class MapKey extends HTMLElement {
         <ul>
           <li><img data-symbol="bus" alt="" /><span><strong>Reported bus</strong><small>Triangle shows travel direction. Tap to zoom in.</small></span></li>
           <li><img data-symbol="estimated" alt="" /><span><strong>Estimated movement</strong><small>Dashed ring: a short route-based estimate between GPS reports.</small></span></li>
-          <li><img data-symbol="delayed" alt="" /><span><strong>Delayed location</strong><small>Clock badge: last reported position. Tap to see its age.</small></span></li>
+          <li><img data-symbol="delayed" alt="" /><span><strong>Delayed location</strong><small>Clock badge: updates paused. Tap for GPS age.</small></span></li>
           <li><img data-symbol="stop" alt="" /><span><strong>Bus stop</strong><small>Tap a dot for arrivals and directions.</small></span></li>
           <li><img data-symbol="gps" alt="" /><span><strong>Your location</strong><small>Blue marks your GPS position.</small></span></li>
           <li><img data-symbol="planned" alt="" /><span><strong>Planning location</strong><small>A place you chose to explore.</small></span></li>

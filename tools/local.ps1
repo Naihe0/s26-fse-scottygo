@@ -190,7 +190,7 @@ if ([int]((& $nodePath --version).TrimStart('v').Split('.')[0]) -ne 24) {
     throw 'Install Node.js 24 LTS, or unpack its official Windows zip under %LOCALAPPDATA%\ScottyGo.'
 }
 if (-not (Test-Path -LiteralPath (Join-Path $projectRoot '.env'))) {
-    throw "Create $projectRoot\.env before starting the app. See docs/LocalDevelopmentWindows.md."
+    throw "Create $projectRoot\.env before starting the app. See docs/ARCHITECTURE.md."
 }
 $gitPath = (Get-Command git.exe -ErrorAction Stop).Source
 $gitRoot = Split-Path (Split-Path $gitPath)

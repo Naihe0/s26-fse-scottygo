@@ -2,15 +2,15 @@
 
 ScottyGo is a full-stack web application that helps the Carnegie Mellon community navigate Pittsburgh transit in real time. It unifies **Pittsburgh Regional Transit (PRT) bus data** and **CMU Shuttle data** on a single Google Maps interface, with live vehicle tracking, route visualization, nearby-stop discovery, arrival predictions, and pedestrian navigation.
 
-**Live app:** https://s26-fse-scottygo.onrender.com/
+**Live app:** [scottygo-ningrui.onrender.com](https://scottygo-ningrui.onrender.com/)
 
-> Built by a 4-person team as the term project for CMU 18-652 _Foundations of Software Engineering_ (Spring 2026). ~33,000 lines of TypeScript with ~12,200 lines of automated test coverage.
+Originally built by a four-person team for CMU 18-652 _Foundations of Software Engineering_ (Spring 2026), then maintained and extended on `codex/render-atlas-setup`.
 
 ---
 
 ## What it does
 
-- **Live vehicle tracking** — Real-time positions for PRT buses (via the TrueTime / GTFS-Realtime feeds) and CMU shuttles (via TripShot), refreshed continuously on a Google Map.
+- **Live vehicle tracking** — PRT and CMU positions with one directional marker per bus, route-aware movement between GPS reports, smooth corrections, and visible delayed-data states.
 - **Route visualization** — Renders route paths with detour overlays, plus filtering by route, system, direction, date, and time.
 - **Discover Stops & Schedules** — Finds nearby stops within a walking radius of the user's location, shows arrival predictions and estimated walking time, and provides turn-by-turn **pedestrian navigation** with real-time GPS tracking and automatic rerouting.
 - **Live notifications** — User-submitted bus condition reports (crowdedness, priority seating, vehicle condition) plus route subscriptions, delivered in real time over WebSockets.
@@ -43,7 +43,7 @@ ScottyGo is a single TypeScript codebase split into three workspaces:
 
 Requires Node.js `^24.19.0` and npm `>=10.8.0`.
 
-For the Windows setup with a separate, persistent local MongoDB database, see [Local development on Windows](docs/LocalDevelopmentWindows.md).
+For cloning the Windows-safe branch, configuring local MongoDB, and using the background start/stop helper, see [Local development](docs/ARCHITECTURE.md#run-locally).
 
 Install dependencies:
 
@@ -81,16 +81,18 @@ npm run prepush:check   # lint, types, production build, unit tests; no file rew
 
 ## Documentation
 
-See the [repository and application audit](docs/audit/README.md) for the feature inventory, implemented fixes, verification results, and remaining improvements.
+The documentation has three maintained guides and current UI screenshots:
 
-For a separate hosted deployment, see [Render and MongoDB Atlas setup](docs/RenderAtlasDeployment.md).
+- [Features and current screens](docs/FEATURES.md) — all user flows, map behavior, alerts, accounts, and visual references.
+- [Code architecture and operations](docs/ARCHITECTURE.md) — structure, data flow, local setup, Render/Atlas, tests, and troubleshooting.
+- [API reference](docs/API.md) — HTTP routes, payloads, authentication, errors, and Socket.IO events.
 
-Additional design and operations documentation lives in [`docs/`](docs/), including the architecture overview, REST API specifications, the CMU Shuttle integration notes, and a memory-monitoring runbook.
+Historical design drafts, audits, wireframes, and cycle logs remain available in Git history.
 
 ## Development practices
 
-- **Main-branch protection** — all changes reach `main` via pull request with required review and approval.
-- **Continuous integration** — the workflow runs lint, server/browser type checks, a production build, isolated MongoDB tests, and a production dependency audit. GitHub Actions is currently disabled on this fork; review inherited workflows before enabling it.
+- **Release validation** — run lint, server/browser type checks, a production build, appropriate isolated MongoDB tests, and browser acceptance before deployment. Verify the deployed commit and feed readiness separately.
+- **Continuous integration** — inherited workflows contain checks and deployment integrations; review them before enabling GitHub Actions for a fork.
 - **Code quality** — Sigrid static analysis informed iterative refactoring.
 - **AI-assisted development** — see [`CLAUDE.md`](CLAUDE.md) for how AI tooling was used in building this project.
 

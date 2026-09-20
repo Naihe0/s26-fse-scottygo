@@ -17,6 +17,11 @@ const mockEstimates = new Map<string, VehicleMotionEstimate>();
 const mockMotion = {
   setRouteGeometry: jest.fn(),
   ingest: jest.fn(),
+  pause: jest.fn((vid: string, position: { lat: number; lng: number }) => {
+    const current = mockEstimates.get(vid);
+    if (current)
+      mockEstimates.set(vid, { ...current, position, moving: false });
+  }),
   remove: jest.fn(),
   clear: jest.fn(),
   estimate: jest.fn((vid: string) => mockEstimates.get(vid) ?? null),
@@ -231,8 +236,10 @@ describe('live vehicle freshness and polling lifecycle', () => {
     await tick();
     expect(addMarker).toHaveBeenCalledTimes(1);
     expect(status().dataset.state).toBe('live');
-    expect(status().getAttribute('role')).toBe('status');
-    expect(status().getAttribute('aria-live')).toBe('polite');
+    expect(status().querySelector('[role="status"]')).not.toBeNull();
+    expect(
+      status().querySelector('[role="status"]')?.getAttribute('aria-live')
+    ).toBe('polite');
     expect(mockSetActiveVehicles).toHaveBeenLastCalledWith([vehicle('fresh')]);
     expect(frames.size).toBe(0);
     const rawUpdates = mockSetActiveVehicles.mock.calls.length;
@@ -327,9 +334,9 @@ describe('live vehicle freshness and polling lifecycle', () => {
     mockEstimates.set(bus.vid, estimate(bus, 40.441));
     getVehicles.mockResolvedValue({ vehicles: [bus] });
     jest.mocked(focusNearby).mockImplementation(() => {
-      expect(
-        document.querySelector('.bus-position-state')?.textContent
-      ).toContain('Estimated position');
+      expect(document.querySelector('.bus-position-state')?.textContent).toBe(
+        'Estimated · GPS 0s ago'
+      );
     });
     tracker.startPolling('61C');
     await tick();
@@ -354,6 +361,66 @@ describe('live vehicle freshness and polling lifecycle', () => {
       .click();
     expect(showToast).toHaveBeenCalledWith(
       'You need to be near this bus to submit a report.'
+    );
+  });
+
+  test('bus cards keep GPS details collapsed and preserve disclosure across updates', async () => {
+    const bus = {
+      ...vehicle('concise'),
+      speed: 5,
+      currentStopId: '123',
+      currentStatus: 'IN_TRANSIT_TO' as const
+    };
+    mockEstimates.set(bus.vid, estimate(bus, 40.441));
+    getVehicles.mockResolvedValue({ vehicles: [bus] });
+    tracker.startPolling('61C');
+    await tick();
+    jest.mocked(addMarker.mock.results[0].value.onClick).mock.calls[0][0]();
+
+    const details =
+      document.querySelector<HTMLDetailsElement>('.bus-popup__more')!;
+    expect(details.open).toBe(false);
+    expect(document.querySelector('.bus-position-state')?.textContent).toBe(
+      'Estimated · GPS 0s ago'
+    );
+    expect(document.querySelector('.bus-popup__next-stop')?.textContent).toBe(
+      'Next stop #123'
+    );
+    expect(details.querySelector('.bus-reported-speed')?.textContent).toBe(
+      '11.2 mph'
+    );
+    expect(details.textContent).toContain('PRT live GPS');
+    expect(
+      details.querySelector('.bus-position-explanation')?.textContent
+    ).toContain('estimated along the route');
+    expect(
+      document.querySelector('.map-popup__action-btn--check')?.textContent
+    ).toContain('Alerts');
+
+    details.querySelector('summary')!.click();
+    await tick(1000);
+    expect(details.open).toBe(true);
+    expect(document.querySelector('.bus-position-state')?.textContent).toBe(
+      'Estimated · GPS 1s ago'
+    );
+    expect(details.querySelector('.map-popup__updated-time')?.textContent).toBe(
+      '1s ago'
+    );
+    details.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(details.open).toBe(false);
+    expect(document.activeElement).toBe(details.querySelector('summary'));
+  });
+
+  test('bus cards omit missing stop details from their compact view', async () => {
+    getVehicles.mockResolvedValue({ vehicles: [vehicle('unknown-stop')] });
+    tracker.startPolling('61C');
+    await tick();
+    jest.mocked(addMarker.mock.results[0].value.onClick).mock.calls[0][0]();
+    expect(
+      document.querySelector<HTMLElement>('.bus-popup__next-stop')?.hidden
+    ).toBe(true);
+    expect(document.querySelector('.bus-reported-stop')?.textContent).toBe(
+      'Not reported'
     );
   });
 
@@ -409,7 +476,7 @@ describe('live vehicle freshness and polling lifecycle', () => {
     await tick(10_000);
     expect(frames.size).toBe(0);
     expect(tracker.getVehiclePositions()).toEqual([
-      { lat: bus.lat, lng: bus.lon }
+      { lat: 40.441, lng: bus.lon }
     ]);
     const button = document.querySelector<HTMLButtonElement>(
       '.map-popup__action-btn--report'
@@ -419,9 +486,9 @@ describe('live vehicle freshness and polling lifecycle', () => {
     expect(showToast).toHaveBeenCalledWith(
       'Wait for a fresh bus location before submitting a report.'
     );
-    expect(
-      document.querySelector('.bus-position-state')?.textContent
-    ).toContain('Delayed position');
+    expect(document.querySelector('.bus-position-state')?.textContent).toBe(
+      'Delayed · GPS 10s ago'
+    );
   });
 
   test('successful healthy empty results remove a retained bus immediately', async () => {
@@ -441,9 +508,9 @@ describe('live vehicle freshness and polling lifecycle', () => {
     await tick();
     const marker = addMarker.mock.results[0].value;
     jest.mocked(marker.onClick).mock.calls[0][0]();
-    expect(
-      document.querySelector('.bus-position-state')?.textContent
-    ).toContain('Update time unavailable');
+    expect(document.querySelector('.bus-position-state')?.textContent).toBe(
+      'Delayed · GPS age unknown'
+    );
     expect(
       document.querySelector<HTMLButtonElement>(
         '.map-popup__action-btn--report'

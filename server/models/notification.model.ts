@@ -469,7 +469,7 @@ export class NotificationModel {
 
   /**
    * Search notifications from the last 30 minutes using Strategy Pattern.
-   * Strategy selection per REST_LiveNotification.md §3.5.
+   * Notification source selection is described in docs/API.md.
    */
   static async searchNotifications(params: {
     route?: string;

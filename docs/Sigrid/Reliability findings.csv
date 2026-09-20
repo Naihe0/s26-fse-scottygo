@@ -1,3 +1,0 @@
-Description,Severity,Status,Issue age,Type,Weakness,File,Technology,Origin,Remark,Locations
-NPM dependency axios contains 1 vulnerability (CWE-754),HIGH,RAW,8,NPM dependency axios contains 1 vulnerability,CWE-754,package-lock.json#L1,-,SIG Open Source Health,-,package-lock.json#L1
-Error messages with stack traces may expose sensitive information about the application (CWE-209),MEDIUM,RAW,8,Error messages with stack traces may expose sensitive information about the application,CWE-209,server/app.ts#L358,TypeScript,NodeJS Scan,-,server/app.ts#L358

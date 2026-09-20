@@ -1,5 +1,5 @@
 // REST manual tests for SearchInfo use case
-// Spec source: docs/REST_API/REST_SearchInfo.md
+// Spec source: docs/API.md
 //
 // Base URL
 @baseUrl = http://localhost:8080

@@ -67,7 +67,7 @@ function moving(
   return estimator;
 }
 
-describe('bounded source-time vehicle motion', () => {
+describe('latency-aware, bounded vehicle motion', () => {
   test('a single high-speed sample never creates a velocity history', () => {
     const estimator = new VehicleMotionEstimator();
     estimator.setRouteGeometry('R', [shape()], []);
@@ -106,19 +106,27 @@ describe('bounded source-time vehicle motion', () => {
     estimator.ingest(vehicle(10, 100, 0, { speed: 5 }), at(10));
     const result = estimator.estimate('bus', at(30))!;
     expect(xy(result.position).x).toBeCloseTo(150, 1);
-    expect(xy(result.position).y).toBeCloseTo(45, 1);
+    expect(xy(result.position).y).toBeCloseTo(50, 1);
     expect(result.heading).toBeCloseTo(0, 1);
     expect(result.estimated).toBe(true);
     expect(result.rawPosition).toEqual(point(100));
   });
 
-  test('prediction decays and stops at both its distance and time bounds through a long outage', () => {
+  test('a missed update decays to rest and remains there through a long outage', () => {
     const estimator = moving();
     const final = estimator.estimate('bus', at(70))!;
-    expect(xy(final.position).x).toBeCloseTo(
-      100 + VEHICLE_MOTION_LIMITS.maximumDistance,
-      1
+    expect(xy(final.position).x).toBeGreaterThan(300);
+    expect(xy(final.position).x).toBeLessThan(
+      100 + VEHICLE_MOTION_LIMITS.maximumDistance
     );
+    const cruiseAdvance =
+      xy(estimator.estimate('bus', at(25))!.position).x -
+      xy(estimator.estimate('bus', at(24))!.position).x;
+    const lateAdvance =
+      xy(estimator.estimate('bus', at(55))!.position).x -
+      xy(estimator.estimate('bus', at(54))!.position).x;
+    expect(lateAdvance).toBeGreaterThan(0);
+    expect(lateAdvance).toBeLessThan(cruiseAdvance / 2);
     expect(estimator.estimate('bus', at(600))!.position).toEqual(
       final.position
     );
@@ -129,10 +137,146 @@ describe('bounded source-time vehicle motion', () => {
     });
     expect(estimator.hasActiveMotion(at(70))).toBe(false);
     const slow = moving(undefined, [], { speed: 1 });
-    expect(xy(slow.estimate('bus', at(70))!.position).x).toBeCloseTo(135, 1);
+    expect(xy(slow.estimate('bus', at(70))!.position).x).toBeLessThan(200);
     expect(slow.estimate('bus', at(80))!.position).toEqual(
       slow.estimate('bus', at(70))!.position
     );
+  });
+
+  test('an 85-second-old first report moves every second without waiting for another packet', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [shape()], []);
+    estimator.ingest(vehicle(0, 100, 0, { speed: 6.7 }), at(85));
+    const first = estimator.estimate('bus', at(85))!;
+    expect(first.rawPosition).toEqual(point(100));
+    expect(first.ageMs).toBe(85_000);
+    expect(first.moving).toBe(true);
+    expect(xy(first.position).x).toBeGreaterThan(500);
+    for (let second = 86; second <= 115; second++) {
+      const before = estimator.estimate('bus', at(second - 1))!;
+      const current = estimator.estimate('bus', at(second))!;
+      expect(xy(current.position).x - xy(before.position).x).toBeGreaterThan(5);
+      expect(current.rawPosition).toEqual(point(100));
+      expect(current.moving).toBe(true);
+      expect(estimator.hasActiveMotion(at(second))).toBe(true);
+    }
+    expect(estimator.estimate('bus', at(115))!.freshness).toBe('stale');
+  });
+
+  test('the initial cadence prior spans a captured 90-second wait for the next distinct packet', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [shape()], []);
+    const report = vehicle(0, 100, 0, { speed: 6.7 });
+    estimator.ingest(report, at(25));
+    for (let receipt = 35; receipt <= 115; receipt += 10)
+      estimator.ingest(report, at(receipt));
+    for (let second = 26; second <= 115; second++) {
+      expect(
+        xy(estimator.estimate('bus', at(second))!.position).x
+      ).toBeGreaterThan(
+        xy(estimator.estimate('bus', at(second - 1))!.position).x
+      );
+    }
+    expect(estimator.hasActiveMotion(at(180))).toBe(false);
+  });
+
+  test('a plausible 45mph express-bus first report starts motion with the modeled speed capped', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [shape([point(0), point(4_000)])], []);
+    estimator.ingest(vehicle(0, 100, 0, { speed: 20.1168 }), at(26));
+    const before = estimator.estimate('bus', at(26))!;
+    const after = estimator.estimate('bus', at(27))!;
+    const delta = xy(after.position).x - xy(before.position).x;
+    expect(delta).toBeGreaterThan(15);
+    expect(delta).toBeLessThanOrEqual(20);
+    expect(after.moving).toBe(true);
+    estimator.ingest(vehicle(0, 100, 0, { vid: 'faster', speed: 25 }), at(26));
+    expect(
+      xy(estimator.estimate('faster', at(27))!.position).x -
+        xy(estimator.estimate('faster', at(26))!.position).x
+    ).toBeCloseTo(20, 1);
+  });
+
+  test('recently arriving distinct delayed reports sustain motion across repeated feed intervals', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [shape([point(0), point(4_000)])], []);
+    for (let sourceTime = 0; sourceTime <= 120; sourceTime += 30) {
+      const receipt = sourceTime + 85;
+      estimator.ingest(
+        vehicle(sourceTime, 100 + sourceTime * 6.7, 0, {
+          speed: 6.7
+        }),
+        at(receipt)
+      );
+      for (let offset = 4; offset < 30; offset++) {
+        const previous = estimator.estimate('bus', at(receipt + offset - 1))!;
+        const next = estimator.estimate('bus', at(receipt + offset))!;
+        expect(xy(next.position).x).toBeGreaterThan(xy(previous.position).x);
+        expect(next.moving).toBe(true);
+      }
+    }
+  });
+
+  test('a fast report with 120 seconds of latency still has a useful continuation window', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [shape([point(0), point(4_000)])], []);
+    estimator.ingest(vehicle(0, 0, 0, { speed: 20 }), at(120));
+    for (let second = 121; second <= 150; second++) {
+      expect(
+        xy(estimator.estimate('bus', at(second))!.position).x
+      ).toBeGreaterThan(
+        xy(estimator.estimate('bus', at(second - 1))!.position).x
+      );
+    }
+    expect(estimator.hasActiveMotion(at(180))).toBe(false);
+    expect(estimator.estimate('bus', at(180))!.position).toEqual(
+      estimator.estimate('bus', at(600))!.position
+    );
+  });
+
+  test('duplicate HTTP polling cannot renew the motion window of a frozen source', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [shape()], []);
+    const report = vehicle(0, 100, 0, { speed: 6.7 });
+    estimator.ingest(report, at(85));
+    for (let receipt = 95; receipt <= 205; receipt += 10)
+      estimator.ingest(report, at(receipt));
+    expect(estimator.estimate('bus', at(180))!.moving).toBe(false);
+    expect(estimator.estimate('bus', at(180))!.position).toEqual(
+      estimator.estimate('bus', at(500))!.position
+    );
+    expect(estimator.estimate('bus', at(205))!.sourceTimestamp).toBe(at(0));
+  });
+
+  test.each([
+    { shapeId: undefined },
+    { heading: undefined },
+    { speed: undefined },
+    { speed: 0.4 }
+  ])(
+    'first-sample motion requires credible independent evidence: %j',
+    (extra) => {
+      const estimator = new VehicleMotionEstimator();
+      estimator.setRouteGeometry('R', [shape()], []);
+      estimator.ingest(vehicle(0, 100, 0, extra), at(85));
+      expect(estimator.estimate('bus', at(90))).toMatchObject({
+        position: point(100),
+        moving: false,
+        estimated: false
+      });
+    }
+  );
+
+  test('a newly received report already more than two minutes old cannot restart prediction', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [shape()], []);
+    estimator.ingest(vehicle(0, 100, 0, { speed: 6.7 }), at(121));
+    expect(estimator.estimate('bus', at(130))).toMatchObject({
+      position: point(100),
+      moving: false,
+      estimated: false,
+      freshness: 'stale'
+    });
   });
 
   test('late snapshots keep their source age and can never be promoted to fresh by duplicate polling', () => {
@@ -250,50 +394,97 @@ describe('bounded source-time vehicle motion', () => {
 });
 
 describe('stop and geometry safeguards', () => {
-  test.each([
-    { currentStatus: 'STOPPED_AT' as const },
-    { speed: 0 },
-    { currentStatus: 'INCOMING_AT' as const, currentStopId: 'near' }
-  ])('does not predict through a stop: %j', (status) => {
-    const estimator = moving(undefined, [stop('near', 118)], status);
-    expect(estimator.estimate('bus', at(20))).toMatchObject({
-      position: point(100),
-      estimated: false,
-      moving: false
-    });
-  });
+  test.each([{ currentStatus: 'STOPPED_AT' as const }, { speed: 0 }])(
+    'does not predict through a stop: %j',
+    (status) => {
+      const estimator = moving(undefined, [stop('near', 118)], status);
+      expect(estimator.estimate('bus', at(20))).toMatchObject({
+        position: point(100),
+        estimated: false,
+        moving: false
+      });
+    }
+  );
 
-  test('a known next stop caps progress before the stop', () => {
+  test('an announced next stop decelerates, dwells briefly, then resumes the same route', () => {
     const estimator = moving(undefined, [stop('next', 150)], {
       currentStatus: 'IN_TRANSIT_TO',
       currentStopId: 'next'
     });
-    expect(xy(estimator.estimate('bus', at(30))!.position).x).toBeCloseTo(
-      142,
+    const arriving = xy(estimator.estimate('bus', at(16))!.position).x;
+    expect(arriving).toBeGreaterThan(145);
+    expect(arriving).toBeLessThan(150);
+    expect(xy(estimator.estimate('bus', at(18))!.position).x).toBeCloseTo(
+      150,
       1
     );
-    expect(estimator.hasActiveMotion(at(30))).toBe(false);
+    expect(xy(estimator.estimate('bus', at(23))!.position).x).toBeCloseTo(
+      150,
+      1
+    );
+    expect(estimator.hasActiveMotion(at(20))).toBe(true);
+    expect(xy(estimator.estimate('bus', at(30))!.position).x).toBeGreaterThan(
+      180
+    );
   });
 
-  test('an already passed currentStopId cannot bypass the nearest upcoming stop', () => {
+  test('an approaching report with positive speed does not remain frozen near a stop', () => {
+    const estimator = moving(undefined, [stop('near', 118)], {
+      currentStopId: 'near',
+      currentStatus: 'INCOMING_AT'
+    });
+    expect(xy(estimator.estimate('bus', at(15))!.position).x).toBeCloseTo(
+      118,
+      1
+    );
+    expect(xy(estimator.estimate('bus', at(30))!.position).x).toBeGreaterThan(
+      180
+    );
+  });
+
+  test('an already passed currentStopId still accounts for the nearest upcoming mapped stop', () => {
     const estimator = moving(
       undefined,
       [stop('behind', 50), stop('next', 140)],
       { currentStopId: 'behind', currentStatus: 'IN_TRANSIT_TO' }
     );
-    expect(xy(estimator.estimate('bus', at(30))!.position).x).toBeCloseTo(
-      132,
-      1
+    const withoutStops = moving();
+    const slowed = xy(estimator.estimate('bus', at(15))!.position).x;
+    expect(slowed).toBeLessThan(
+      xy(withoutStops.estimate('bus', at(15))!.position).x
+    );
+    expect(slowed).toBeGreaterThan(130);
+    expect(xy(estimator.estimate('bus', at(30))!.position).x).toBeGreaterThan(
+      200
     );
   });
 
-  test('a mapped stop only five meters ahead also halts prediction when stop metadata is absent', () => {
+  test('a nearby mapped stop slows the estimate without manufacturing an indefinite stop', () => {
     const estimator = moving(undefined, [stop('close', 105)]);
-    expect(xy(estimator.estimate('bus', at(30))!.position).x).toBeCloseTo(
-      100,
+    expect(xy(estimator.estimate('bus', at(12))!.position).x).toBeLessThan(120);
+    expect(xy(estimator.estimate('bus', at(30))!.position).x).toBeGreaterThan(
+      200
+    );
+    expect(estimator.hasActiveMotion(at(30))).toBe(true);
+  });
+
+  test('nearby duplicate stop poles do not create repeated boarding dwells', () => {
+    const single = moving(undefined, [stop('next', 150)], {
+      currentStopId: 'next',
+      currentStatus: 'IN_TRANSIT_TO'
+    });
+    const duplicate = moving(
+      undefined,
+      [stop('other', 148), stop('next', 150), stop('third', 151)],
+      {
+        currentStopId: 'next',
+        currentStatus: 'IN_TRANSIT_TO'
+      }
+    );
+    expect(xy(duplicate.estimate('bus', at(30))!.position).x).toBeCloseTo(
+      xy(single.estimate('bus', at(30))!.position).x,
       1
     );
-    expect(estimator.hasActiveMotion(at(30))).toBe(false);
   });
 
   test('route terminals are hard prediction limits', () => {
@@ -425,6 +616,89 @@ describe('stop and geometry safeguards', () => {
 });
 
 describe('single-marker reconciliation and cached geometry', () => {
+  test('an outage freezes the displayed point, and cached snapshots cannot restart it', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [shape()], []);
+    const report = vehicle(0, 100, 0, { speed: 6.7 });
+    estimator.ingest(report, at(85));
+    const displayed = estimator.estimate('bus', at(109.95))!.position;
+    estimator.pause('bus', displayed, at(110));
+    estimator.ingest(report, at(120));
+    expect(estimator.estimate('bus', at(120))).toMatchObject({
+      position: displayed,
+      rawPosition: point(100),
+      moving: false,
+      sourceTimestamp: at(0),
+      confidence: 0
+    });
+    expect(estimator.hasActiveMotion(at(120))).toBe(false);
+    estimator.ingest(vehicle(30, 300, 0, { speed: 6.7 }), at(125));
+    expect(estimator.estimate('bus', at(125))!.position).toEqual(displayed);
+    expect(xy(estimator.estimate('bus', at(129))!.position).x).toBeGreaterThan(
+      xy(displayed).x
+    );
+    expect(estimator.estimate('bus', at(129))!.rawPosition).toEqual(point(300));
+    expect(estimator.hasActiveMotion(at(129))).toBe(true);
+  });
+
+  test('pausing midway through a correction retains that exact displayed point', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [shape()], []);
+    estimator.ingest(vehicle(0, 100, 0, { speed: 6.7 }), at(85));
+    estimator.ingest(vehicle(30, 130, 0, { speed: 1 }), at(115));
+    const halfway = estimator.estimate('bus', at(117))!.position;
+    estimator.pause('bus', undefined, at(117));
+    expect(estimator.estimate('bus', at(130))!.position).toEqual(halfway);
+    expect(estimator.hasActiveMotion(at(130))).toBe(false);
+    estimator.ingest(vehicle(60, 160, 0, { speed: 1 }), at(145));
+    expect(estimator.estimate('bus', at(145))!.position).toEqual(halfway);
+    const correcting = xy(estimator.estimate('bus', at(147))!.position).x;
+    expect(correcting).toBeLessThan(xy(halfway).x);
+    expect(correcting).toBeGreaterThan(245);
+  });
+
+  test('a delayed stopped report slides a long forecast back to the actual GPS fix', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [shape([point(0), point(4_000)])], []);
+    estimator.ingest(vehicle(0, 100, 0, { speed: 15 }), at(85));
+    const before = estimator.estimate('bus', at(115))!.position;
+    estimator.ingest(
+      vehicle(30, 130, 0, {
+        speed: 0,
+        currentStatus: 'STOPPED_AT'
+      }),
+      at(115)
+    );
+    expect(estimator.estimate('bus', at(115))!.position).toEqual(before);
+    expect(xy(estimator.estimate('bus', at(117))!.position).x).toBeGreaterThan(
+      130
+    );
+    expect(estimator.estimate('bus', at(119))).toMatchObject({
+      position: point(130),
+      moving: false,
+      estimated: false
+    });
+  });
+
+  test('an ordinary delayed slowdown slides a large prediction error back along the route', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [shape()], []);
+    estimator.ingest(vehicle(0, 100, 0, { speed: 6.7 }), at(85));
+    const before = estimator.estimate('bus', at(115))!;
+    estimator.ingest(vehicle(30, 130, 0, { speed: 1 }), at(115));
+    expect(estimator.estimate('bus', at(115))!.position).toEqual(
+      before.position
+    );
+    const midway = xy(estimator.estimate('bus', at(117))!.position).x;
+    expect(midway).toBeLessThan(xy(before.position).x);
+    expect(midway).toBeGreaterThan(220);
+    const end = xy(estimator.estimate('bus', at(119))!.position).x;
+    const after = xy(estimator.estimate('bus', at(119.001))!.position).x;
+    expect(end).toBeCloseTo(219, 1);
+    expect(Math.abs(after - end)).toBeLessThan(0.02);
+    expect(estimator.estimate('bus', at(119))!.rawPosition).toEqual(point(130));
+  });
+
   test('small raw corrections slide even without any forecast geometry, then settle at actual GPS', () => {
     const estimator = new VehicleMotionEstimator();
     estimator.ingest(vehicle(0, 0), at(0));

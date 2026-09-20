@@ -18,7 +18,7 @@ export interface IVehicle {
   heading?: number; // Compass degrees; absent when the live feed has no valid bearing.
   speed?: number; // Speed in m/s from GTFS-RT (may be absent)
   source: 'live' | 'static'; // "live" from PRT API, "static" from local cache
-  lastUpdate: string; // ISO Timestamp
+  lastUpdate: string; // ISO measurement timestamp; empty when unavailable.
   isDetoured: boolean;
   delay?: number;
   tripId?: string; // GTFS trip_id (from GTFS-RT)

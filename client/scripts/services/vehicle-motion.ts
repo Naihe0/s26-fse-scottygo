@@ -21,9 +21,12 @@ export interface VehicleMotionEstimate {
 export const VEHICLE_MOTION_LIMITS = {
   freshMs: 30_000,
   staleMs: 90_000,
-  horizonMs: 60_000,
-  maximumDistance: 200,
+  // Absolute safeguards; each track normally expires earlier, based on cadence.
+  horizonMs: 180_000,
+  maximumInitialAgeMs: 120_000,
+  maximumDistance: 3_000,
   maximumSpeed: 20,
+  maximumInitialSpeed: 25,
   maximumObservedSpeed: 35,
   maximumRouteDistance: 35
 } as const;
@@ -66,6 +69,15 @@ interface Sample {
   match: Match | null;
 }
 
+interface MotionPhase {
+  from: number;
+  to: number;
+  start: number;
+  end: number;
+  startSpeed: number;
+  endSpeed: number;
+}
+
 interface Track {
   vehicle: IVehicle;
   sample: Sample;
@@ -74,6 +86,16 @@ interface Track {
   observedSpeed: number | null;
   quality: number;
   stopAt: number;
+  cadenceMs: number;
+  cadenceSamples: number;
+  fullSpeedSeconds: number;
+  horizonSeconds: number;
+  phases: MotionPhase[];
+  paused: {
+    position: ILatLng;
+    heading: number | undefined;
+    progress: number | null;
+  } | null;
   correction: {
     from: ILatLng;
     fromProgress: number | null;
@@ -295,6 +317,8 @@ export class VehicleMotionEstimator {
       track.speed = 0;
       track.observedSpeed = null;
       track.correction = null;
+      track.phases = [];
+      if (track.paused) track.paused.progress = null;
     }
   }
 
@@ -326,6 +350,7 @@ export class VehicleMotionEstimator {
       timestamp !== null &&
       timestamp === previous.sample.timestamp
     ) {
+      if (previous.paused) return;
       // Repeated HTTP snapshots must not create motion or renew source freshness.
       // New safety information can stop existing prediction, never accelerate it.
       if (
@@ -353,7 +378,7 @@ export class VehicleMotionEstimator {
       sameJourney && timestamp !== null && previous.sample.timestamp !== null
         ? (timestamp - previous.sample.timestamp) / 1_000
         : null;
-    const usableHistory = elapsed !== null && elapsed >= 2 && elapsed <= 90;
+    const usableHistory = elapsed !== null && elapsed >= 2 && elapsed <= 120;
     const rawDistance =
       elapsed !== null && elapsed > 0 && previous
         ? distance(previous!.sample.position, position)
@@ -377,6 +402,22 @@ export class VehicleMotionEstimator {
       observedSpeed: null,
       quality: 0,
       stopAt: match?.pattern.length ?? 0,
+      cadenceMs: history
+        ? clamp(
+            history.cadenceSamples
+              ? history.cadenceMs * 0.6 +
+                  Math.max(elapsed! * 1_000, receivedAt - history.receivedAt) *
+                    0.4
+              : Math.max(elapsed! * 1_000, receivedAt - history.receivedAt),
+            10_000,
+            60_000
+          )
+        : 60_000,
+      cadenceSamples: history ? history.cadenceSamples + 1 : 0,
+      fullSpeedSeconds: 0,
+      horizonSeconds: 0,
+      phases: [],
+      paused: null,
       correction: null
     };
     const previousDisplay = previous
@@ -384,7 +425,7 @@ export class VehicleMotionEstimator {
       : null;
     this.tracks.set(vehicle.vid, track);
 
-    this.configureMotion(track, history, elapsed ?? 0, rawDistance);
+    this.configureMotion(track, history, elapsed ?? 0, rawDistance, !previous);
     if (
       sameJourney &&
       !teleport &&
@@ -402,7 +443,11 @@ export class VehicleMotionEstimator {
       this.startCorrection(
         track,
         previousDisplay!,
-        samePattern ? this.progress(previous, receivedAt) : null
+        samePattern
+          ? previous.paused
+            ? previous.paused.progress
+            : this.progress(previous, receivedAt)
+          : null
       );
     }
   }
@@ -435,6 +480,13 @@ export class VehicleMotionEstimator {
       sourceTimestamp: track.sample.timestamp,
       ageMs
     };
+    if (track.paused) {
+      result.position = { ...track.paused.position };
+      result.heading = track.paused.heading;
+      result.estimated = distance(rawPosition, result.position) >= 0.75;
+      result.confidence = 0;
+      return result;
+    }
     const match = track.sample.match;
     if (
       match &&
@@ -447,11 +499,9 @@ export class VehicleMotionEstimator {
       result.position = alongRoute.position;
       result.heading = alongRoute.heading;
       result.moving =
-        ageMs < VEHICLE_MOTION_LIMITS.horizonMs &&
-        progress < track.stopAt - 0.01 &&
-        progress <
-          match.progress + VEHICLE_MOTION_LIMITS.maximumDistance - 0.01;
-      result.confidence *= track.quality;
+        ageMs < track.horizonSeconds * 1_000 && progress < track.stopAt - 0.01;
+      result.confidence =
+        track.quality * clamp(1 - ageMs / (track.horizonSeconds * 1_000), 0, 1);
     }
     const correction = track.correction;
     if (correction && clock < correction.startedAt + correction.duration) {
@@ -502,6 +552,7 @@ export class VehicleMotionEstimator {
 
   hasActiveMotion(now = Date.now()): boolean {
     for (const track of this.tracks.values()) {
+      if (track.paused) continue;
       if (
         track.correction &&
         now < track.correction.startedAt + track.correction.duration
@@ -513,17 +564,48 @@ export class VehicleMotionEstimator {
         timestamp === null ||
         track.speed <= 0 ||
         now < track.receivedAt ||
-        now - timestamp >= VEHICLE_MOTION_LIMITS.horizonMs
+        now - timestamp >= track.horizonSeconds * 1_000
       )
         continue;
       const progress = this.progress(track, now);
-      if (
-        progress < track.stopAt - 0.01 &&
-        progress < match.progress + VEHICLE_MOTION_LIMITS.maximumDistance - 0.01
-      )
-        return true;
+      if (progress < track.stopAt - 0.01) return true;
     }
     return false;
+  }
+
+  /** Freeze displayed motion during a provider outage without rewriting GPS. */
+  pause(vid: string, displayedPosition?: ILatLng, now = Date.now()): void {
+    const track = this.tracks.get(vid);
+    if (!track || track.paused) return;
+    const estimate = this.estimate(vid, now)!;
+    const position =
+      displayedPosition && validPosition(displayedPosition)
+        ? displayedPosition
+        : estimate.position;
+    const match = track.sample.match;
+    let progress: number | null = null;
+    if (match) {
+      const expected = this.progress(track, now);
+      // Capture the actual rendered progress, including an unfinished slide.
+      // The continuity tie-breaker disambiguates overlapping legs of a loop.
+      const candidates = match.pattern.segments
+        .filter((segment) => nearSegment(position, segment, 35))
+        .map((segment) => project(position, segment))
+        .filter((candidate) => candidate.distance <= 35)
+        .sort(
+          (a, b) =>
+            a.distance +
+            Math.abs(a.progress - expected) * 0.01 -
+            (b.distance + Math.abs(b.progress - expected) * 0.01)
+        );
+      progress = candidates[0]?.progress ?? null;
+    }
+    track.paused = {
+      position: { ...position },
+      heading: estimate.heading,
+      progress
+    };
+    track.correction = null;
   }
 
   remove(vid: string): void {
@@ -542,20 +624,23 @@ export class VehicleMotionEstimator {
     now = track.receivedAt
   ): void {
     const target = this.estimate(track.vehicle.vid, now)!;
-    const correctionDistance = distance(
-      previousDisplay.position,
-      target.position
+    const correctionDistance = Math.max(
+      distance(previousDisplay.position, target.position),
+      fromProgress === null
+        ? 0
+        : Math.abs(this.progress(track, now) - fromProgress)
     );
     if (
       correctionDistance < 1 ||
-      correctionDistance > (fromProgress === null ? 100 : 300)
+      correctionDistance >
+        (fromProgress === null ? 100 : VEHICLE_MOTION_LIMITS.maximumDistance)
     )
       return;
     track.correction = {
       from: { ...previousDisplay.position },
       fromProgress,
       startedAt: now,
-      duration: clamp(correctionDistance * 20, 600, 2_000)
+      duration: clamp(correctionDistance * 20, 600, 4_000)
     };
   }
 
@@ -563,39 +648,19 @@ export class VehicleMotionEstimator {
     track: Track,
     history: Track | null,
     elapsed: number,
-    rawDistance: number
+    rawDistance: number,
+    firstObservation: boolean
   ): void {
     const { vehicle, receivedAt } = track;
-    const { match, timestamp, position } = track.sample;
+    const { match, timestamp } = track.sample;
     if (
-      !history ||
       !match ||
-      !history.sample.match ||
-      history.sample.match.pattern !== match.pattern ||
       timestamp === null ||
-      receivedAt - timestamp > VEHICLE_MOTION_LIMITS.staleMs ||
+      receivedAt - timestamp > VEHICLE_MOTION_LIMITS.maximumInitialAgeMs ||
       vehicle.source !== 'live' ||
       vehicle.isDetoured
     )
       return;
-    const progressDelta = match.progress - history.sample.match.progress;
-    const observed = Math.max(0, progressDelta / elapsed);
-    const physical =
-      progressDelta >= -10 &&
-      observed <= VEHICLE_MOTION_LIMITS.maximumObservedSpeed &&
-      (history.observedSpeed === null ||
-        Math.abs(observed - history.observedSpeed) / elapsed <= 3);
-    if (!physical) return;
-    track.observedSpeed = observed;
-
-    const route = this.routes.get(vehicle.routeId)!;
-    const stop = vehicle.currentStopId
-      ? routeStops(route).get(vehicle.currentStopId)
-      : undefined;
-    const nearIncomingStop =
-      vehicle.currentStatus === 'INCOMING_AT' &&
-      stop &&
-      distance(position, stop) <= 25;
     const feedSpeed =
       typeof vehicle.speed === 'number' &&
       Number.isFinite(vehicle.speed) &&
@@ -605,23 +670,68 @@ export class VehicleMotionEstimator {
         : null;
     if (
       vehicle.currentStatus === 'STOPPED_AT' ||
-      nearIncomingStop ||
-      (feedSpeed !== null && feedSpeed <= 0.3) ||
-      rawDistance < 8 ||
-      progressDelta < 5
+      (feedSpeed !== null && feedSpeed <= 0.7)
     )
       return;
 
-    // Use the slower evidence. A single high feed speed never starts prediction.
-    track.speed = Math.min(
-      observed,
-      feedSpeed ?? observed * 0.8,
-      VEHICLE_MOTION_LIMITS.maximumSpeed
+    if (history?.sample.match?.pattern === match.pattern) {
+      const progressDelta = match.progress - history.sample.match.progress;
+      const observed = Math.max(0, progressDelta / elapsed);
+      const physical =
+        progressDelta >= -10 &&
+        observed <= VEHICLE_MOTION_LIMITS.maximumObservedSpeed &&
+        (history.observedSpeed === null ||
+          Math.abs(observed - history.observedSpeed) / elapsed <= 3);
+      if (!physical) return;
+      track.observedSpeed = observed;
+      if (rawDistance < 8 || progressDelta < 5) return;
+      // Source-to-source progress includes real traffic delays. A faster
+      // instantaneous feed speed cannot overrule that observed travel pace.
+      track.speed = Math.min(
+        observed,
+        feedSpeed ?? observed * 0.8,
+        VEHICLE_MOTION_LIMITS.maximumSpeed
+      );
+      track.quality = feedSpeed === null ? 0.65 : 0.85;
+    } else {
+      const heading = normalizedHeading(vehicle.heading);
+      // Start without waiting for a second delayed packet only when independent
+      // feed evidence agrees: exact trip shape, nearby GPS, heading and speed.
+      if (
+        !firstObservation ||
+        !vehicle.shapeId ||
+        vehicle.shapeId !== match.pattern.shapeId ||
+        match.distance > 15 ||
+        heading === undefined ||
+        headingDifference(heading, match.heading) > 35 ||
+        feedSpeed === null ||
+        feedSpeed > VEHICLE_MOTION_LIMITS.maximumInitialSpeed
+      )
+        return;
+      track.speed = Math.min(
+        feedSpeed * 0.85,
+        VEHICLE_MOTION_LIMITS.maximumSpeed
+      );
+      track.quality = 0.55;
+    }
+    track.quality *= clamp(1 - match.distance / 50, 0.3, 1);
+
+    // Feed latency is not an outage. Extrapolate across that known latency,
+    // then retain motion through the next expected distinct report. Repeated
+    // HTTP copies never refresh receivedAt or the learned source cadence.
+    const lagSeconds = Math.max(0, (receivedAt - timestamp) / 1_000);
+    const continuationSeconds =
+      clamp(track.cadenceMs * 1.5, 30_000, 90_000) / 1_000;
+    const decaySeconds = clamp(track.cadenceMs, 20_000, 45_000) / 1_000;
+    track.horizonSeconds = Math.min(
+      VEHICLE_MOTION_LIMITS.horizonMs / 1_000,
+      lagSeconds + continuationSeconds + decaySeconds
     );
-    track.quality =
-      (feedSpeed === null ? 0.65 : 0.85) *
-      clamp(1 - match.distance / 50, 0.3, 1);
-    track.stopAt = this.stopLimit(vehicle, match);
+    track.fullSpeedSeconds = Math.min(
+      lagSeconds + continuationSeconds,
+      track.horizonSeconds - Math.min(decaySeconds, 20)
+    );
+    this.planMotion(track);
   }
 
   private match(
@@ -712,38 +822,94 @@ export class VehicleMotionEstimator {
     return ambiguous ? null : best;
   }
 
-  private stopLimit(vehicle: IVehicle, match: Match): number {
+  private planMotion(track: Track): void {
+    const { vehicle, speed } = track;
+    const match = track.sample.match!;
     const route = this.routes.get(vehicle.routeId)!;
     const stops = routeStops(route);
-    const specificPosition = vehicle.currentStopId
-      ? stops.get(vehicle.currentStopId)
-      : undefined;
-    let ahead = specificPosition
-      ? stopProgress(
-          match.pattern,
-          vehicle.currentStopId!,
-          specificPosition
-        ).filter((progress) => progress >= match.progress - 5)
-      : [];
-    if (!ahead.length) {
-      const current = pointAt(match.pattern, match.progress).position;
-      ahead = [...stops]
-        .filter(
-          ([, position]) =>
-            distance(current, position) <=
-            VEHICLE_MOTION_LIMITS.maximumDistance + 35
-        )
-        .flatMap(([id, position]) => stopProgress(match.pattern, id, position))
-        .filter((progress) => progress >= match.progress + 0.5);
-    }
-    const next = ahead.length ? Math.min(...ahead) : match.pattern.length;
-    return Math.max(
-      match.progress,
-      Math.min(
-        match.pattern.length,
-        next - (next === match.pattern.length ? 0 : 8)
-      )
+    track.stopAt = Math.min(
+      match.pattern.length,
+      match.progress + VEHICLE_MOTION_LIMITS.maximumDistance
     );
+    const current = pointAt(match.pattern, match.progress).position;
+    const upcoming = [...stops]
+      .filter(
+        ([, position]) =>
+          distance(current, position) <=
+          VEHICLE_MOTION_LIMITS.maximumDistance + 35
+      )
+      .flatMap(([id, position]) =>
+        stopProgress(match.pattern, id, position).map((progress) => ({
+          progress,
+          // Route stop lists also contain stops served by other variants. Only
+          // the feed's announced next stop justifies an assumed boarding dwell.
+          dwell:
+            id === vehicle.currentStopId &&
+            (vehicle.currentStatus === 'IN_TRANSIT_TO' ||
+              vehicle.currentStatus === 'INCOMING_AT')
+        }))
+      )
+      .filter(
+        (stop) =>
+          stop.progress > match.progress + 0.5 &&
+          stop.progress < track.stopAt - 1
+      )
+      .sort((a, b) => a.progress - b.progress);
+    // Opposite-direction stop poles and shape vertices can project onto nearly
+    // the same progress. Do not charge several slowdowns for one intersection.
+    const distinct: Array<{ progress: number; dwell: boolean }> = [];
+    for (const stop of upcoming) {
+      const previous = distinct[distinct.length - 1];
+      if (previous && stop.progress - previous.progress < 20) {
+        if (stop.dwell) {
+          previous.progress = stop.progress;
+          previous.dwell = true;
+        }
+      } else distinct.push({ ...stop });
+    }
+
+    let progress = match.progress;
+    let seconds = 0;
+    const addPhase = (to: number, fromSpeed: number, toSpeed: number) => {
+      if (to <= progress) return;
+      const duration = (2 * (to - progress)) / (fromSpeed + toSpeed);
+      track.phases.push({
+        from: progress,
+        to,
+        start: seconds,
+        end: seconds + duration,
+        startSpeed: fromSpeed,
+        endSpeed: toSpeed
+      });
+      seconds += duration;
+      progress = to;
+    };
+    for (const [index, stop] of distinct.entries()) {
+      if (stop.progress <= progress) continue;
+      const approach = Math.max(progress, stop.progress - 25);
+      addPhase(approach, speed, speed);
+      const atStopSpeed = stop.dwell ? 0 : speed * 0.65;
+      addPhase(stop.progress, speed, atStopSpeed);
+      if (stop.dwell) {
+        track.phases.push({
+          from: progress,
+          to: progress,
+          start: seconds,
+          end: seconds + 6,
+          startSpeed: 0,
+          endSpeed: 0
+        });
+        seconds += 6;
+      }
+      const nextStop = distinct[index + 1];
+      const departTo = Math.min(
+        stop.progress + 20,
+        nextStop ? (stop.progress + nextStop.progress) / 2 : track.stopAt,
+        track.stopAt
+      );
+      addPhase(departTo, atStopSpeed, speed);
+    }
+    addPhase(track.stopAt, speed, speed);
   }
 
   private progress(track: Track, now: number): number {
@@ -753,20 +919,36 @@ export class VehicleMotionEstimator {
     const seconds = clamp(
       (now - track.sample.timestamp) / 1_000,
       0,
-      VEHICLE_MOTION_LIMITS.horizonMs / 1_000
+      track.horizonSeconds
     );
-    // Full speed for 10s, then linearly decay to rest at the 60s horizon.
-    const decayingSeconds = Math.max(0, seconds - 10);
+    const decayingSeconds = Math.max(0, seconds - track.fullSpeedSeconds);
+    const decayDuration = track.horizonSeconds - track.fullSpeedSeconds;
     const effectiveSeconds =
-      Math.min(seconds, 10) + decayingSeconds - decayingSeconds ** 2 / 100;
-    const advance = Math.min(
-      VEHICLE_MOTION_LIMITS.maximumDistance,
-      track.speed * effectiveSeconds
+      Math.min(seconds, track.fullSpeedSeconds) +
+      decayingSeconds -
+      decayingSeconds ** 2 / (2 * decayDuration);
+    let low = 0;
+    let high = track.phases.length - 1;
+    if (high < 0) return match.progress;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (track.phases[middle].end <= effectiveSeconds) low = middle + 1;
+      else high = middle;
+    }
+    const phase = track.phases[low];
+    const elapsed = clamp(
+      effectiveSeconds - phase.start,
+      0,
+      phase.end - phase.start
     );
-    return Math.min(
-      match.progress + advance,
-      track.stopAt,
-      match.pattern.length
+    const acceleration =
+      (phase.endSpeed - phase.startSpeed) / (phase.end - phase.start);
+    return clamp(
+      phase.from +
+        phase.startSpeed * elapsed +
+        (acceleration * elapsed ** 2) / 2,
+      phase.from,
+      phase.to
     );
   }
 }

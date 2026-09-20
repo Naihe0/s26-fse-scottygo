@@ -8,11 +8,12 @@ Usage:
 
 Examples:
   bash tools/convert-rest-doc.sh
-  bash tools/convert-rest-doc.sh docs/REST_API/REST_Discover.md
-  bash tools/convert-rest-doc.sh docs/REST_API/REST_Auth.md --no-pdf
+  bash tools/convert-rest-doc.sh docs/API.md
+  bash tools/convert-rest-doc.sh docs/API.md --no-pdf
 
 Defaults:
-  markdown-file: docs/REST_API/REST_Discover.md
+  markdown-file: docs/API.md
+  Output directory: tmp/docs-exports (keeps docs limited to source guides).
   Also generates PDF unless --no-pdf is provided.
 USAGE
 }
@@ -47,7 +48,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$input_md" ]]; then
-  input_md="docs/REST_API/REST_Discover.md"
+  input_md="docs/API.md"
 fi
 
 if [[ "$input_md" = /* ]]; then
@@ -56,15 +57,8 @@ else
   input_md_abs="${REPO_ROOT}/${input_md}"
 fi
 
-template_doc="${REPO_ROOT}/docs/REST_API/REST ManageAcct.docx"
-
 if [[ ! -f "$input_md_abs" ]]; then
   echo "Error: Markdown file not found: $input_md_abs"
-  exit 1
-fi
-
-if [[ ! -f "$template_doc" ]]; then
-  echo "Error: Reference DOCX template not found: $template_doc"
   exit 1
 fi
 
@@ -73,7 +67,8 @@ if ! command -v pandoc >/dev/null 2>&1; then
   exit 1
 fi
 
-out_dir="$(dirname -- "$input_md_abs")"
+out_dir="${REPO_ROOT}/tmp/docs-exports"
+mkdir -p -- "$out_dir"
 base_name="$(basename -- "$input_md_abs" .md)"
 out_docx="${out_dir}/${base_name}.docx"
 out_pdf="${out_dir}/${base_name}.pdf"
@@ -82,7 +77,6 @@ echo "Generating DOCX from: $input_md_abs"
 pandoc "$input_md_abs" \
   --from gfm \
   --to docx \
-  --reference-doc="$template_doc" \
   --output "$out_docx"
 
 echo "DOCX generated: $out_docx"

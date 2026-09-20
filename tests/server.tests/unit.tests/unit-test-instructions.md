@@ -5,7 +5,7 @@
 - **Directory**: All unit tests are located in the following directory: _tests/server.tests/unit.tests/_
 - **Suite Coverage**: In principle, there should be 1 unit test suite for each business logic file and utility file (e.g., one suite for each model and each utility/helper module).
 - **Suite Cohesion**: In principle, each test suite should be cohesive, with 1 unit test suite covering an entire implementation file (e.g., ‘performFunction.unit.test.ts’ which tests a hypothetical implementation file ‘performFunction.ts’).
-- **File Naming Conventions**: Unit test files should consist of the **name**, then be followed by ‘.[**unit.test.ts**](http://unit.test.ts)’, such as ‘[register.unit.test.ts](http://register.unit.test.ts)’ for a test on registration. Names should be the same as that of either the Use Case (specified in the ‘docs/UC’ directory) or the implementation file being tested (e.g., ‘performFunction.unit.test.ts’ which tests a hypothetical implementation file ‘performFunction.ts’).
+- **File Naming Conventions**: Unit test files should consist of the **name**, then be followed by ‘.[**unit.test.ts**](http://unit.test.ts)’, such as ‘[register.unit.test.ts](http://register.unit.test.ts)’ for a test on registration. Names should be the same as that of either the use case (described in `docs/FEATURES.md`) or the implementation file being tested (e.g., ‘performFunction.unit.test.ts’ which tests a hypothetical implementation file ‘performFunction.ts’).
 
 # Unit Test Suite Structure
 
