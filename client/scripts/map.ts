@@ -47,6 +47,7 @@ import { DirectionsController } from './controllers/directions-controller';
 import { RouteRenderer } from './renderers/route-renderer';
 import { VehicleTracker } from './trackers/vehicle-tracker';
 import { getRouteTitle } from './utils/route-display';
+import { focusNearby } from './utils/map-focus';
 import {
   GeolocationController,
   type LocationFailure
@@ -594,8 +595,7 @@ const registerZoomAndMapEvents = (): void => {
       return;
     }
     const loc = getEffectiveLocation();
-    mapProvider.setCenter(loc);
-    mapProvider.setZoom(15);
+    focusNearby(mapProvider, loc);
     console.log('Recentered map on effective location');
   });
 
@@ -906,8 +906,7 @@ function handleUserPosition(position: GeolocationPosition): void {
       removePlannedLocationMarker();
       directionsController.updatePlannedLocation(null);
       if (isInPittsburghArea(location.lat, location.lng)) {
-        mapProvider.setCenter(location);
-        mapProvider.setZoom(15);
+        focusNearby(mapProvider, location);
         addUserLocationMarker(location.lat, location.lng);
         filterController.setUserLocation(location);
         refreshNearbyLocationView();
@@ -974,7 +973,7 @@ async function useCurrentLocation(): Promise<void> {
     !latest.currentLocation
   )
     return;
-  mapProvider.setCenter(latest.currentLocation);
+  focusNearby(mapProvider, latest.currentLocation);
   showSubscriptionToast('Using current location');
 }
 

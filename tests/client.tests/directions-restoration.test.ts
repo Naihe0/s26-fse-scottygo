@@ -25,6 +25,7 @@ const mockRenderer = {
   hasRouteGeometry: jest.fn(() => false)
 };
 const mockTracker = {
+  setRouteGeometry: jest.fn(),
   stopPolling: jest.fn(),
   startPolling: jest.fn(),
   refreshDirectionVisibility: jest.fn()

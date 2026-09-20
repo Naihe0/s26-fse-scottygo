@@ -20,6 +20,7 @@ class MockMarker {
   setMap = jest.fn();
   setVisible = jest.fn();
   setIcon = jest.fn();
+  setTitle = jest.fn();
 
   constructor(options: google.maps.MarkerOptions) {
     this.options = options;
@@ -58,6 +59,17 @@ describe('Google Maps marker movement ownership', () => {
     const handle = provider.addMarker({ position: initial });
     return { handle, marker: MockMarker.instances.at(-1)! };
   }
+
+  test('accessible marker titles update only while the marker is owned', () => {
+    const { handle, marker } = addMarker();
+    handle.setTitle?.('Bus 12 — delayed position, 2m ago');
+    expect(marker.setTitle).toHaveBeenCalledWith(
+      'Bus 12 — delayed position, 2m ago'
+    );
+    handle.remove();
+    handle.setTitle?.('Late update');
+    expect(marker.setTitle).toHaveBeenCalledTimes(1);
+  });
 
   beforeEach(() => {
     clock = 0;

@@ -507,7 +507,8 @@ export default class BusController extends Controller {
           ...v,
           direction: v.tripId
             ? gtfsService.getTripDirection(v.tripId)
-            : undefined
+            : undefined,
+          shapeId: v.tripId ? gtfsService.getTripShapeId(v.tripId) : undefined
         }));
       }
 

@@ -83,6 +83,7 @@ describe('bounded streaming GTFS startup', () => {
     expect(service.getPatterns('61C')).toEqual([
       {
         direction: 'OUTBOUND',
+        shapeId: 'shape',
         path: [
           { lat: 40.44, lng: -79.94 },
           { lat: 40.45, lng: -79.93 }
@@ -93,6 +94,8 @@ describe('bounded streaming GTFS startup', () => {
       service.getStopsByDirection('61C', 'OUTBOUND').map((stop) => stop.stopId)
     ).toEqual(['1', '2']);
     expect(service.getTripDirection('trip')).toBe('OUTBOUND');
+    expect(service.getTripShapeId('trip')).toBe('shape');
+    expect(service.getTripShapeId('unknown')).toBeUndefined();
     expect(service.filterRoutesByDate(new Date(2026, 8, 19))).toHaveLength(1);
     expect(service.filterRoutesByDate(new Date(2026, 8, 20))).toHaveLength(0);
     expect(service.getRouteSchedule('61C')?.directions).toEqual([

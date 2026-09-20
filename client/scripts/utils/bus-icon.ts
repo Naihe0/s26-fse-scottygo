@@ -6,6 +6,8 @@
 
 import type { IVehicle } from '../../../common/transit.interface';
 
+export type BusPositionStatus = 'reported' | 'estimated' | 'delayed';
+
 /**
  * Build a data-URI SVG bus icon for a given vehicle and map zoom level.
  *
@@ -17,7 +19,8 @@ import type { IVehicle } from '../../../common/transit.interface';
 export function createBusIcon(
   vehicle: IVehicle,
   zoom: number,
-  routeColor: string
+  routeColor: string,
+  status: BusPositionStatus = 'reported'
 ): {
   url: string;
   anchor: { x: number; y: number };
@@ -59,6 +62,11 @@ export function createBusIcon(
     `<rect x="20" y="18.5" width="8" height="5.5" rx="1" fill="#0f172a" fill-opacity="0.72"/>` +
     `<circle cx="20.5" cy="27.5" r="1" fill="#0f172a" fill-opacity="0.72"/>` +
     `<circle cx="27.5" cy="27.5" r="1" fill="#0f172a" fill-opacity="0.72"/>` +
+    (status === 'delayed'
+      ? `<g data-part="delayed"><circle cx="38" cy="36" r="7" fill="#fff" stroke="#a16207" stroke-width="1.75"/><path d="M38 32v4l2.5 1.5" fill="none" stroke="#a16207" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></g>`
+      : status === 'estimated'
+        ? `<circle data-part="estimated" cx="24" cy="24" r="16" fill="none" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="2 3"/>`
+        : '') +
     `</svg>`;
 
   return {

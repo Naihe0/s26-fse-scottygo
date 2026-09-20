@@ -178,6 +178,7 @@ jest.mock('../../../server/services/gtfs.service', () => ({
     getStops: jest.fn(),
     getStopsByDirection: jest.fn(),
     getTripDirection: jest.fn(),
+    getTripShapeId: jest.fn((tripId: string) => `shape-${tripId}`),
     filterRoutesByDate: jest.fn(),
     filterRoutesByDateTime: jest.fn()
   }
@@ -422,12 +423,14 @@ describe('TUC 2: Track Bus in Real-Time — Integration Tests', () => {
     expect(v1!.heading).toBe(90);
     expect(v1!.source).toBe('live');
     expect(v1!.isDetoured).toBe(false);
+    expect(v1!.shapeId).toBe('shape-trip-001');
 
     // Verify second vehicle is flagged as detoured with delay
     const v2 = vehicles.find((v) => v.vid === '3302');
     expect(v2).toBeDefined();
     expect(v2!.isDetoured).toBe(true);
     expect(v2!.delay).toBe(120);
+    expect(v2!.shapeId).toBeUndefined();
   });
 
   // --------------------------------------------------------------------------

@@ -23,29 +23,29 @@ export class MapKey extends HTMLElement {
       <section id="map-key-panel" class="map-key__panel" aria-labelledby="map-key-title" hidden>
         <h2 id="map-key-title">Reading the map</h2>
         <ul>
-          <li><img data-symbol="bus" alt="" /><span><strong>Live bus</strong><small>Triangle shows travel direction.</small></span></li>
+          <li><img data-symbol="bus" alt="" /><span><strong>Reported bus</strong><small>Triangle shows travel direction. Tap to zoom in.</small></span></li>
+          <li><img data-symbol="estimated" alt="" /><span><strong>Estimated movement</strong><small>Dashed ring: a short route-based estimate between GPS reports.</small></span></li>
+          <li><img data-symbol="delayed" alt="" /><span><strong>Delayed location</strong><small>Clock badge: last reported position. Tap to see its age.</small></span></li>
           <li><img data-symbol="stop" alt="" /><span><strong>Bus stop</strong><small>Tap a dot for arrivals and directions.</small></span></li>
           <li><img data-symbol="gps" alt="" /><span><strong>Your location</strong><small>Blue marks your GPS position.</small></span></li>
           <li><img data-symbol="planned" alt="" /><span><strong>Planning location</strong><small>A place you chose to explore.</small></span></li>
           <li><span class="map-key__lines" aria-hidden="true"><i></i><i></i></span><span><strong>Routes & detours</strong><small>Route colors follow the line. Amber buses and orange-red lines mark detours.</small></span></li>
         </ul>
       </section>`;
-    const bus = createBusIcon(
-      {
-        vid: '',
-        lat: 0,
-        lon: 0,
-        routeId: '',
-        heading: 45,
-        source: 'live',
-        lastUpdate: '',
-        isDetoured: false
-      },
-      14,
-      '#0f766e'
-    );
+    const exampleBus = {
+      vid: '',
+      lat: 0,
+      lon: 0,
+      routeId: '',
+      heading: 45,
+      source: 'live' as const,
+      lastUpdate: '',
+      isDetoured: false
+    };
     const symbols = {
-      bus,
+      bus: createBusIcon(exampleBus, 14, '#0f766e'),
+      estimated: createBusIcon(exampleBus, 14, '#0f766e', 'estimated'),
+      delayed: createBusIcon(exampleBus, 14, '#0f766e', 'delayed'),
       stop: createStopIcon('#0f766e', 15),
       gps: createLocationIcon('gps'),
       planned: createLocationIcon('planned')

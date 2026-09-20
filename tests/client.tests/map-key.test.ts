@@ -26,7 +26,7 @@ test('keeps explanations collapsed until requested and reuses actual map artwork
   expect(panel.textContent).toContain('Triangle shows travel direction');
   expect(panel.textContent).toContain('Blue marks your GPS position');
   const images = [...panel.querySelectorAll('img')];
-  expect(images).toHaveLength(4);
+  expect(images).toHaveLength(6);
   for (const img of images) {
     expect(img.src).toMatch(/^data:image\/svg\+xml/);
     expect(img.alt).toBe('');

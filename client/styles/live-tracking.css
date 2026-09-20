@@ -48,3 +48,39 @@ body.dark .live-tracking-status[data-state='unavailable'],
 body.dark .live-tracking-status[data-state='partial'] {
   color: #fde68a;
 }
+
+.bus-position-state {
+  padding: 9px 10px;
+  margin-bottom: 6px;
+  border-radius: 10px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.bus-position-state[data-state='estimated'] {
+  background: #eff6ff;
+  color: #1e40af;
+}
+.bus-position-state[data-state='delayed'] {
+  background: #fffbeb;
+  color: #854d0e;
+}
+.map-popup__value--live.bus-position-delayed {
+  color: #854d0e;
+}
+body.dark .bus-position-state {
+  background: #334155;
+  color: #e2e8f0;
+}
+body.dark .bus-position-state[data-state='estimated'] {
+  background: #172c4b;
+  color: #bfdbfe;
+}
+body.dark .bus-position-state[data-state='delayed'] {
+  background: #422f12;
+  color: #fde68a;
+}
+body.dark .map-popup__value--live.bus-position-delayed {
+  color: #fde68a;
+}

@@ -22,6 +22,38 @@ const POLL_INTERVAL_MS = 30_000; // 30 seconds
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_FEED_AGE_MS = 90_000;
 
+/** Protobuf prototype defaults are not supplied sensor observations. */
+function observedNumber(
+  message: object,
+  field: string,
+  minimum = -Infinity,
+  maximum = Infinity
+): number | undefined {
+  if (!Object.prototype.hasOwnProperty.call(message, field)) return undefined;
+  const value = (message as Record<string, unknown>)[field];
+  return typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value >= minimum &&
+    value <= maximum
+    ? value
+    : undefined;
+}
+
+function measurementTimestamp(vp: transit_realtime.IVehiclePosition): string {
+  if (
+    !Object.prototype.hasOwnProperty.call(vp, 'timestamp') ||
+    vp.timestamp == null
+  )
+    return '';
+  const seconds =
+    typeof vp.timestamp === 'number' ? vp.timestamp : vp.timestamp.toNumber();
+  if (!Number.isSafeInteger(seconds) || seconds < 0) return '';
+  const date = new Date(seconds * 1000);
+  // Feed creation/receipt time is not the time the GPS position was measured.
+  // An unknown or invalid observation must never become a fresh moving bus.
+  return Number.isFinite(date.getTime()) ? date.toISOString() : '';
+}
+
 /** Return a formatted log prefix with ISO timestamp. */
 function tag(): string {
   return `[VehiclePositions ${new Date().toISOString()}]`;
@@ -246,53 +278,57 @@ export class VehiclePositionsService {
   ): IVehicle | null {
     const vp = entity.vehicle;
     if (!vp?.position) return null;
+    const latitude = observedNumber(vp.position, 'latitude', -90, 90);
+    const longitude = observedNumber(vp.position, 'longitude', -180, 180);
+    if (latitude === undefined || longitude === undefined) return null;
 
     const routeId = vp.trip?.routeId ?? '';
+    const currentStopSequence = observedNumber(
+      vp,
+      'currentStopSequence',
+      0,
+      0xffffffff
+    );
+    const stopSequence =
+      currentStopSequence !== undefined && Number.isInteger(currentStopSequence)
+        ? currentStopSequence
+        : undefined;
+    // GTFS current_status is only meaningful with a current_stop_sequence.
+    const status =
+      stopSequence !== undefined
+        ? observedNumber(vp, 'currentStatus')
+        : undefined;
 
     // Map GTFS-RT VehicleStopStatus enum to string
     let currentStatus: IVehicle['currentStatus'];
     if (
-      vp.currentStatus ===
-      transit_realtime.VehiclePosition.VehicleStopStatus.INCOMING_AT
+      status === transit_realtime.VehiclePosition.VehicleStopStatus.INCOMING_AT
     ) {
       currentStatus = 'INCOMING_AT';
     } else if (
-      vp.currentStatus ===
-      transit_realtime.VehiclePosition.VehicleStopStatus.STOPPED_AT
+      status === transit_realtime.VehiclePosition.VehicleStopStatus.STOPPED_AT
     ) {
       currentStatus = 'STOPPED_AT';
     } else if (
-      vp.currentStatus ===
+      status ===
       transit_realtime.VehiclePosition.VehicleStopStatus.IN_TRANSIT_TO
     ) {
       currentStatus = 'IN_TRANSIT_TO';
     }
 
     return {
-      vid: vp.vehicle?.id ?? entity.id,
-      lat: vp.position.latitude,
-      lon: vp.position.longitude,
+      vid: vp.vehicle?.id || entity.id,
+      lat: latitude,
+      lon: longitude,
       routeId,
-      // Protobuf exposes 0 on the prototype even when bearing was omitted.
-      heading:
-        Object.prototype.hasOwnProperty.call(vp.position, 'bearing') &&
-        typeof vp.position.bearing === 'number' &&
-        Number.isFinite(vp.position.bearing)
-          ? vp.position.bearing
-          : undefined,
-      speed: vp.position.speed != null ? vp.position.speed : undefined,
+      heading: observedNumber(vp.position, 'bearing', 0, 360),
+      speed: observedNumber(vp.position, 'speed', 0),
       source: 'live',
-      lastUpdate: vp.timestamp
-        ? new Date(
-            (typeof vp.timestamp === 'number'
-              ? vp.timestamp
-              : vp.timestamp.toNumber()) * 1000
-          ).toISOString()
-        : new Date().toISOString(),
+      lastUpdate: measurementTimestamp(vp),
       isDetoured: false,
       tripId: vp.trip?.tripId || undefined,
       currentStatus,
-      currentStopSequence: vp.currentStopSequence ?? undefined,
+      currentStopSequence: stopSequence,
       currentStopId: vp.stopId || undefined
     };
   }

@@ -31,6 +31,7 @@ const mockRenderer = {
   hasRouteGeometry: jest.fn(() => false)
 };
 const mockTracker = {
+  setRouteGeometry: jest.fn(),
   stopPolling: jest.fn(),
   startPolling: jest.fn(),
   refreshDirectionVisibility: jest.fn()
@@ -230,6 +231,11 @@ describe('Transit readiness recovery', () => {
     await tick(5000);
     expect(api.getBulkData).toHaveBeenCalledTimes(2);
     expect(mockState.availableRoutes).toEqual([route]);
+    expect(mockTracker.setRouteGeometry).toHaveBeenCalledWith(
+      route.id,
+      geometry,
+      [stop]
+    );
     expect(mockRenderer.renderRouteGeometry).toHaveBeenCalledWith(
       route.id,
       geometry,

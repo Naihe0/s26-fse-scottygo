@@ -22,6 +22,7 @@ export interface IVehicle {
   isDetoured: boolean;
   delay?: number;
   tripId?: string; // GTFS trip_id (from GTFS-RT)
+  shapeId?: string; // Exact scheduled path for this trip, when available.
   direction?: string; // 'INBOUND' | 'OUTBOUND' — populated for PRT, absent for CMU loops
   currentStatus?: 'INCOMING_AT' | 'STOPPED_AT' | 'IN_TRANSIT_TO'; // Vehicle stop status
   currentStopSequence?: number; // Stop sequence number
@@ -68,6 +69,7 @@ export interface IDetourGeometry {
 }
 
 export interface IPattern {
+  shapeId?: string; // Distinguishes overlapping variants of the same route.
   direction: string; // e.g. "INBOUND" or "OUTBOUND"
   path: { lat: number; lng: number }[]; // Ordered sequence of points forming the route geometry
 }

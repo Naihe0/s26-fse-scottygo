@@ -336,6 +336,8 @@ export class FilterController {
     for (const [key, stops] of Object.entries(bulk.stops)) {
       this.stopCache.set(key, stops);
     }
+    for (const routeId of this.patternCache.keys())
+      this.syncMotionGeometry(routeId);
     this.bulkLoaded = bulk.routes.some((route) => route.system === 'PRT');
     console.log(
       `Bulk data loaded: ${bulk.routes.length} routes, ` +
@@ -343,6 +345,20 @@ export class FilterController {
         `${this.stopCache.size} stop sets`
     );
     return bulk.routes;
+  }
+
+  /** Reuse loaded geometry for prediction; no per-frame or per-bus HTTP requests. */
+  private syncMotionGeometry(routeId: string): void {
+    const stops = new Map<string, IStop>();
+    for (const [key, routeStops] of this.stopCache) {
+      if (key.startsWith(`${routeId}:`))
+        for (const stop of routeStops) stops.set(stop.stopId, stop);
+    }
+    this.vehicleTracker.setRouteGeometry(
+      routeId,
+      this.patternCache.get(routeId) ?? [],
+      [...stops.values()]
+    );
   }
 
   /**
@@ -1078,6 +1094,8 @@ export class FilterController {
       // Route has no geometry data - throw so caller can handle gracefully
       throw { type: 'ClientError', name: 'RouteNotFound' };
     }
+    this.patternCache.set(routeId, patterns);
+    this.syncMotionGeometry(routeId);
     return patterns as unknown as RouteData;
   }
 
@@ -1126,6 +1144,8 @@ export class FilterController {
 
     const stops = await transitApiService.getStops(routeId, direction);
     if (!stops) throw new Error('Unable to load route stops');
+    this.stopCache.set(cacheKey, stops);
+    this.syncMotionGeometry(routeId);
     return stops;
   }
 

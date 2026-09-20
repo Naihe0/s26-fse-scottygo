@@ -49,6 +49,7 @@ export interface IMapMarker {
   animatePosition(position: ILatLng, durationMs?: number): void;
   setIcon(icon: string): void;
   setVisible(visible: boolean): void;
+  setTitle?(title: string): void;
   setIcon(
     icon:
       | string

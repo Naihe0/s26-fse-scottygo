@@ -68,6 +68,7 @@ export class GTFSService {
 
   // Schedule data
   private tripDirection = new Map<string, string>(); // tripId → direction (INBOUND|OUTBOUND)
+  private tripShape = new Map<string, string>(); // tripId → exact shape, for motion matching
   private calendar = new Map<string, ServiceCalendar>(); // serviceId → calendar
   private calendarExceptions = new Map<
     string,
@@ -134,6 +135,7 @@ export class GTFSService {
     this.routeStops.clear();
     this.routeDirectionStops.clear();
     this.tripDirection.clear();
+    this.tripShape.clear();
     this.calendar.clear();
     this.calendarExceptions.clear();
     this.tripService.clear();
@@ -254,6 +256,7 @@ export class GTFSService {
       this.tripRoute.set(t.trip_id, t.route_id);
       const tripDir = t.direction_id === '0' ? 'OUTBOUND' : 'INBOUND';
       this.tripDirection.set(t.trip_id, tripDir);
+      if (t.shape_id) this.tripShape.set(t.trip_id, t.shape_id);
 
       if (t.trip_headsign) {
         const dirKey = `${t.route_id}:${tripDir}`;
@@ -269,7 +272,9 @@ export class GTFSService {
         if (!this.patternMap.has(t.route_id)) {
           this.patternMap.set(t.route_id, []);
         }
-        this.patternMap.get(t.route_id)!.push({ direction: tripDir, path });
+        this.patternMap
+          .get(t.route_id)!
+          .push({ direction: tripDir, shapeId: t.shape_id, path });
       }
     });
   }
@@ -465,6 +470,10 @@ export class GTFSService {
    */
   getTripDirection(tripId: string): string | undefined {
     return this.tripDirection.get(tripId);
+  }
+
+  getTripShapeId(tripId: string): string | undefined {
+    return this.tripShape.get(tripId);
   }
 
   /** Return all stops for a route from static GTFS data. */

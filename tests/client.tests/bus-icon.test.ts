@@ -1,6 +1,9 @@
 /** @jest-environment jsdom */
 
-import { createBusIcon } from '../../client/scripts/utils/bus-icon';
+import {
+  createBusIcon,
+  type BusPositionStatus
+} from '../../client/scripts/utils/bus-icon';
 import type { IVehicle } from '../../common/transit.interface';
 
 const vehicle = (heading: number = 0, isDetoured = false): IVehicle => ({
@@ -14,8 +17,13 @@ const vehicle = (heading: number = 0, isDetoured = false): IVehicle => ({
   isDetoured
 });
 
-function decodeIcon(bus: IVehicle = vehicle(), zoom = 14, color = '#2563eb') {
-  const icon = createBusIcon(bus, zoom, color);
+function decodeIcon(
+  bus: IVehicle = vehicle(),
+  zoom = 14,
+  color = '#2563eb',
+  status: BusPositionStatus = 'reported'
+) {
+  const icon = createBusIcon(bus, zoom, color, status);
   const svg = decodeURIComponent(icon.url.split(',')[1]);
   const document = new DOMParser().parseFromString(svg, 'image/svg+xml');
   expect(document.querySelector('parsererror')).toBeNull();
@@ -23,6 +31,23 @@ function decodeIcon(bus: IVehicle = vehicle(), zoom = 14, color = '#2563eb') {
 }
 
 describe('circular bus marker', () => {
+  it.each(['reported', 'estimated', 'delayed'] as const)(
+    'keeps one bus symbol with a distinct %s freshness cue',
+    (status) => {
+      const { document } = decodeIcon(vehicle(), 14, '#2563eb', status);
+      expect(document.querySelectorAll('[data-part="bus"]')).toHaveLength(1);
+      expect(document.querySelector('[data-part="estimated"]') !== null).toBe(
+        status === 'estimated'
+      );
+      expect(document.querySelector('[data-part="delayed"]') !== null).toBe(
+        status === 'delayed'
+      );
+      if (status === 'delayed')
+        expect(
+          document.querySelector('[data-part="delayed"] path')
+        ).not.toBeNull();
+    }
+  );
   it.each([0, 90, 180, 270])(
     'points to compass bearing %d without rotating or mirroring the bus',
     (heading) => {

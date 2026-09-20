@@ -11,6 +11,7 @@ const mockMarkers: Array<{
 const mockMap = {
   setCenter: jest.fn(),
   setZoom: jest.fn(),
+  getZoom: jest.fn(() => 14),
   addMarker: jest.fn(() => {
     const marker = {
       setPosition: jest.fn(),
@@ -128,6 +129,7 @@ test('a timed-out first fix can recover through the visible retry action', () =>
     lat: 40.45,
     lng: -79.95
   });
+  expect(mockMap.setZoom.mock.calls.at(-1)![0]).toBeGreaterThan(15);
   expect(mockDirections.updatePlannedLocation).toHaveBeenLastCalledWith(null);
   expect(document.getElementById('location-feedback')).toBeNull();
 });
@@ -193,4 +195,25 @@ test('returning after a failed request retries without requiring a full reload',
   expect(geolocation.watchPosition).toHaveBeenCalledTimes(2);
   attempts.at(-1)!.success(fix());
   expect(document.getElementById('location-feedback')).toBeNull();
+});
+
+test('only the first GPS fix focuses nearby; routine fixes preserve the rider’s viewport', () => {
+  attempts.at(-1)!.error(error(3));
+  document
+    .querySelector<HTMLButtonElement>('.location-feedback__retry')!
+    .click();
+  mockMap.setCenter.mockClear();
+  mockMap.setZoom.mockClear();
+  attempts.at(-1)!.success(fix());
+  expect(mockMap.setCenter).toHaveBeenCalledTimes(1);
+  expect(mockMap.setZoom.mock.calls[0][0]).toBeGreaterThan(15);
+  mockMap.setCenter.mockClear();
+  mockMap.setZoom.mockClear();
+  attempts.at(-1)!.success(fix(40.451, -79.951));
+  expect(mockMap.setCenter).not.toHaveBeenCalled();
+  expect(mockMap.setZoom).not.toHaveBeenCalled();
+  expect(mockFilter.setUserLocation).toHaveBeenLastCalledWith({
+    lat: 40.451,
+    lng: -79.951
+  });
 });

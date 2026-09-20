@@ -211,6 +211,9 @@ export class GoogleMapProvider implements IMapProvider {
         animation.frameId = requestAnimationFrame(step);
       },
       setVisible: (visible: boolean) => marker.setVisible(visible),
+      setTitle: (title: string) => {
+        if (this.markers.get(id) === marker) marker.setTitle(title);
+      },
       setIcon: (
         icon:
           | string

@@ -1,5 +1,9 @@
 # Improvement cycles
 
+## Cycle 4 — Bus focus, delayed positions, and smooth movement
+
+Close views around the rider and selected buses, honest delayed markers, and bounded route-aware movement estimates. See the [use cases and release record](2026-09-19-bus-motion.md).
+
 ## Safari location recovery follow-up
 
 Correct location error classification, retries after settings changes, and recovery
