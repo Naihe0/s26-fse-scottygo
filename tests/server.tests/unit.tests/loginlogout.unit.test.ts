@@ -162,7 +162,7 @@ describe('LoginLogout Use Case unit tests', () => {
     const res = createMockResponse();
     const next = jest.fn() as NextFunction;
 
-    await mapController.authorize(req, res as Response, next);
+    await mapController.authenticateToken(req, res as Response, next);
 
     // This represents post-logout behavior: token is absent, access is denied.
     expect(res.status).toHaveBeenCalledWith(401);

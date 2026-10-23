@@ -1,29 +1,50 @@
-// Extracts all the secrets and environment variables from the .env file
+// Configuration from environment variables (loaded from .env when present).
+// See .env.template for descriptions.
 
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-export const STAGE: string = process.env.STAGE ?? 'DEV'; // defaults to DEV
+export const STAGE: string = process.env.STAGE ?? 'DEV';
 
-export const DB_CONN_STR: string =
+export const ENV: string = process.env.ENV ?? 'LOCAL';
+
+const STAGE_DATABASE =
   STAGE === 'DEV'
-    ? (process.env.DB_URL ?? 'unknown') + (process.env.DEV_DB ?? 'unknown')
+    ? process.env.DEV_DB
     : STAGE === 'PROD'
-      ? (process.env.DB_URL ?? 'unknown') + (process.env.PROD_DB ?? 'unknown')
-      : 'unknown';
+      ? process.env.PROD_DB
+      : undefined;
 
-// PORT is effective only for localhost
-// ignored by codespaces and Render, which have their default ports
-export const PORT: number = process.env.PORT ? Number(process.env.PORT) : 1000; // defaults to 1000
+/** DB_URL plus the stage's database suffix, concatenated exactly. */
+export const DB_CONN_STR: string =
+  STAGE === 'DEV' || STAGE === 'PROD'
+    ? (process.env.DB_URL ?? 'unknown') + (STAGE_DATABASE ?? 'unknown')
+    : 'unknown';
 
-// Optional interface binding, e.g. 127.0.0.1 for local-only development.
-// Hosted deployments retain Node's default when this is unset.
+/** Hosting platforms such as Render supply PORT themselves. */
+export const PORT: number = process.env.PORT ? Number(process.env.PORT) : 8080;
+
+/** Optional interface binding, e.g. 127.0.0.1 for local-only development. */
 export const BIND_ADDRESS: string | undefined = process.env.BIND_ADDRESS;
+
+/** Public origin of this deployment, used in log output. */
+export const HOST: string =
+  (ENV === 'RENDER'
+    ? process.env.RENDER_HOST
+    : ENV === 'CODESPACE'
+      ? process.env.CODESPACE_HOST
+      : ENV === 'LOCAL'
+        ? process.env.LOCAL_HOST
+        : undefined) ?? 'unknown';
 
 export const JWT_KEY: string = process.env.JWT_KEY ?? 'someDefaultKey';
 
-// Used only when creating the initial admin; existing accounts are unchanged.
+/** Production tokens expire; development tokens never do. */
+export const JWT_EXP: string =
+  STAGE === 'PROD' ? (process.env.JWT_EXP ?? '365d') : 'never';
+
+/** Used only when creating the initial admin; existing accounts are unchanged. */
 export const INITIAL_ADMIN_PASSWORD: string =
   process.env.INITIAL_ADMIN_PASSWORD || 'admin';
 
@@ -48,39 +69,20 @@ if (STAGE === 'PROD') {
   }
 }
 
-export const JWT_EXP: string =
-  STAGE === 'PROD' ? (process.env.JWT_EXP ?? '365d') : 'never'; // defaults to never
+/** Browser Google Maps key; restrict it to approved origins and APIs. */
+export const GOOGLE_MAPS_KEY: string = process.env.GOOGLE_MAPS_KEY ?? '';
 
-export const ENV = process.env.ENV ?? 'LOCAL'; // defaults to LOCAL
-
-// Email configuration for Brevo (formerly Sendinblue) API
+// Optional integrations. Each is disabled when its key is empty.
 export const BREVO_API_KEY: string = process.env.BREVO_API_KEY ?? '';
 export const EMAIL_USER: string = process.env.EMAIL_USER ?? '';
 export const EMAIL_FROM_NAME: string =
   process.env.EMAIL_FROM_NAME ?? 'ScottyGO';
 
-// TrueTime API (Pittsburgh Regional Transit)
 export const TRUETIME_KEY: string = process.env.TRUETIME_KEY ?? '';
 export const TRUETIME_BASE_URL: string =
   process.env.TRUETIME_BASE_URL ??
   'https://truetime.portauthority.org/bustime/api/v3';
 
-// Note: Tripshot API for CMU Shuttle is public and doesn't require API keys
-// The base URL is hardcoded in the tripshot.service.ts file
-
-// Gemini API (LLM content moderation for TUC3)
 export const GEMINI_API_KEY: string = process.env.GEMINI_API_KEY ?? '';
 export const GEMINI_MODEL: string =
   process.env.GEMINI_MODEL ?? 'gemini-3.1-flash-lite-preview';
-
-// Set the HOST URL depending on the build environment and where the app is served from
-export const HOST: string =
-  ENV === 'RENDER'
-    ? (process.env.RENDER_HOST ?? 'unknown')
-    : ENV === 'CODESPACE'
-      ? (process.env.CODESPACE_HOST ?? 'unknown')
-      : ENV === 'LOCAL'
-        ? (process.env.LOCAL_HOST ?? 'unknown')
-        : 'unknown';
-
-export const GOOGLE_MAPS_KEY: string = process.env.GOOGLE_MAPS_KEY ?? '';

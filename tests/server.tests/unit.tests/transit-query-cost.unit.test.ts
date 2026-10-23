@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import DAC, { type IDatabase } from '../../../server/db/dac';
 import { TransitModel } from '../../../server/models/transit.model';
 import trueTimeService from '../../../server/services/truetime.service';
-import BusController from '../../../server/controllers/transit.controller';
+import TransitController from '../../../server/controllers/transit.controller';
 import type {
   IDetour,
   IDetourGeometry
@@ -290,7 +290,7 @@ test('oversized HTTP radius returns 400 before entering the model', async () => 
     });
   const res = { status: jest.fn(), json: jest.fn() };
   res.status.mockReturnValue(res);
-  const controller = BusController.getInstance('/transit') as unknown as {
+  const controller = TransitController.getInstance('/transit') as unknown as {
     getNearbyStops(req: Request, res: Response): Promise<void>;
   };
   await controller.getNearbyStops(

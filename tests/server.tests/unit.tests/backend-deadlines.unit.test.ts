@@ -1,71 +1,71 @@
 import { transit_realtime } from 'gtfs-realtime-bindings';
-import alertsService from '../../../server/services/alerts.service';
+import { AlertsService } from '../../../server/services/alerts.service';
 import dotenv from 'dotenv';
 
-const internal = alertsService as unknown as {
-  fetchAlerts(): Promise<void>;
-  fetchInProgress: boolean;
-  isStopping: boolean;
-  alerts: unknown[];
-};
+const ALERT_POLL_MS = 5 * 60_000;
 
-afterEach(() => {
-  alertsService.stop();
-  alertsService.onAlertsChanged = null;
-  jest.restoreAllMocks();
-  jest.useRealTimers();
-});
-
-test('a hung alerts request reaches its deadline and allows the next poll', async () => {
-  jest.useFakeTimers();
-  internal.isStopping = false;
-  jest.spyOn(console, 'error').mockImplementation(() => undefined);
-  const request = jest.spyOn(global, 'fetch').mockImplementation(
-    (_url, options) =>
-      new Promise((_resolve, reject) => {
-        options?.signal?.addEventListener('abort', () =>
-          reject(new DOMException('aborted', 'AbortError'))
-        );
-      })
-  );
-  const pending = internal.fetchAlerts();
-  await jest.advanceTimersByTimeAsync(15_000);
-  await pending;
-  expect(alertsService.isHealthy()).toBe(false);
-  expect(alertsService.getLastError()).toContain('timed out');
-  expect(internal.fetchInProgress).toBe(false);
-
-  const body = transit_realtime.FeedMessage.encode({
+function alertFeed(entity: transit_realtime.IFeedEntity[] = []): Response {
+  const bytes = transit_realtime.FeedMessage.encode({
     header: { gtfsRealtimeVersion: '2.0' },
-    entity: []
+    entity
   }).finish();
-  request.mockResolvedValue(new Response(body));
-  await internal.fetchAlerts();
-  expect(alertsService.isHealthy()).toBe(true);
-  expect(request).toHaveBeenCalledTimes(2);
-});
+  return new Response(bytes.slice());
+}
 
-test('identical consecutive alerts emit one change event', async () => {
-  internal.isStopping = false;
-  internal.alerts = [];
-  jest.spyOn(console, 'log').mockImplementation(() => undefined);
-  const body = transit_realtime.FeedMessage.encode({
-    header: { gtfsRealtimeVersion: '2.0' },
-    entity: [
-      {
-        id: 'alert-1',
-        alert: { headerText: { translation: [{ text: 'Test delay' }] } }
-      }
-    ]
-  }).finish();
-  jest
-    .spyOn(global, 'fetch')
-    .mockImplementation(async () => new Response(body));
-  const changed = jest.fn();
-  alertsService.onAlertsChanged = changed;
-  await internal.fetchAlerts();
-  await internal.fetchAlerts();
-  expect(changed).toHaveBeenCalledTimes(1);
+describe('service alert polling', () => {
+  let service: AlertsService;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    service = new AlertsService();
+  });
+
+  afterEach(() => {
+    service.stop();
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+
+  test('a hung alerts request reaches its deadline and allows the next poll', async () => {
+    const request = jest.spyOn(global, 'fetch').mockImplementation(
+      (_url, options) =>
+        new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          );
+        })
+    );
+    service.start();
+    await jest.advanceTimersByTimeAsync(15_000);
+    expect(service.isHealthy()).toBe(false);
+    expect(service.getLastError()).toContain('timed out');
+
+    request.mockResolvedValue(alertFeed());
+    await jest.advanceTimersByTimeAsync(ALERT_POLL_MS);
+    expect(service.isHealthy()).toBe(true);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  test('identical consecutive alerts emit one change event', async () => {
+    jest
+      .spyOn(global, 'fetch')
+      .mockImplementation(async () =>
+        alertFeed([
+          {
+            id: 'alert-1',
+            alert: { headerText: { translation: [{ text: 'Test delay' }] } }
+          }
+        ])
+      );
+    const changed = jest.fn();
+    service.onAlertsChanged = changed;
+    service.start();
+    await jest.advanceTimersByTimeAsync(ALERT_POLL_MS);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
 });
 
 test.each([

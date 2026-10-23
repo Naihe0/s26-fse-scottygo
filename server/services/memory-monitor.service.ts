@@ -1,4 +1,10 @@
+// Samples process memory, logs notable changes, persists samples once the
+// database is connected, and summarizes persisted history for diagnostics.
+
 import DAC, { IMemorySampleRecord } from '../db/dac';
+import { createLogger, errorMessage } from '../logger';
+
+const log = createLogger('MemoryMonitor');
 
 interface IMemorySample {
   timestamp: string;
@@ -30,8 +36,12 @@ const CONSOLE_LOG_INTERVAL_MS = 30_000;
 const WARNING_RSS_MB = 420;
 const CRITICAL_RSS_MB = 460;
 
+function roundOneDecimal(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
 function toMb(bytes: number): number {
-  return Math.round((bytes / 1048576) * 10) / 10;
+  return roundOneDecimal(bytes / 1048576);
 }
 
 function createSample(): IMemorySample {
@@ -45,10 +55,6 @@ function createSample(): IMemorySample {
     arrayBuffersMb: toMb(mem.arrayBuffers),
     uptimeSec: Math.round(process.uptime())
   };
-}
-
-function roundOneDecimal(value: number): number {
-  return Math.round(value * 10) / 10;
 }
 
 class MemoryMonitorService {
@@ -117,11 +123,7 @@ class MemoryMonitorService {
     const summary = this.getSummary();
     this.logSummaryIfNeeded(reason, summary);
     this.persistSample(reason, summary).catch((err) => {
-      console.warn(
-        `[MemoryMonitor ${sample.timestamp}] Failed to persist sample: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
+      log.warn(`Failed to persist sample: ${errorMessage(err)}`);
     });
 
     return sample;
@@ -222,9 +224,7 @@ class MemoryMonitorService {
       rssSlopeMbPerMin: summary.rssSlopeMbPerMin,
       heapUsedSlopeMbPerMin: summary.heapUsedSlopeMbPerMin
     };
-    console.log(
-      `[MemoryMonitor ${summary.latest.timestamp}] ${JSON.stringify(logPayload)}`
-    );
+    log.info(JSON.stringify(logPayload));
 
     this.lastConsoleLogAtMs = nowMs;
     this.lastWarningState = summary.warning;
@@ -257,6 +257,90 @@ class MemoryMonitorService {
 
     await DAC.db.saveMemorySample(record);
   }
+}
+
+function maxBy<T>(items: T[], value: (item: T) => number): T {
+  return items.reduce((max, item) => (value(item) > value(max) ? item : max));
+}
+
+/** Peak RSS and sample count for each capture reason, highest peaks first. */
+function topReasonsByPeakRss(samples: IMemorySampleRecord[], limit: number) {
+  const stats = new Map<string, { count: number; maxRssMb: number }>();
+  for (const sample of samples) {
+    const entry = stats.get(sample.reason) ?? { count: 0, maxRssMb: 0 };
+    entry.count += 1;
+    entry.maxRssMb = Math.max(entry.maxRssMb, sample.rssMb);
+    stats.set(sample.reason, entry);
+  }
+  return [...stats.entries()]
+    .map(([reason, entry]) => ({ reason, ...entry }))
+    .sort((a, b) => b.maxRssMb - a.maxRssMb)
+    .slice(0, limit);
+}
+
+function likelyCause(peakReason: string): string {
+  if (
+    peakReason === 'transit.refreshAllCaches.complete' ||
+    peakReason === 'gtfs.load.complete'
+  )
+    return 'GTFS static feed load/refresh is the dominant memory spike phase.';
+  if (peakReason === 'interval')
+    return 'Steady-state growth indicates retained runtime memory under load.';
+  return `Peak usage aligns with phase: ${peakReason}`;
+}
+
+/** Diagnostic summary of persisted samples, given oldest first. */
+export function summarizeMemorySamples(samples: IMemorySampleRecord[]) {
+  if (samples.length === 0) {
+    return {
+      sampleCount: 0,
+      likelyCause: 'No data yet',
+      recommendation:
+        'Wait for at least a few monitor samples, then re-check this endpoint.'
+    };
+  }
+
+  const oldest = samples[0];
+  const latest = samples[samples.length - 1];
+  const maxRss = maxBy(samples, (s) => s.rssMb);
+  const maxHeap = maxBy(samples, (s) => s.heapUsedMb);
+  const minutes = Math.max(
+    (new Date(latest.timestamp).getTime() -
+      new Date(oldest.timestamp).getTime()) /
+      60_000,
+    0.001
+  );
+
+  return {
+    sampleCount: samples.length,
+    timeRange: { from: oldest.timestamp, to: latest.timestamp },
+    rss: {
+      latestMb: latest.rssMb,
+      avgMb: roundOneDecimal(
+        samples.reduce((sum, s) => sum + s.rssMb, 0) / samples.length
+      ),
+      maxMb: maxRss.rssMb,
+      maxAt: maxRss.timestamp,
+      maxReason: maxRss.reason,
+      slopeMbPerMin: roundOneDecimal((latest.rssMb - oldest.rssMb) / minutes)
+    },
+    heap: {
+      latestUsedMb: latest.heapUsedMb,
+      maxUsedMb: maxHeap.heapUsedMb,
+      maxAt: maxHeap.timestamp,
+      maxReason: maxHeap.reason
+    },
+    flags: {
+      warningCount: samples.filter((s) => s.warning).length,
+      criticalCount: samples.filter((s) => s.critical).length
+    },
+    likelyCause: likelyCause(maxRss.reason),
+    recommendation:
+      maxRss.rssMb >= CRITICAL_RSS_MB
+        ? 'Reduce startup and refresh peak memory (e.g., lower heap cap, split/cache refresh work, and verify poller overlap guards).'
+        : 'Monitor trend slope and critical counts; overflow may be tied to short-lived spikes during refresh windows.',
+    topReasonsByPeakRss: topReasonsByPeakRss(samples, 5)
+  };
 }
 
 const memoryMonitorService = new MemoryMonitorService();

@@ -1,17 +1,19 @@
-export {};
+// Subscriptions page: saved routes, per-route popup muting, and the
+// add-route sheet.
 
 import './components/app-header';
 import './components/live-notifications';
 import { escapeHtml } from './utils/html';
+import { showToast } from './utils/toast';
+import { isRouteMuted } from './utils/muted-routes';
 import {
   buildRouteDisplayMap,
   getRouteDisplay,
   normalizeRouteId,
   type IRouteDisplayMeta
 } from './utils/route-display';
-
-const MAX_SUBSCRIPTIONS = 10;
-const MUTED_ROUTES_KEY = 'scottygo_muted_routes';
+import { authHeaders, getToken } from './services/session';
+import { MAX_SUBSCRIPTIONS_PER_USER } from '../../common/limits';
 
 function routeIdsEqual(a: string, b: string): boolean {
   return normalizeRouteId(a) === normalizeRouteId(b);
@@ -21,47 +23,6 @@ interface Subscription {
   _id?: string;
   routeId: string;
   createdAt: string;
-}
-
-// ── Mute helpers (mirrors live-notifications.ts) ───────────────────────────────
-
-function getMutedRoutes(): Set<string> {
-  try {
-    const arr = JSON.parse(localStorage.getItem(MUTED_ROUTES_KEY) ?? '[]');
-    return new Set(Array.isArray(arr) ? arr : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function saveMutedRoutes(routes: Set<string>): void {
-  localStorage.setItem(MUTED_ROUTES_KEY, JSON.stringify([...routes]));
-}
-
-// ── Auth ───────────────────────────────────────────────────────────────────────
-
-function getToken(): string {
-  return localStorage.getItem('token') ?? '';
-}
-
-function authHeaders(): Record<string, string> {
-  return { Authorization: `Bearer ${getToken()}` };
-}
-
-// ── Toast ──────────────────────────────────────────────────────────────────────
-
-function showToast(message: string): void {
-  const toast = document.createElement('div');
-  toast.className = 'toast-notification';
-  toast.textContent = message;
-  toast.style.cssText = `
-    position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
-    background:rgba(0,0,0,0.8);color:#fff;padding:12px 24px;
-    border-radius:8px;z-index:10000;font-size:14px;
-    box-shadow:0 4px 12px rgba(0,0,0,0.3);
-  `;
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 4000);
 }
 
 // ── State ──────────────────────────────────────────────────────────────────────
@@ -180,9 +141,9 @@ function updateCount(): void {
   const labelEl = btn.querySelector('span:first-child')!;
   const countEl = document.getElementById('route-count')!;
   const dividerEl = btn.querySelector('.add-route-divider') as HTMLElement;
-  const atLimit = subscriptions.length >= MAX_SUBSCRIPTIONS;
+  const atLimit = subscriptions.length >= MAX_SUBSCRIPTIONS_PER_USER;
 
-  countEl.textContent = `${subscriptions.length}/${MAX_SUBSCRIPTIONS}`;
+  countEl.textContent = `${subscriptions.length}/${MAX_SUBSCRIPTIONS_PER_USER}`;
   labelEl.textContent = atLimit ? 'Limit reached' : '+ Add route';
   dividerEl.style.display = atLimit ? 'none' : '';
   btn.classList.toggle('is-disabled', atLimit);
@@ -199,8 +160,7 @@ function formatAgo(isoTimestamp: string): string {
 }
 
 function createCard(sub: Subscription): HTMLLIElement {
-  const normalizedRouteId = normalizeRouteId(sub.routeId);
-  const muted = getMutedRoutes().has(normalizedRouteId);
+  const muted = isRouteMuted(sub.routeId);
   const display = getRouteDisplay(sub.routeId, routeDisplayById);
   const li = document.createElement('li');
   li.classList.add('subscription-card');
@@ -266,22 +226,13 @@ function createCard(sub: Subscription): HTMLLIElement {
   // Bell toggle — mute/unmute popups (A6), no server call
   const bellBtn = li.querySelector<HTMLButtonElement>('.card-bell')!;
   bellBtn.addEventListener('click', () => {
-    const mutedRoutes = getMutedRoutes();
-    const nowMuted = !mutedRoutes.has(normalizedRouteId);
-    if (nowMuted) {
-      mutedRoutes.add(normalizedRouteId);
-      document.dispatchEvent(
-        new CustomEvent('notifRouteMute', { detail: { routeId: sub.routeId } })
-      );
-    } else {
-      mutedRoutes.delete(normalizedRouteId);
-      document.dispatchEvent(
-        new CustomEvent('notifRouteUnmute', {
-          detail: { routeId: sub.routeId }
-        })
-      );
-    }
-    saveMutedRoutes(mutedRoutes);
+    // The live-notifications module persists the choice and updates rooms.
+    const nowMuted = !isRouteMuted(sub.routeId);
+    document.dispatchEvent(
+      new CustomEvent(nowMuted ? 'notifRouteMute' : 'notifRouteUnmute', {
+        detail: { routeId: sub.routeId }
+      })
+    );
     bellBtn.classList.toggle('muted', nowMuted);
     bellBtn.innerHTML = nowMuted ? bellOffSVG : bellOnSVG;
     bellBtn.setAttribute(
@@ -346,7 +297,7 @@ async function toggleSubscriptionFromSheet(routeId: string): Promise<void> {
     return;
   }
 
-  if (subscriptions.length >= MAX_SUBSCRIPTIONS) return;
+  if (subscriptions.length >= MAX_SUBSCRIPTIONS_PER_USER) return;
 
   const { ok, error } = await apiSubscribe(routeId);
   if (ok) {
@@ -437,7 +388,7 @@ function initSheet(): void {
   }
 
   addBtn.addEventListener('click', () => {
-    if (subscriptions.length >= MAX_SUBSCRIPTIONS) return;
+    if (subscriptions.length >= MAX_SUBSCRIPTIONS_PER_USER) return;
     openSheet();
   });
   overlay.addEventListener('click', closeSheet);
@@ -469,8 +420,7 @@ function initSheet(): void {
 // ── Init ───────────────────────────────────────────────────────────────────────
 
 async function init(): Promise<void> {
-  const token = localStorage.getItem('token');
-  if (!token) {
+  if (!getToken()) {
     window.location.replace('/auth');
     return;
   }

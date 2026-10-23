@@ -1,6 +1,5 @@
-// Model for live notifications (TUC3)
-// Handles subscriptions, bus reports, notifications, and last-known bus status.
-// Only this layer accesses the database directly.
+// Live notification rules: route subscriptions, bus condition reports, and
+// the rider notifications published when a bus's reported condition changes.
 
 import DAC from '../db/dac';
 import { randomUUID as uuidV4 } from 'node:crypto';
@@ -11,26 +10,40 @@ import {
   ILastKnownBusStatus,
   ICrowdedness,
   IPrioritySeating,
-  IBusCondition
+  IBusCondition,
+  CROWDEDNESS_LEVELS,
+  PRIORITY_SEATING_STATES,
+  BUS_CONDITIONS
 } from '../../common/transit.interface';
-import { IAppError } from '../../common/server.responses';
+import { haversineMeters, METERS_PER_MILE } from '../../common/geo';
+import {
+  MAX_IDENTIFIER_LENGTH,
+  MAX_REPORT_COMMENT_LENGTH
+} from '../../common/limits';
+import { clientError } from '../errors';
 import moderationService from '../services/moderation.service';
-import { haversineDistanceMeters } from './transit.model';
-import { IVehicle } from '../../common/transit.interface';
 import notificationSourcesService from '../services/notification-sources.service';
+import { isValidCoordinate } from '../services/transit-validation';
 
-/** Radius limit for proximity check in miles (R9). */
+/** A rider must be this close to the bus to report on it. */
 const PROXIMITY_LIMIT_MILES = 0.5;
 
-/** Valid enum values for report field validation. */
-const VALID_CROWDEDNESS: ICrowdedness[] = [
-  'Empty',
-  'Few Seats Taken',
-  'Standing Room',
-  'Packed'
-];
-const VALID_PRIORITY_SEATING: IPrioritySeating[] = ['Available', 'Occupied'];
-const VALID_CONDITION: IBusCondition[] = ['Clean', 'Dirty', 'Average'];
+/** Report condition fields and the values each accepts. */
+const CONDITION_FIELDS = {
+  crowdedness: CROWDEDNESS_LEVELS,
+  prioritySeating: PRIORITY_SEATING_STATES,
+  condition: BUS_CONDITIONS
+} as const satisfies Record<keyof ILastKnownBusStatus, readonly string[]>;
+
+const CONDITION_LABELS: Record<keyof ILastKnownBusStatus, string> = {
+  crowdedness: 'Crowdedness',
+  prioritySeating: 'Priority seating',
+  condition: 'Condition'
+};
+
+type ConditionField = keyof typeof CONDITION_FIELDS;
+
+const CONDITION_FIELD_NAMES = Object.keys(CONDITION_FIELDS) as ConditionField[];
 
 type ISubmitReportData = {
   vid: string;
@@ -41,256 +54,158 @@ type ISubmitReportData = {
   comment?: string;
   lat: number;
   lon: number;
+  /** Set by the server for administrators, never by clients. */
   bypassProximityCheck?: boolean;
 };
 
-type IModerationResult = {
+type ModerationOutcome = {
   commentFlagged: boolean;
   commentFlagCategory?: 'inappropriate' | 'irrelevant';
-  moderatedComment?: string;
+  /** The comment to publish, absent when empty or flagged. */
+  publishedComment?: string;
 };
 
-export class NotificationModel {
-  /**
-   * In-memory last-known status per vehicle (R12).
-   * Rebuilt from latest reports on startup.
-   */
-  private static lastKnownStatus = new Map<string, ILastKnownBusStatus>();
+const isIdentifier = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.trim().length > 0 &&
+  value.length <= MAX_IDENTIFIER_LENGTH;
 
-  private static initialized = false;
-
-  /** Return all valid route IDs for TUC3 subscriptions (PRT + CMU). */
-  private static async getAllSubscribableRouteIds(): Promise<Set<string>> {
-    return notificationSourcesService.getSubscribableRouteIds();
+function validateReportData(data: ISubmitReportData): void {
+  if (!data.vid || !data.routeId || data.lat == null || data.lon == null) {
+    throw clientError(
+      'MissingParameter',
+      'vid, routeId, lat, and lon are required.'
+    );
   }
-
-  /** Find a live vehicle for the given route and bus ID (case-insensitive). */
-  private static async findLiveVehicle(
-    routeId: string,
-    vid: string
-  ): Promise<IVehicle | null> {
-    const vehicles =
-      await notificationSourcesService.getVehiclesForRoute(routeId);
-
-    const wanted = vid.trim().toLowerCase();
-    return vehicles.find((v) => v.vid.trim().toLowerCase() === wanted) ?? null;
+  if (
+    !isIdentifier(data.vid) ||
+    !isIdentifier(data.routeId) ||
+    !isValidCoordinate(data.lat, data.lon) ||
+    (data.comment !== undefined &&
+      (typeof data.comment !== 'string' ||
+        data.comment.length > MAX_REPORT_COMMENT_LENGTH))
+  ) {
+    throw clientError(
+      'InvalidReportField',
+      'Use valid route/bus IDs, numeric coordinates, and a comment of at most 200 characters.'
+    );
   }
-
-  // ── Initialization ─────────────────────────────────────────────────
-
-  /**
-   * Rebuild the in-memory lastKnownStatus map from the most recent report
-   * per vehicle stored in MongoDB. Called once during server startup.
-   */
-  static async initialize(): Promise<void> {
-    if (NotificationModel.initialized) return;
-
-    try {
-      // We only need the latest report per vehicle, but we don't have a
-      // dedicated aggregation helper in the DAC contract, so we iterate
-      // through reports. This is a best-effort rebuild; the map will self-
-      // correct as new reports arrive.
-      NotificationModel.initialized = true;
-      console.log(
-        `[NotificationModel ${new Date().toISOString()}] Last-known bus status map initialized`
-      );
-    } catch (err) {
-      console.error(
-        `[NotificationModel ${new Date().toISOString()}] Failed to initialize last-known status:`,
-        err
+  if (
+    CONDITION_FIELD_NAMES.every((field) => !data[field]) &&
+    !data.comment?.trim()
+  ) {
+    throw clientError(
+      'EmptyReport',
+      'Please answer at least one question to submit a report.'
+    );
+  }
+  for (const field of CONDITION_FIELD_NAMES) {
+    const value = data[field];
+    const allowed: readonly string[] = CONDITION_FIELDS[field];
+    if (value !== undefined && value !== '' && !allowed.includes(value)) {
+      throw clientError(
+        'InvalidReportField',
+        `Invalid ${field} value. Must be one of: ${allowed.join(', ')}`
       );
     }
   }
+}
+
+async function enforceProximityRule(data: ISubmitReportData): Promise<void> {
+  const wanted = data.vid.trim().toLowerCase();
+  const vehicles = await notificationSourcesService.getVehiclesForRoute(
+    data.routeId
+  );
+  const bus = vehicles.find((v) => v.vid.trim().toLowerCase() === wanted);
+  if (!bus) {
+    throw clientError(
+      'VehicleNotFound',
+      `Vehicle ${data.vid} not found on route ${data.routeId}.`
+    );
+  }
+  const distanceMiles =
+    haversineMeters(
+      { lat: data.lat, lng: data.lon },
+      { lat: bus.lat, lng: bus.lon }
+    ) / METERS_PER_MILE;
+  if (!data.bypassProximityCheck && distanceMiles > PROXIMITY_LIMIT_MILES) {
+    throw clientError(
+      'ProximityViolation',
+      'You need to be near this bus to submit a report.'
+    );
+  }
+}
+
+async function moderateComment(
+  comment: string | undefined
+): Promise<ModerationOutcome> {
+  if (!comment) return { commentFlagged: false };
+  const result = await moderationService.moderate(comment);
+  return result.flagged
+    ? { commentFlagged: true, commentFlagCategory: result.category }
+    : { commentFlagged: false, publishedComment: comment };
+}
+
+export class NotificationModel {
+  /**
+   * Last reported conditions per vehicle, used to publish only changes.
+   * Kept in memory: after a restart the next report for a bus publishes.
+   */
+  private static lastKnownStatus = new Map<string, ILastKnownBusStatus>();
 
   // ── Subscriptions ──────────────────────────────────────────────────
 
   static async getSubscriptions(userId: string): Promise<ISubscription[]> {
-    return await DAC.db.getSubscriptionsByUserId(userId);
+    return DAC.db.getSubscriptionsByUserId(userId);
   }
 
+  /** Save a route; uniqueness and the per-user limit are enforced by the DB. */
   static async subscribe(
     userId: string,
     routeId: string
   ): Promise<ISubscription> {
-    // Validate that the route exists
-    const routeIds = await NotificationModel.getAllSubscribableRouteIds();
-    const routeExists = routeIds.has(routeId);
-    if (!routeExists) {
-      const error: IAppError = {
-        type: 'ClientError',
-        name: 'RouteNotFound',
-        message: `Route ${routeId} does not exist.`
-      };
-      throw error;
+    const routeIds = await notificationSourcesService.getSubscribableRouteIds();
+    if (!routeIds.has(routeId)) {
+      throw clientError('RouteNotFound', `Route ${routeId} does not exist.`);
     }
-
-    const subscription: ISubscription = {
+    return DAC.db.saveSubscription({
       _id: uuidV4(),
       userId,
       routeId,
       createdAt: new Date().toISOString()
-    };
-
-    // Route uniqueness and the ten-route limit are enforced atomically by the DB.
-    return await DAC.db.saveSubscription(subscription);
+    });
   }
 
   static async unsubscribe(userId: string, routeId: string): Promise<void> {
-    const deleted = await DAC.db.deleteSubscription(userId, routeId);
-    if (!deleted) {
-      const error: IAppError = {
-        type: 'ClientError',
-        name: 'SubscriptionNotFound',
-        message: `You are not subscribed to Route ${routeId}.`
-      };
-      throw error;
+    if (!(await DAC.db.deleteSubscription(userId, routeId))) {
+      throw clientError(
+        'SubscriptionNotFound',
+        `You are not subscribed to Route ${routeId}.`
+      );
     }
   }
 
-  private static assertReportHasRequiredFields(data: ISubmitReportData): void {
-    if (!data.vid || !data.routeId || data.lat == null || data.lon == null) {
-      const error: IAppError = {
-        type: 'ClientError',
-        name: 'MissingParameter',
-        message: 'vid, routeId, lat, and lon are required.'
-      };
-      throw error;
-    }
-    if (
-      typeof data.vid !== 'string' ||
-      !data.vid.trim() ||
-      data.vid.length > 128 ||
-      typeof data.routeId !== 'string' ||
-      !data.routeId.trim() ||
-      data.routeId.length > 128 ||
-      typeof data.lat !== 'number' ||
-      !Number.isFinite(data.lat) ||
-      Math.abs(data.lat) > 90 ||
-      typeof data.lon !== 'number' ||
-      !Number.isFinite(data.lon) ||
-      Math.abs(data.lon) > 180 ||
-      (data.comment !== undefined &&
-        (typeof data.comment !== 'string' || data.comment.length > 200))
-    ) {
-      throw {
-        type: 'ClientError',
-        name: 'InvalidReportField',
-        message:
-          'Use valid route/bus IDs, numeric coordinates, and a comment of at most 200 characters.'
-      } as IAppError;
-    }
-  }
+  // ── Bus reports ────────────────────────────────────────────────────
 
-  private static assertReportHasAtLeastOneAnswer(
-    data: ISubmitReportData
-  ): void {
-    if (
-      !data.crowdedness &&
-      !data.prioritySeating &&
-      !data.condition &&
-      !data.comment?.trim()
-    ) {
-      const error: IAppError = {
-        type: 'ClientError',
-        name: 'EmptyReport',
-        message: 'Please answer at least one question to submit a report.'
-      };
-      throw error;
-    }
-  }
-
-  private static assertValidEnumValue(
-    fieldName: string,
-    value: string | undefined,
-    validValues: readonly string[]
-  ): void {
-    if (value === undefined || value === '' || validValues.includes(value))
-      return;
-
-    const error: IAppError = {
-      type: 'ClientError',
-      name: 'InvalidReportField',
-      message: `Invalid ${fieldName} value. Must be one of: ${validValues.join(', ')}`
-    };
-    throw error;
-  }
-
-  private static validateReportData(data: ISubmitReportData): void {
-    NotificationModel.assertReportHasRequiredFields(data);
-    NotificationModel.assertReportHasAtLeastOneAnswer(data);
-
-    NotificationModel.assertValidEnumValue(
-      'crowdedness',
-      data.crowdedness,
-      VALID_CROWDEDNESS
-    );
-    NotificationModel.assertValidEnumValue(
-      'prioritySeating',
-      data.prioritySeating,
-      VALID_PRIORITY_SEATING
-    );
-    NotificationModel.assertValidEnumValue(
-      'condition',
-      data.condition,
-      VALID_CONDITION
-    );
-  }
-
-  private static async enforceProximityRule(
-    data: ISubmitReportData
-  ): Promise<void> {
-    const bus = await NotificationModel.findLiveVehicle(data.routeId, data.vid);
-    if (!bus) {
-      const error: IAppError = {
-        type: 'ClientError',
-        name: 'VehicleNotFound',
-        message: `Vehicle ${data.vid} not found on route ${data.routeId}.`
-      };
-      throw error;
-    }
-
-    const distanceMiles =
-      haversineDistanceMeters(data.lat, data.lon, bus.lat, bus.lon) / 1609.344;
-    if (!data.bypassProximityCheck && distanceMiles > PROXIMITY_LIMIT_MILES) {
-      const error: IAppError = {
-        type: 'ClientError',
-        name: 'ProximityViolation',
-        message: 'You need to be near this bus to submit a report.'
-      };
-      throw error;
-    }
-  }
-
-  private static async moderateReportComment(
-    comment: string | undefined
-  ): Promise<IModerationResult> {
-    if (!comment) {
-      return {
-        commentFlagged: false,
-        moderatedComment: undefined
-      };
-    }
-
-    const moderationResult = await moderationService.moderate(comment);
-    if (moderationResult.flagged) {
-      return {
-        commentFlagged: true,
-        commentFlagCategory: moderationResult.category,
-        moderatedComment: undefined
-      };
-    }
-
-    return {
-      commentFlagged: false,
-      moderatedComment: comment
-    };
-  }
-
-  private static buildBusReport(
+  /**
+   * Validate and store a bus report. A notification is created only when a
+   * condition differs from the bus's last reported value.
+   */
+  static async submitReport(
     userId: string,
     data: ISubmitReportData
-  ): IBusReport {
-    return {
+  ): Promise<{
+    report: IBusReport;
+    notification: INotification | null;
+    commentFlagged: boolean;
+    commentFlagCategory?: 'inappropriate' | 'irrelevant';
+  }> {
+    validateReportData(data);
+    await enforceProximityRule(data);
+    const { commentFlagged, commentFlagCategory, publishedComment } =
+      await moderateComment(data.comment);
+
+    const report = await DAC.db.saveBusReport({
       _id: uuidV4(),
       userId,
       vid: data.vid,
@@ -302,213 +217,73 @@ export class NotificationModel {
       lat: data.lat,
       lon: data.lon,
       createdAt: new Date().toISOString()
-    };
-  }
+    });
 
-  private static determineChangedFields(
-    data: ISubmitReportData,
-    lastStatus: ILastKnownBusStatus
-  ): string[] {
-    const changedFields: string[] = [];
-
-    if (data.crowdedness && data.crowdedness !== lastStatus.crowdedness) {
-      changedFields.push('crowdedness');
-    }
-    if (
-      data.prioritySeating &&
-      data.prioritySeating !== lastStatus.prioritySeating
-    ) {
-      changedFields.push('prioritySeating');
-    }
-    if (data.condition && data.condition !== lastStatus.condition) {
-      changedFields.push('condition');
-    }
-
-    return changedFields;
-  }
-
-  private static updateLastKnownStatus(
-    vid: string,
-    data: ISubmitReportData,
-    lastStatus: ILastKnownBusStatus
-  ): void {
-    const updatedStatus: ILastKnownBusStatus = { ...lastStatus };
-    if (data.crowdedness) {
-      updatedStatus.crowdedness = data.crowdedness as ICrowdedness;
-    }
-    if (data.prioritySeating) {
-      updatedStatus.prioritySeating = data.prioritySeating as IPrioritySeating;
-    }
-    if (data.condition) {
-      updatedStatus.condition = data.condition as IBusCondition;
-    }
-
-    NotificationModel.lastKnownStatus.set(vid, updatedStatus);
-  }
-
-  private static buildChangedFieldMessageParts(
-    changedFields: string[],
-    data: ISubmitReportData
-  ): string[] {
-    return changedFields
-      .map((field) => {
-        switch (field) {
-          case 'crowdedness':
-            return `Crowdedness changed to ${data.crowdedness}`;
-          case 'prioritySeating':
-            return `Priority seating changed to ${data.prioritySeating}`;
-          case 'condition':
-            return `Condition changed to ${data.condition}`;
-          default:
-            return '';
-        }
-      })
-      .filter(Boolean);
-  }
-
-  private static buildNotificationMessage(
-    data: ISubmitReportData,
-    changedFields: string[],
-    moderatedComment?: string
-  ): string {
-    const messageParts = NotificationModel.buildChangedFieldMessageParts(
-      changedFields,
-      data
+    const lastStatus = NotificationModel.lastKnownStatus.get(data.vid) ?? {};
+    const changedFields = CONDITION_FIELD_NAMES.filter(
+      (field) => data[field] && data[field] !== lastStatus[field]
     );
-
-    if (moderatedComment) {
-      messageParts.push(`Comment: "${moderatedComment}"`);
+    if (changedFields.length === 0) {
+      return { report, notification: null, commentFlagged, commentFlagCategory };
     }
 
-    return `Bus #${data.vid} on Route ${data.routeId} — ${messageParts.join(', ')}`;
-  }
-
-  private static buildNotification(
-    data: ISubmitReportData,
-    savedReport: IBusReport,
-    changedFields: string[],
-    moderatedComment?: string
-  ): INotification {
-    return {
+    const notification = await DAC.db.saveNotification({
       _id: uuidV4(),
       routeId: data.routeId,
       vid: data.vid,
-      message: NotificationModel.buildNotificationMessage(
+      message: NotificationModel.buildMessage(
         data,
         changedFields,
-        moderatedComment
+        publishedComment
       ),
       changedFields,
-      reportId: savedReport._id!,
+      reportId: report._id!,
       createdAt: new Date().toISOString()
-    };
-  }
+    });
 
-  // ── Bus Reports ────────────────────────────────────────────────────
-
-  /**
-   * Validate and store a bus report.
-   * Returns { report, notification?, commentFlagged }.
-   */
-  static async submitReport(
-    userId: string,
-    data: ISubmitReportData
-  ): Promise<{
-    report: IBusReport;
-    notification: INotification | null;
-    commentFlagged: boolean;
-    commentFlagCategory?: 'inappropriate' | 'irrelevant';
-  }> {
-    NotificationModel.validateReportData(data);
-    await NotificationModel.enforceProximityRule(data);
-
-    const { commentFlagged, commentFlagCategory, moderatedComment } =
-      await NotificationModel.moderateReportComment(data.comment);
-
-    const savedReport = await DAC.db.saveBusReport(
-      NotificationModel.buildBusReport(userId, data)
-    );
-
-    const lastStatus = NotificationModel.lastKnownStatus.get(data.vid) ?? {};
-    const changedFields = NotificationModel.determineChangedFields(
-      data,
-      lastStatus
-    );
-
-    // A18: If no field changed, do not publish a notification
-    if (changedFields.length === 0) {
-      return {
-        report: savedReport,
-        notification: null,
-        commentFlagged,
-        commentFlagCategory
-      };
+    // Update only after the notification is saved, so a failed save can be
+    // retried by the next identical report.
+    const updatedStatus: ILastKnownBusStatus = { ...lastStatus };
+    for (const field of changedFields) {
+      Object.assign(updatedStatus, { [field]: data[field] });
     }
+    NotificationModel.lastKnownStatus.set(data.vid, updatedStatus);
 
-    const savedNotification = await DAC.db.saveNotification(
-      NotificationModel.buildNotification(
-        data,
-        savedReport,
-        changedFields,
-        moderatedComment
-      )
-    );
-
-    // Failed persistence must not suppress a later retry of this status change.
-    NotificationModel.updateLastKnownStatus(data.vid, data, lastStatus);
-
-    return {
-      report: savedReport,
-      notification: savedNotification,
-      commentFlagged,
-      commentFlagCategory
-    };
+    return { report, notification, commentFlagged, commentFlagCategory };
   }
 
-  // ── Notifications (Strategy Pattern — R13) ─────────────────────────
+  private static buildMessage(
+    data: ISubmitReportData,
+    changedFields: ConditionField[],
+    comment?: string
+  ): string {
+    const parts = changedFields.map(
+      (field) => `${CONDITION_LABELS[field]} changed to ${data[field]}`
+    );
+    if (comment) parts.push(`Comment: "${comment}"`);
+    return `Bus #${data.vid} on Route ${data.routeId} — ${parts.join(', ')}`;
+  }
+
+  // ── Notifications ──────────────────────────────────────────────────
 
   /**
-   * Search notifications from the last 30 minutes using Strategy Pattern.
-   * Notification source selection is described in docs/API.md.
+   * Recent notifications, optionally limited to a route and/or bus, and
+   * filtered by case-insensitive message text.
    */
   static async searchNotifications(params: {
     route?: string;
     bus?: string;
     q?: string;
   }): Promise<INotification[]> {
-    const { route, bus, q } = params;
-    const hasRoute = !!route;
-    const hasBus = !!bus;
-    const hasQ = !!q;
-
-    // Build filter based on strategy
     const filter: Record<string, unknown> = {};
+    if (params.route) filter.routeId = params.route;
+    if (params.bus) filter.vid = params.bus;
 
-    if (hasRoute || hasBus) {
-      if (hasRoute) filter.routeId = route;
-      if (hasBus) filter.vid = bus;
-    }
-
-    let notifications = await DAC.db.getRecentNotifications(filter);
-
-    // TextSearchStrategy / CompositeSearchStrategy: filter by message content
-    if (hasQ) {
-      const lowerQ = q!.toLowerCase();
-      notifications = notifications.filter((n) =>
-        n.message.toLowerCase().includes(lowerQ)
-      );
-    }
-
-    return notifications;
-  }
-
-  /**
-   * Return notifications from the last 30 minutes, optionally filtered by fields
-   * like routeId and/or vid.
-   */
-  static async getRecentNotifications(
-    filter: Record<string, unknown> = {}
-  ): Promise<INotification[]> {
-    return DAC.db.getRecentNotifications(filter);
+    const notifications = await DAC.db.getRecentNotifications(filter);
+    if (!params.q) return notifications;
+    const query = params.q.toLowerCase();
+    return notifications.filter((n) =>
+      n.message.toLowerCase().includes(query)
+    );
   }
 }

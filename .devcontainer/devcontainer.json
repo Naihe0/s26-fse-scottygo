@@ -1,8 +1,7 @@
 {
   "name": "Node.js",
-  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-20-bullseye",
-  "onCreateCommand": "bash -i -c 'nvm install --lts=iron'",
-  "postCreateCommand": "npm install",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-24-bookworm",
+  "postCreateCommand": "npm ci",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -12,8 +11,7 @@
         "donjayamanne.githistory",
         "GitHub.copilot",
         "GitHub.copilot-chat",
-        "github.vscode-github-actions",
-        "ritwickdey.LiveServer"
+        "github.vscode-github-actions"
       ]
     }
   }

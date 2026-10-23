@@ -1,4 +1,4 @@
-// these are TS types required by socket.io
+// Socket.IO event contracts between the browser and the server.
 
 import { IUserAccount } from './user.interface';
 import { INotification, IServiceAlert } from './transit.interface';
@@ -21,7 +21,6 @@ export interface ISearchSuggestion {
 }
 
 export interface ServerToClientEvents {
-  ping: () => void;
   accountUpdated: (account: IUserAccount) => void;
   usernameChanged: (oldUsername: string, newUsername: string) => void;
   forceLogout: (reason: string) => void;
@@ -31,7 +30,6 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
-  ping: () => void;
   subscribeAccount: (username: string) => void;
   unsubscribeAccount: (username: string) => void;
   subscribeRoute: (data: { routeId: string }) => void;

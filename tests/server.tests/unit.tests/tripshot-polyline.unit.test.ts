@@ -1,4 +1,4 @@
-import { decodePolyline } from '../../../server/services/tripshot-api';
+import { decodePolyline } from '../../../tools/tripshot-route-summary';
 
 test('decodes the canonical route geometry example', () => {
   expect(decodePolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@')).toEqual([

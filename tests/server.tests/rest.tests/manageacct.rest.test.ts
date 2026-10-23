@@ -199,7 +199,7 @@ async function setUserPrivilege(
 function connectSocket(token: string): Promise<ClientSocket> {
   return new Promise((resolve, reject) => {
     const socket = ioClient(TEST_URL, {
-      query: { token },
+      auth: { token },
       transports: ['websocket'],
       forceNew: true,
       reconnection: false

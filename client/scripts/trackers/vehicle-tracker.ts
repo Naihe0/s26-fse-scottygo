@@ -1,25 +1,8 @@
 /**
  * Vehicle Tracker
- * Manages real-time vehicle position updates and rendering
- * Polls cached backend feeds and owns one shared display-animation loop.
+ * Polls cached backend feeds, keeps one marker per bus, and owns the shared
+ * display-animation loop for estimated movement between GPS reports.
  */
-
-/** Haversine distance in miles between two lat/lon points (R9). */
-function haversineDistanceMiles(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number
-): number {
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const R = 3958.8;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
 
 import type {
   IMapProvider,
@@ -51,12 +34,16 @@ import {
 } from '../utils/map-popup';
 import { getRouteTitle } from '../utils/route-display';
 import { showToast } from '../utils/toast';
+import { getToken } from '../services/session';
+import { haversineMeters, METERS_PER_MILE } from '../../../common/geo';
 
 const POLL_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_POSITION_AGE_MS = 90_000;
 const MAX_RETAINED_AGE_MS = 15 * 60_000;
 const MAX_CLOCK_SKEW_MS = 30_000;
+/** Riders must be this close to a bus to report on it (checked again server-side). */
+const REPORT_PROXIMITY_MILES = 0.5;
 
 export class VehicleTracker {
   private static instance: VehicleTracker;
@@ -181,7 +168,7 @@ export class VehicleTracker {
     this.currentRouteId = routeId;
     this.currentRouteColor = routeColor;
     this.routeColorMap.set(routeId, routeColor);
-    this.sessionToken = localStorage.getItem('token');
+    this.sessionToken = getToken();
     this.resumeOrPause();
   }
 
@@ -203,7 +190,7 @@ export class VehicleTracker {
     this.stopPolling();
     this.multiRouteIds = [...new Set(routeIds)];
     routeColors?.forEach((color, id) => this.routeColorMap.set(id, color));
-    this.sessionToken = localStorage.getItem('token');
+    this.sessionToken = getToken();
     this.resumeOrPause();
   }
 
@@ -228,7 +215,7 @@ export class VehicleTracker {
   private resumeOrPause(): void {
     if (!this.trackedRoutes().length) return;
     this.cancelPendingWork();
-    if (this.sessionToken !== localStorage.getItem('token')) {
+    if (this.sessionToken !== getToken()) {
       this.stopPolling();
       return;
     }
@@ -248,7 +235,7 @@ export class VehicleTracker {
   private isCurrent(generation: number): boolean {
     return (
       generation === this.pollingGeneration &&
-      this.sessionToken === localStorage.getItem('token') &&
+      this.sessionToken === getToken() &&
       !document.hidden &&
       !this.pageSuspended &&
       !!this.trackedRoutes().length
@@ -275,17 +262,12 @@ export class VehicleTracker {
       REQUEST_TIMEOUT_MS
     );
     try {
-      const state = this.stateManager.getState();
-      const timeParam =
-        this.currentRouteId && state.selectedTime && state.selectedDate
-          ? this.formatTimeForAPI(state.selectedDate, state.selectedTime)
-          : undefined;
       const results = await Promise.race([
         Promise.all([
           transitApiService.getHealth(request.signal),
           Promise.all(
             routeIds.map((routeId) =>
-              transitApiService.getVehicles(routeId, timeParam, request.signal)
+              transitApiService.getVehicles(routeId, request.signal)
             )
           )
         ]),
@@ -315,7 +297,7 @@ export class VehicleTracker {
         }, POLL_MS);
       } else if (
         generation === this.pollingGeneration &&
-        this.sessionToken !== localStorage.getItem('token')
+        this.sessionToken !== getToken()
       ) {
         this.stopPolling();
       }
@@ -392,8 +374,7 @@ export class VehicleTracker {
         ? health?.tripshotLiveStatus
         : health?.vehiclePositions;
       const result = results[index];
-      const authoritative =
-        !!provider?.healthy && !!result && result.source !== 'static';
+      const authoritative = !!provider?.healthy && !!result;
       if (!authoritative) {
         unavailable++;
         this.unavailableRoutes.add(routeId);
@@ -406,7 +387,7 @@ export class VehicleTracker {
         });
       }
       const returnedIds = new Set<string>();
-      if (result && result.source !== 'static') {
+      if (result) {
         result.vehicles.forEach((incoming) => {
           returnedIds.add(incoming.vid);
           if (!this.firstObserved.has(incoming.vid))
@@ -706,7 +687,7 @@ export class VehicleTracker {
     const frame = (timestamp: number) => {
       if (generation !== this.animationGeneration) return;
       this.animationFrame = null;
-      if (this.sessionToken !== localStorage.getItem('token')) {
+      if (this.sessionToken !== getToken()) {
         this.stopPolling();
         return;
       }
@@ -828,7 +809,6 @@ export class VehicleTracker {
     this.displayedStatuses.clear();
     this.iconKeys.clear();
     this.closeVehiclePopup();
-    console.log('Cleared all vehicle markers');
   }
 
   /**
@@ -847,38 +827,6 @@ export class VehicleTracker {
    */
   private updateAllIcons(): void {
     this.vehicleMarkers.forEach((_marker, vid) => this.updateMarkerIcon(vid));
-  }
-
-  /**
-   * Format date and time for API (YYYYMMDD HH:MM)
-   */
-  private formatTimeForAPI(
-    date: Date,
-    time: { hour: number; minute: number; period: 'AM' | 'PM' }
-  ): string {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-
-    // Convert to 24-hour format
-    let hour24 = time.hour;
-    if (time.period === 'PM' && time.hour !== 12) {
-      hour24 += 12;
-    } else if (time.period === 'AM' && time.hour === 12) {
-      hour24 = 0;
-    }
-
-    const hourStr = String(hour24).padStart(2, '0');
-    const minuteStr = String(time.minute).padStart(2, '0');
-
-    return `${year}${month}${day} ${hourStr}:${minuteStr}`;
-  }
-
-  /**
-   * Show toast notification
-   */
-  private showToast(message: string): void {
-    showToast(message);
   }
 
   /** Build user-facing route text for popup subheader. */
@@ -1056,15 +1004,6 @@ export class VehicleTracker {
     }
   }
 
-  /**
-   * Convert heading degrees to compass direction + degrees.
-   */
-  private formatHeading(degrees: number): string {
-    const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-    const idx = Math.round(degrees / 45) % 8;
-    return `${dirs[idx]} (${Math.round(degrees)}°)`;
-  }
-
   private formatElapsedTime(vehicle: IVehicle): string {
     const updatedAt = this.sourceTime(vehicle);
     if (updatedAt === null) return 'Update time unavailable';
@@ -1095,13 +1034,13 @@ export class VehicleTracker {
   private handlePopupReport(vid: string): void {
     const latestVehicle = this.vehicleData.get(vid);
     if (!latestVehicle || !this.isFresh(latestVehicle)) {
-      this.showToast(
+      showToast(
         'Wait for a fresh bus location before submitting a report.'
       );
       return;
     }
     if (!this.userLocation) {
-      this.showToast(
+      showToast(
         'Location access is required to submit a bus report. Please enable location services.'
       );
       return;
@@ -1111,14 +1050,13 @@ export class VehicleTracker {
     const userLon = this.userLocation.lng;
 
     if (!this.isAdminProximityBypass) {
-      const dist = haversineDistanceMiles(
-        userLat,
-        userLon,
-        latestVehicle.lat,
-        latestVehicle.lon
-      );
-      if (dist > 0.5) {
-        this.showToast('You need to be near this bus to submit a report.');
+      const distanceMiles =
+        haversineMeters(
+          { lat: userLat, lng: userLon },
+          { lat: latestVehicle.lat, lng: latestVehicle.lon }
+        ) / METERS_PER_MILE;
+      if (distanceMiles > REPORT_PROXIMITY_MILES) {
+        showToast('You need to be near this bus to submit a report.');
         return;
       }
     }
@@ -1318,21 +1256,5 @@ export class VehicleTracker {
     this.openPopupVehicleId = null;
     this.stopPopupUpdatedTicker();
     dismissPopup('bus');
-  }
-
-  /**
-   * Check if currently polling
-   */
-  isPolling(): boolean {
-    return (
-      this.trackedRoutes().length > 0 && !document.hidden && !this.pageSuspended
-    );
-  }
-
-  /**
-   * Get current route being tracked
-   */
-  getCurrentRouteId(): string | null {
-    return this.currentRouteId;
   }
 }

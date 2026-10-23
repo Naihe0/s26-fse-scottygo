@@ -78,19 +78,6 @@
   top: auto;
   bottom: calc(72px + env(safe-area-inset-bottom, 0px));
 }
-body.dark .live-tracking-status {
-  background: #1f2937;
-  color: #e5e7eb;
-  border-color: #6b7280;
-}
-body.dark .live-tracking-status[data-state='live'] {
-  color: #bbf7d0;
-}
-body.dark .live-tracking-status[data-state='delayed'],
-body.dark .live-tracking-status[data-state='unavailable'],
-body.dark .live-tracking-status[data-state='partial'] {
-  color: #fde68a;
-}
 
 .bus-position-state {
   display: inline-block;
@@ -162,26 +149,4 @@ body.dark .live-tracking-status[data-state='partial'] {
 }
 .map-popup__value--live.bus-position-delayed {
   color: #854d0e;
-}
-body.dark .bus-position-state {
-  background: #334155;
-  color: #e2e8f0;
-}
-body.dark .bus-popup__next-stop,
-body.dark .bus-popup__more > summary {
-  color: #cbd5e1;
-}
-body.dark .bus-position-explanation {
-  color: #94a3b8;
-}
-body.dark .bus-position-state[data-state='estimated'] {
-  background: #172c4b;
-  color: #bfdbfe;
-}
-body.dark .bus-position-state[data-state='delayed'] {
-  background: #422f12;
-  color: #fde68a;
-}
-body.dark .map-popup__value--live.bus-position-delayed {
-  color: #fde68a;
 }

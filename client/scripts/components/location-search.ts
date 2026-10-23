@@ -28,7 +28,6 @@ export class LocationSearch
   private placesInput: HTMLInputElement | null = null;
   private autocomplete: google.maps.places.Autocomplete | null = null;
   private map: google.maps.Map | null = null;
-  private isSearchMode = false;
   private stateManager = MapStateManager.getInstance();
 
   connectedCallback(): void {
@@ -136,7 +135,6 @@ export class LocationSearch
   open(): void {
     if (this.dropdown) {
       this.dropdown.hidden = false;
-      this.isSearchMode = false;
       this.hidePlacesSearch();
       this.updateCurrentLocationDisplay();
     }
@@ -145,7 +143,6 @@ export class LocationSearch
   close(): void {
     if (this.dropdown) {
       this.dropdown.hidden = true;
-      this.isSearchMode = false;
       this.hidePlacesSearch();
     }
   }
@@ -177,7 +174,6 @@ export class LocationSearch
     if (defaultView) defaultView.hidden = true;
     if (this.searchContainer) {
       this.searchContainer.hidden = false;
-      this.isSearchMode = true;
       // Focus the input after a frame to ensure visibility
       requestAnimationFrame(() => {
         this.placesInput?.focus();
@@ -192,7 +188,6 @@ export class LocationSearch
     if (defaultView) defaultView.hidden = false;
     if (this.searchContainer) {
       this.searchContainer.hidden = true;
-      this.isSearchMode = false;
     }
     if (this.placesInput) this.placesInput.value = '';
   }

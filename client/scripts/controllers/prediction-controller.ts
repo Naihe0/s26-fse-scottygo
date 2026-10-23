@@ -613,5 +613,3 @@ export class PredictionController {
     this.vehicleTracker.startMultiRoutePolling(routeIds, routeColors);
   }
 }
-
-export const predictionController = PredictionController.getInstance();

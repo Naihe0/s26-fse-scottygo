@@ -2,7 +2,7 @@
  * TUC4 – Discover Stops & Schedules: unit tests
  *
  * Test-worthy logic covered:
- *   - haversineDistanceMeters  (great-circle distance formula)
+ *   - haversineMeters          (great-circle distance formula)
  *   - computeWalkMinutes       (1 km = 15 min heuristic with ceiling, TUC4 R4)
  *   - getNearbyStops           (radius filtering, A6 expansion, route/system/
  *                               direction filters, stop deduplication,
@@ -11,8 +11,8 @@
  */
 
 import { TransitModel } from '../../../server/models/transit.model';
+import { haversineMeters } from '../../../common/geo';
 import {
-  haversineDistanceMeters,
   computeWalkMinutes
 } from '../../../server/models/transit.model';
 import { IRoute, IStop } from '../../../common/transit.interface';
@@ -109,15 +109,6 @@ const STOP_1500M: IStop = {
   dtrrem: []
 };
 
-const STOP_3000M: IStop = {
-  stopId: 's4',
-  stopName: '~3000m Stop',
-  lat: CENTER.lat + 0.027,
-  lon: CENTER.lon,
-  dtradd: [],
-  dtrrem: []
-};
-
 const ROUTE_PRT: IRoute = {
   id: '61C',
   name: 'McKeesport via Forbes',
@@ -138,11 +129,14 @@ const ROUTE_PRT_P1: IRoute = {
   operatingDays: [1, 2, 3, 4, 5]
 };
 
-// ---------------------------------------------------------------------------
-// Helper: build a mock stop list for a given route direction
-// ---------------------------------------------------------------------------
-function stopsFor(...stops: IStop[]): IStop[] {
-  return stops;
+/** Distance between two (lat, lon) pairs, in meters. */
+function haversineDistanceMeters(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  return haversineMeters({ lat: lat1, lng: lon1 }, { lat: lat2, lng: lon2 });
 }
 
 // ============================================================================
@@ -153,10 +147,10 @@ describe('TUC4 – Discover Stops & Schedules unit tests', () => {
   beforeEach(() => jest.restoreAllMocks());
 
   // --------------------------------------------------------------------------
-  // haversineDistanceMeters — great-circle distance formula
+  // haversineMeters — great-circle distance formula
   // --------------------------------------------------------------------------
 
-  describe('haversineDistanceMeters', () => {
+  describe('haversineMeters', () => {
     test('two identical coordinates produce zero distance', () => {
       const d = haversineDistanceMeters(40.4433, -79.9436, 40.4433, -79.9436);
       expect(d).toBe(0);

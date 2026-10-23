@@ -1,10 +1,9 @@
-// Controller serving the map page where the user lands after login
-// Note that controllers don't access the DB direcly, only through the models
+// Map page (the landing page after sign-in), map configuration, user lookup,
+// and transit search. Base path: /
 
-import { IUser } from '../../common/user.interface';
+import { Request, Response } from 'express';
 import { User } from '../models/user.model';
 import Controller from './controller';
-import { Request, Response } from 'express';
 import { GOOGLE_MAPS_KEY } from '../env';
 import {
   RouteSearchStrategy,
@@ -16,9 +15,12 @@ import type {
   ITransitSearchResult
 } from '../../common/transit.interface';
 
-// Default map center (CMU campus) and zoom level
+/** Default map center (CMU campus) and zoom level. */
 const DEFAULT_MAP_CENTER = { lat: 40.4433, lon: -79.9436 };
 const DEFAULT_MAP_ZOOM = 14;
+
+const plural = (count: number, noun: string) =>
+  `${count} ${noun}${count === 1 ? '' : 's'}`;
 
 export default class MapController extends Controller {
   private static instance: MapController | null = null;
@@ -35,99 +37,60 @@ export default class MapController extends Controller {
   }
 
   public initializeRoutes(): void {
-    this.router.get('/', this.mapPage.bind(this));
-    this.router.get(
-      '/users/:username',
-      this.authenticateToken.bind(this),
-      this.getUser.bind(this)
-    );
-    this.router.get(
-      '/config',
-      this.authenticateToken.bind(this),
-      this.getMapConfig.bind(this)
-    );
-
-    // Search endpoints (SearchInfo UC — R1 contextual search)
-    // Auth middleware is applied inline so the page route above stays open.
+    const authenticate = this.authenticateToken.bind(this);
+    this.router.get('/', (_req, res) => this.sendPage(res, 'map.html'));
+    this.router.get('/users/:username', authenticate, this.getUser.bind(this));
+    this.router.get('/config', authenticate, this.getMapConfig.bind(this));
     this.router.get(
       '/routes/search',
-      this.authenticateToken.bind(this),
+      authenticate,
       this.searchRoutes.bind(this)
     );
-    this.router.get(
-      '/search',
-      this.authenticateToken.bind(this),
-      this.searchTransit.bind(this)
-    );
+    this.router.get('/search', authenticate, this.searchTransit.bind(this));
   }
 
-  public mapPage(req: Request, res: Response): void {
-    this.sendPage(res, 'map.html');
-  }
-
-  // Backward-compatible alias used in existing unit tests.
-  public async authorize(
-    req: Request,
-    res: Response,
-    next: (error?: unknown) => void
-  ): Promise<void> {
-    await this.authenticateToken(req, res, next);
-  }
-
-  // Get a User by username
-  public async getUser(req: Request, res: Response) {
+  // GET /users/:username — own account, or any account for administrators
+  public async getUser(req: Request, res: Response): Promise<void> {
     const username = req.params.username;
     if (!username) {
-      return res
-        .status(400)
-        .json(this.clientError('MissingUsername', 'Username is required'));
+      this.sendClientError(res, 400, 'MissingUsername', 'Username is required');
+      return;
     }
 
     try {
       const token = this.getTokenPayload(req);
       if (!token) {
-        return res
-          .status(401)
-          .json(this.clientError('MissingToken', 'Token is required'));
+        this.sendClientError(res, 401, 'MissingToken', 'Token is required');
+        return;
       }
       const requester = await User.getUserAccountById(token.userId);
-      if (
-        requester.status !== 'Active' ||
-        (requester.privilegeLevel !== 'Administrator' &&
-          requester.credentials.username.toLowerCase() !==
-            username.toLowerCase())
-      ) {
-        return res
-          .status(403)
-          .json(
-            this.clientError(
-              'UnauthorizedRequest',
-              'You can only view your own account'
-            )
-          );
-      }
-      const user: IUser | null = await User.getUserForUsername(username);
-
-      if (!user) {
-        return res
-          .status(404)
-          .json(
-            this.clientError('UserNotFound', `User '${username}' not found`)
-          );
+      const isAllowed =
+        requester.status === 'Active' &&
+        (requester.privilegeLevel === 'Administrator' ||
+          requester.credentials.username.toLowerCase() ===
+            username.toLowerCase());
+      if (!isAllowed) {
+        this.sendClientError(
+          res,
+          403,
+          'UnauthorizedRequest',
+          'You can only view your own account'
+        );
+        return;
       }
 
-      const sanitizedUser = this.sanitizeUser(user);
-      return res
+      const user = await User.getUserForUsername(username);
+      res
         .status(200)
         .json(
           this.success(
             'UserFound',
-            sanitizedUser,
+            this.sanitizeUser(user),
             'User retrieved successfully'
           )
         );
-    } catch (error: unknown) {
-      return this.handleAppError(
+    } catch (error) {
+      this.handleAppError(
         res,
         error,
         'An unexpected error occurred in the database'
@@ -135,57 +98,45 @@ export default class MapController extends Controller {
     }
   }
 
-  // ── Search endpoints (SearchInfo UC) ──────────────────────────────────
-
-  /**
-   * GET /map/routes/search?q=<keywords>
-   * Route Search context — returns up to 5 matching routes.
-   * Uses RouteSearchStrategy (Strategy Pattern, R1).
-   * Applies stop word filtering (R2).
-   */
+  // GET /routes/search?q= — up to five PRT routes
   public async searchRoutes(req: Request, res: Response): Promise<void> {
     const q = this.requireSearchQuery(req, res);
     if (!q) return;
 
     try {
-      const context = new SearchContext<IRoute[]>(new RouteSearchStrategy());
-      const results = await context.executeSearch(q);
+      const results = await new SearchContext<IRoute[]>(
+        new RouteSearchStrategy()
+      ).executeSearch(q);
       const message = results.length
-        ? `Found ${results.length} route${results.length === 1 ? '' : 's'} matching '${q}'`
+        ? `Found ${plural(results.length, 'route')} matching '${q}'`
         : `No routes found matching '${q}'`;
       res
         .status(200)
         .json(this.success('SearchTransitCompleted', results, message));
-    } catch (error: unknown) {
+    } catch (error) {
       this.handleAppError(res, error, 'Unexpected error during route search');
     }
   }
 
-  /**
-   * GET /map/search?q=<keywords>
-   * Stop and Route Search context — returns up to 5 matching routes and 5 stops.
-   * Uses TransitSearchStrategy (Strategy Pattern, R1).
-   * Applies stop word filtering (R2).
-   */
+  // GET /search?q= — up to five routes and five stops across PRT and CMU
   public async searchTransit(req: Request, res: Response): Promise<void> {
     const q = this.requireSearchQuery(req, res);
     if (!q) return;
 
     try {
-      const context = new SearchContext<ITransitSearchResult>(
+      const results = await new SearchContext<ITransitSearchResult>(
         new TransitSearchStrategy()
-      );
-      const results = await context.executeSearch(q);
+      ).executeSearch(q);
       const total = results.routes.length + results.stops.length;
       const message = total
-        ? `Found ${total} result${total === 1 ? '' : 's'} matching '${q}'`
+        ? `Found ${plural(total, 'result')} matching '${q}'`
         : `No results found matching '${q}'`;
       res.status(200).json(
         this.success('SearchTransitCompleted', results, message, {
           totalItems: total
         })
       );
-    } catch (error: unknown) {
+    } catch (error) {
       this.handleAppError(res, error, 'Unexpected error during transit search');
     }
   }
@@ -193,26 +144,24 @@ export default class MapController extends Controller {
   private requireSearchQuery(req: Request, res: Response): string | null {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     if (!q) {
-      res
-        .status(400)
-        .json(
-          this.clientError(
-            'MissingSearchQuery',
-            'Query parameter "q" is required'
-          )
-        );
+      this.sendClientError(
+        res,
+        400,
+        'MissingSearchQuery',
+        'Query parameter "q" is required'
+      );
       return null;
     }
     return q;
   }
 
-  // Return Google Maps config to the client (API key, default center, zoom)
-  public getMapConfig(req: Request, res: Response): void {
+  // GET /config — browser Maps key and default view
+  public getMapConfig(_req: Request, res: Response): void {
     res.status(200).json(
       this.success(
         'ConfigFound',
         {
-          apiKey: GOOGLE_MAPS_KEY || '',
+          apiKey: GOOGLE_MAPS_KEY,
           lat: DEFAULT_MAP_CENTER.lat,
           lon: DEFAULT_MAP_CENTER.lon,
           defaultZoom: DEFAULT_MAP_ZOOM

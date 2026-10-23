@@ -599,7 +599,7 @@ describe('live vehicle freshness and polling lifecycle', () => {
     expect(status().textContent).not.toContain('No active');
   });
 
-  test.each(['positions', 'health', 'provider', 'scheduled'])(
+  test.each(['positions', 'health', 'provider'])(
     'retains labelled previous markers when %s becomes unavailable',
     async (failure) => {
       getVehicles.mockResolvedValue({ vehicles: [vehicle('old')] });
@@ -613,11 +613,6 @@ describe('live vehicle freshness and polling lifecycle', () => {
         failed.vehiclePositions.healthy = false;
         getHealth.mockResolvedValue(failed);
       }
-      if (failure === 'scheduled')
-        getVehicles.mockResolvedValue({
-          vehicles: [vehicle('old')],
-          source: 'static'
-        });
       await tick(30_000);
       expect(marker.remove).not.toHaveBeenCalled();
       expect(tracker.getVehiclePositions()).toEqual([
@@ -751,7 +746,7 @@ describe('live vehicle freshness and polling lifecycle', () => {
     const pending = deferredVehicles();
     getVehicles.mockReturnValueOnce(pending.promise);
     tracker.startPolling('61C');
-    const signal = getVehicles.mock.calls[0][2]!;
+    const signal = getVehicles.mock.calls[0][1]!;
     await tick(14_999);
     expect(getVehicles).toHaveBeenCalledTimes(1);
     await tick(1);
@@ -772,7 +767,7 @@ describe('live vehicle freshness and polling lifecycle', () => {
     const pending = deferredVehicles();
     getVehicles.mockReturnValueOnce(pending.promise);
     await tick(10_000);
-    const signal = getVehicles.mock.calls[1][2]!;
+    const signal = getVehicles.mock.calls[1][1]!;
     hidden(true);
     expect(signal.aborted).toBe(true);
     expect(tracker.getVehiclePositions()).toEqual([

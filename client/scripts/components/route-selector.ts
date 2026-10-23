@@ -35,28 +35,6 @@ export class RouteSelectorPanel
   private committedRoute: string | null = null;
   private isVisible = false;
   private searchValue = '';
-  private searchRequestId = 0;
-
-  constructor() {
-    super();
-    // Default sample routes (PRT and CMU routes)
-    this.routes = [
-      { id: '61A', name: '61A' },
-      { id: '61B', name: '61B' },
-      { id: '61C', name: '61C' },
-      { id: '61D', name: '61D' },
-      { id: '67', name: '67' },
-      { id: '69', name: '69' },
-      { id: '71A', name: '71A' },
-      { id: '71B', name: '71B' },
-      { id: '71C', name: '71C' },
-      { id: '71D', name: '71D' },
-      { id: 'P1', name: 'P1' },
-      { id: 'P3', name: 'P3' },
-      { id: 'P10X', name: 'P10X' }
-    ];
-    this.filteredRoutes = [...this.routes];
-  }
 
   connectedCallback(): void {
     this.render();
@@ -72,7 +50,6 @@ export class RouteSelectorPanel
   show(): void {
     const panel = this.querySelector('.route-selector-panel') as HTMLElement;
     if (panel) {
-      console.log('Showing route selector panel');
       panel.style.display = 'block';
       panel.style.pointerEvents = 'auto'; // Enable pointer events immediately
       this.isVisible = true;
@@ -90,7 +67,6 @@ export class RouteSelectorPanel
   hide(): void {
     const panel = this.querySelector('.route-selector-panel') as HTMLElement;
     if (panel) {
-      console.log('Hiding route selector panel');
       panel.classList.remove('visible');
       panel.style.pointerEvents = 'none'; // Disable pointer events
       panel.style.display = 'none';
@@ -121,7 +97,6 @@ export class RouteSelectorPanel
    * Allow setting routes dynamically
    */
   setRoutes(routes: IRouteOption[]): void {
-    this.searchRequestId++;
     this.routes = routes;
     this.filteredRoutes = [...routes];
     this.searchValue = '';
@@ -136,7 +111,6 @@ export class RouteSelectorPanel
   }
 
   setSelection(route: string | null): void {
-    this.searchRequestId++;
     this.selectedRoute = route;
     this.committedRoute = route;
     this.searchValue = '';
@@ -209,7 +183,7 @@ export class RouteSelectorPanel
       // Save scroll position before re-render
       const routeList = this.querySelector('.route-list') as HTMLElement;
       const scrollTop = routeList?.scrollTop || 0;
-      void this.updateSearchResults(value, scrollTop, cursorPos);
+      this.updateSearchResults(value, scrollTop, cursorPos);
     });
 
     // Route button selection
@@ -266,43 +240,18 @@ export class RouteSelectorPanel
     });
   }
 
-  private async updateSearchResults(
+  /** Filter the loaded routes by ID or name, keeping scroll and caret position. */
+  private updateSearchResults(
     value: string,
     scrollTop: number,
     cursorPos: number | null
-  ): Promise<void> {
-    const requestId = ++this.searchRequestId;
-    const trimmed = value.trim();
-
-    if (!trimmed) {
-      this.filteredRoutes = [...this.routes];
-    } else {
-      let remoteResults: IRouteOption[] | null = null;
-      try {
-        remoteResults = await this.searchRoutesViaApi(trimmed);
-      } catch {
-        remoteResults = null;
-      }
-
-      if (requestId !== this.searchRequestId) {
-        return;
-      }
-
-      if (remoteResults !== null) {
-        this.filteredRoutes = remoteResults;
-      } else {
-        const lower = trimmed.toLowerCase();
-        this.filteredRoutes = this.routes.filter(
-          (route) =>
-            route.id.toLowerCase().includes(lower) ||
-            route.name.toLowerCase().includes(lower)
-        );
-      }
-    }
-
-    if (requestId !== this.searchRequestId) {
-      return;
-    }
+  ): void {
+    const query = value.trim().toLowerCase();
+    this.filteredRoutes = this.routes.filter(
+      (route) =>
+        route.id.toLowerCase().includes(query) ||
+        route.name.toLowerCase().includes(query)
+    );
 
     this.render();
 
@@ -320,28 +269,6 @@ export class RouteSelectorPanel
       newInput.focus();
       newInput.setSelectionRange(selection, selection);
     }
-  }
-
-  private async searchRoutesViaApi(query: string): Promise<IRouteOption[]> {
-    const token = localStorage.getItem('token') ?? '';
-    const headers: Record<string, string> = {};
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-
-    const res = await fetch(
-      `/map/routes/search?q=${encodeURIComponent(query)}`,
-      {
-        headers
-      }
-    );
-
-    if (!res.ok) {
-      throw new Error(`Route search API returned ${res.status}`);
-    }
-
-    const data = (await res.json()) as { payload?: IRouteOption[] };
-    return data.payload ?? [];
   }
 }
 

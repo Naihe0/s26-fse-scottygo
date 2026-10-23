@@ -6,7 +6,7 @@ import {
   isTsViaStop,
   TRIPSHOT_BASE_URL,
   type TripshotRouteResponse
-} from '../server/services/tripshot-api';
+} from './tripshot-route-summary';
 
 interface IRouteRow {
   index: string;

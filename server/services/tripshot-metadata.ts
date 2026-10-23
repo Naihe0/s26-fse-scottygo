@@ -1,7 +1,7 @@
-// CMU Shuttle route metadata and route-ID validation helpers
-// Extracted from tripshot.service.ts to reduce unit size (Sigrid Item 10)
+// CMU Shuttle route metadata and route-ID validation helpers.
 
-import { IAppError } from '../../common/server.responses';
+import { clientError } from '../errors';
+import { createLogger } from '../logger';
 
 /**
  * One service-window entry: the days it applies to and the first/last trip
@@ -212,8 +212,8 @@ if (duplicateTripshotRouteIds.size > 0) {
         `${tripshotRouteId}=>${cmuRouteIds.join('/')}`
     )
     .join(', ');
-  console.warn(
-    `[Tripshot ${new Date().toISOString()}] Duplicate TripShot route IDs configured in CMU_ROUTE_METADATA: ${duplicateSummary}`
+  createLogger('Tripshot').warn(
+    `Duplicate TripShot route IDs configured in CMU_ROUTE_METADATA: ${duplicateSummary}`
   );
 }
 
@@ -227,23 +227,16 @@ export function extractRouteIndex(routeId: string): {
 } {
   const match = routeId.match(/^CMU-(\d+)$/);
   if (!match) {
-    const error: IAppError = {
-      type: 'ClientError',
-      name: 'RouteNotFound',
-      message: `Invalid CMU route ID format: ${routeId}`
-    };
-    throw error;
+    throw clientError(
+      'RouteNotFound',
+      `Invalid CMU route ID format: ${routeId}`
+    );
   }
 
-  const index = parseInt(match[1]);
+  const index = parseInt(match[1], 10);
   const metadata = CMU_ROUTE_METADATA[index];
   if (!metadata) {
-    const error: IAppError = {
-      type: 'ClientError',
-      name: 'RouteNotFound',
-      message: `CMU route ${routeId} not found`
-    };
-    throw error;
+    throw clientError('RouteNotFound', `CMU route ${routeId} not found`);
   }
 
   return { index, metadata };

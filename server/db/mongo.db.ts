@@ -1,5 +1,4 @@
-// This is the real database, using MongoDB and Mongoose
-// It can be initialized with a MongoDB URL pointing to a production or development/test database
+// MongoDB/Mongoose implementation of IDatabase.
 
 import { IDatabase, IMemorySampleRecord } from './dac';
 import mongoose from 'mongoose';
@@ -15,12 +14,24 @@ import {
   ITransitCacheType,
   ISubscription,
   IBusReport,
-  INotification
+  INotification,
+  CROWDEDNESS_LEVELS,
+  PRIORITY_SEATING_STATES,
+  BUS_CONDITIONS
 } from '../../common/transit.interface';
 import bcrypt from 'bcrypt';
 import { randomUUID as uuidV4 } from 'node:crypto';
 import { INITIAL_ADMIN_PASSWORD, STAGE } from '../env';
-import type { IAppError } from '../../common/server.responses';
+import { clientError } from '../errors';
+import { createLogger } from '../logger';
+import { BCRYPT_ROUNDS } from '../models/user.validation';
+import {
+  MAX_SUBSCRIPTIONS_PER_USER,
+  NOTIFICATION_RETENTION_MS
+} from '../../common/limits';
+
+const log = createLogger('MongoDB');
+const MEMORY_SAMPLE_RETENTION_SECONDS = 7 * 24 * 60 * 60;
 
 // Extended schema for user accounts with status and privilege
 const UserSchema = new Schema<IUserAccount>({
@@ -80,7 +91,7 @@ const MemorySampleSchema = new Schema<IMemorySampleRecord>({
 // Retain memory samples for 7 days to bound database growth.
 MemorySampleSchema.index(
   { timestamp: 1 },
-  { expireAfterSeconds: 7 * 24 * 60 * 60 }
+  { expireAfterSeconds: MEMORY_SAMPLE_RETENTION_SECONDS }
 );
 
 const MMemorySample = model<IMemorySampleRecord>(
@@ -130,12 +141,9 @@ const BusReportSchema = new Schema<IBusReport>({
   userId: { type: String, required: true },
   vid: { type: String, required: true },
   routeId: { type: String, required: true },
-  crowdedness: {
-    type: String,
-    enum: ['Empty', 'Few Seats Taken', 'Standing Room', 'Packed']
-  },
-  prioritySeating: { type: String, enum: ['Available', 'Occupied'] },
-  condition: { type: String, enum: ['Clean', 'Dirty', 'Average'] },
+  crowdedness: { type: String, enum: CROWDEDNESS_LEVELS },
+  prioritySeating: { type: String, enum: PRIORITY_SEATING_STATES },
+  condition: { type: String, enum: BUS_CONDITIONS },
   comment: { type: String },
   lat: { type: Number, required: true },
   lon: { type: Number, required: true },
@@ -158,12 +166,22 @@ const NotificationSchema = new Schema({
   _expiresAt: { type: Date, required: true }
 });
 
-// TTL index: auto-delete notifications after 30 minutes (R3)
+// TTL index: MongoDB deletes each notification at its _expiresAt time.
 NotificationSchema.index({ _expiresAt: 1 }, { expireAfterSeconds: 0 });
 NotificationSchema.index({ routeId: 1, createdAt: -1 });
 NotificationSchema.index({ vid: 1, createdAt: -1 });
 
 const MNotification = model('Notification', NotificationSchema);
+
+/** Strip storage-only fields before returning a notification to callers. */
+function withoutInternalFields(doc: object): INotification {
+  const {
+    _expiresAt: _expiry,
+    __v: _version,
+    ...notification
+  } = doc as Record<string, unknown>;
+  return notification as unknown as INotification;
+}
 
 export class MongoDB implements IDatabase {
   public dbURL: string;
@@ -178,21 +196,10 @@ export class MongoDB implements IDatabase {
     try {
       await mongoose.connect(this.dbURL);
       this.db = mongoose.connection;
-      // Add error event listener for ongoing issues
-      this.db.on('error', (err) => {
-        console.error(
-          `[MongoDB ${new Date().toISOString()}] Connection error:`,
-          err
-        );
-      });
-      console.log(
-        `[MongoDB ${new Date().toISOString()}] Connected successfully`
-      );
+      this.db.on('error', (err) => log.error('Connection error:', err));
+      log.info('Connected successfully');
     } catch (err) {
-      console.error(
-        `[MongoDB ${new Date().toISOString()}] Failed to connect:`,
-        err
-      );
+      log.error('Failed to connect:', err);
       throw err; // Prevent app from starting if DB connection fails
     }
   }
@@ -203,153 +210,107 @@ export class MongoDB implements IDatabase {
         'Database reset requires ALLOW_DB_RESET=true and is forbidden in production'
       );
     }
-    // Check if MongoDB is actually connected before trying to drop collections
-    // readyState: 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
-    if (mongoose.connection.readyState !== 1) {
-      console.log(
-        `[MongoDB ${new Date().toISOString()}] Not connected, reconnecting before init...`
-      );
+    if (mongoose.connection.readyState !== mongoose.ConnectionStates.connected) {
+      log.info('Not connected, reconnecting before init...');
       await this.connect();
     }
+    if (!this.db) throw new Error('MongoDB is undefined');
 
-    if (this.db == undefined) throw new Error('MongoDB is undefined');
-
-    const collections = this.db.collections;
-    // Drop collections entirely (with indexes) instead of just deleting documents like deleteMany
-    for (const index in collections) {
-      await collections[index].drop();
+    // Drop collections entirely (with indexes), not just their documents.
+    for (const collection of Object.values(this.db.collections)) {
+      await collection.drop();
     }
   }
 
   async close(): Promise<void> {
-    if (this.db) {
-      // Remove all event listeners to prevent memory leaks
-      // This is important if close() is called and the connection is reused later
-      this.db.removeAllListeners();
-    }
+    // Remove listeners so a reused connection does not accumulate them.
+    this.db?.removeAllListeners();
     await mongoose.disconnect();
   }
 
   async saveUser(user: IUser): Promise<IUser> {
-    const newUser = new MUser(user);
-    const savedUser = await newUser.save(); // mongoose document with .toObject() method
-    // convert to plain object from mongoose document (which has extra methods/properties) and return
-    return savedUser.toObject();
-  }
-
-  async findUserByUsername(username: string): Promise<IUser | null> {
-    const user: IUser | null = await MUser.findOne({
-      'credentials.username': username
-    }).lean(); // returns plain object from mongoose document (which has extra methods/properties)
-    return user;
-  }
-
-  async findUserById(userId: string): Promise<IUser | null> {
-    const user: IUser | null = await MUser.findById(userId).lean();
-    return user;
+    return (await new MUser(user).save()).toObject();
   }
 
   async setUserAgreedToTrue(user: IUser): Promise<IUser | null> {
-    const agreedUser: IUser | null = await MUser.findByIdAndUpdate(
+    return MUser.findByIdAndUpdate(
       user._id,
-      {
-        agreed: user.agreed
-      },
-      {
-        new: true // true here returns UPDATED user rather than original
-      }
+      { agreed: user.agreed },
+      { new: true }
     ).lean();
-    return agreedUser;
   }
-
-  // Account management methods
 
   async findUserAccountByUsername(
     username: string
   ): Promise<IUserAccount | null> {
-    const user: IUserAccount | null = await MUser.findOne({
-      'credentials.username': username
-    }).lean();
-    return user;
+    return MUser.findOne({ 'credentials.username': username }).lean();
   }
 
   async findUserAccountById(userId: string): Promise<IUserAccount | null> {
-    const user: IUserAccount | null = await MUser.findById(userId).lean();
-    return user;
+    return MUser.findById(userId).lean();
   }
 
   async updateUserStatus(
     username: string,
     status: IAccountStatus
   ): Promise<IUserAccount | null> {
-    const updatedUser: IUserAccount | null = await MUser.findOneAndUpdate(
-      { 'credentials.username': username },
-      {
-        $set: { status },
-        ...(status === 'Inactive' ? { $inc: { tokenVersion: 1 } } : {})
-      },
-      { new: true }
-    ).lean();
-    return updatedUser;
+    // Deactivation revokes previously issued sessions.
+    return this.updateAccount(username, {
+      $set: { status },
+      ...(status === 'Inactive' ? { $inc: { tokenVersion: 1 } } : {})
+    });
   }
 
   async updateUserPrivilege(
     username: string,
     privilegeLevel: IPrivilegeLevel
   ): Promise<IUserAccount | null> {
-    const updatedUser: IUserAccount | null = await MUser.findOneAndUpdate(
-      { 'credentials.username': username },
-      { privilegeLevel },
-      { new: true }
-    ).lean();
-    return updatedUser;
+    return this.updateAccount(username, { privilegeLevel });
   }
 
   async updateUsername(
     oldUsername: string,
     newUsername: string
   ): Promise<IUserAccount | null> {
-    const updatedUser: IUserAccount | null = await MUser.findOneAndUpdate(
-      { 'credentials.username': oldUsername },
-      { 'credentials.username': newUsername },
-      { new: true }
-    ).lean();
-    return updatedUser;
+    return this.updateAccount(oldUsername, {
+      'credentials.username': newUsername
+    });
   }
 
   async updateUserEmail(
     username: string,
     email: string
   ): Promise<IUserAccount | null> {
-    const updatedUser: IUserAccount | null = await MUser.findOneAndUpdate(
-      { 'credentials.username': username },
-      { email },
-      { new: true }
-    ).lean();
-    return updatedUser;
+    return this.updateAccount(username, { email });
   }
 
   async updateUserPassword(
     username: string,
     hashedPassword: string
   ): Promise<IUserAccount | null> {
-    const updatedUser: IUserAccount | null = await MUser.findOneAndUpdate(
+    // A password change revokes previously issued sessions.
+    return this.updateAccount(username, {
+      $set: { 'credentials.password': hashedPassword },
+      $inc: { tokenVersion: 1 }
+    });
+  }
+
+  private async updateAccount(
+    username: string,
+    update: mongoose.UpdateQuery<IUserAccount>
+  ): Promise<IUserAccount | null> {
+    return MUser.findOneAndUpdate(
       { 'credentials.username': username },
-      {
-        $set: { 'credentials.password': hashedPassword },
-        $inc: { tokenVersion: 1 }
-      },
+      update,
       { new: true }
     ).lean();
-    return updatedUser;
   }
 
   async countAdministrators(): Promise<number> {
-    const count = await MUser.countDocuments({
+    return MUser.countDocuments({
       privilegeLevel: 'Administrator',
       status: 'Active'
     });
-    return count;
   }
 
   async markOnboardingComplete(userId: string): Promise<boolean> {
@@ -370,32 +331,25 @@ export class MongoDB implements IDatabase {
     });
 
     if (existingAdmin) {
-      console.log(
-        `[MongoDB ${new Date().toISOString()}] Default Administrator already exists`
-      );
+      log.info('Default Administrator already exists');
       return;
     }
 
-    // Create default admin user as specified in UC_ManageAcct R2 Initial-Administrator Rule
-    const hashedPassword = await bcrypt.hash(INITIAL_ADMIN_PASSWORD, 10);
+    // The system must always have at least one administrator.
     const defaultAdmin: IUserAccount = {
       credentials: {
         username: 'admin',
-        password: hashedPassword
+        password: await bcrypt.hash(INITIAL_ADMIN_PASSWORD, BCRYPT_ROUNDS)
       },
-      email: '', // undefined represented as empty string
-      agreed: true, // Default admin is pre-agreed to terms
+      email: '',
+      agreed: true,
       _id: uuidV4(),
       status: 'Active',
       privilegeLevel: 'Administrator',
       onboardingComplete: true
     };
-
-    const newAdmin = new MUser(defaultAdmin);
-    await newAdmin.save();
-    console.log(
-      `[MongoDB ${new Date().toISOString()}] Default Administrator user created (username: admin)`
-    );
+    await new MUser(defaultAdmin).save();
+    log.info('Default Administrator user created (username: admin)');
   }
 
   async getAllUsernames(): Promise<string[]> {
@@ -407,18 +361,9 @@ export class MongoDB implements IDatabase {
 
   async getTransitCache(cacheKey: string): Promise<ITransitCache | null> {
     const entry = await MTransitCache.findOne({ cacheKey }).lean();
-    if (!entry) return null;
-    // Check if the cache has expired (belt-and-suspenders alongside TTL index)
-    if (new Date() > new Date(entry.expiresAt)) return null;
+    // The TTL index removes expired entries only periodically.
+    if (!entry || new Date() > new Date(entry.expiresAt)) return null;
     return entry as ITransitCache;
-  }
-
-  async getAllTransitCaches(): Promise<ITransitCache[]> {
-    const now = new Date();
-    const entries = await MTransitCache.find({
-      expiresAt: { $gt: now }
-    }).lean();
-    return entries as ITransitCache[];
   }
 
   async upsertTransitCache(entry: ITransitCache): Promise<void> {
@@ -436,11 +381,7 @@ export class MongoDB implements IDatabase {
   }
 
   async clearTransitCache(dataType?: ITransitCacheType): Promise<void> {
-    if (dataType) {
-      await MTransitCache.deleteMany({ dataType });
-    } else {
-      await MTransitCache.deleteMany({});
-    }
+    await MTransitCache.deleteMany(dataType ? { dataType } : {});
   }
 
   async saveMemorySample(sample: IMemorySampleRecord): Promise<void> {
@@ -464,28 +405,15 @@ export class MongoDB implements IDatabase {
     );
   }
 
-  async findSubscription(
-    userId: string,
-    routeId: string
-  ): Promise<ISubscription | null> {
-    return (
-      (await this.getSubscriptionsByUserId(userId)).find(
-        (sub) => sub.routeId === routeId
-      ) ?? null
-    );
-  }
-
-  async countSubscriptionsByUserId(userId: string): Promise<number> {
-    return (await this.getSubscriptionsByUserId(userId)).length;
-  }
-
   async saveSubscription(sub: ISubscription): Promise<ISubscription> {
     await this.ensureSubscriptionSet(sub.userId);
     const updated = await MSubscriptionSet.updateOne(
       {
         _id: sub.userId,
         'subscriptions.routeId': { $ne: sub.routeId },
-        $expr: { $lt: [{ $size: '$subscriptions' }, 10] }
+        $expr: {
+          $lt: [{ $size: '$subscriptions' }, MAX_SUBSCRIPTIONS_PER_USER]
+        }
       },
       { $push: { subscriptions: sub } }
     );
@@ -493,14 +421,17 @@ export class MongoDB implements IDatabase {
 
     // This read chooses a user-facing conflict reason; correctness is enforced
     // by the atomic conditional update above, even across multiple app instances.
-    const duplicate = await this.findSubscription(sub.userId, sub.routeId);
-    throw {
-      type: 'ClientError',
-      name: duplicate ? 'DuplicateSubscription' : 'SubscriptionLimitReached',
-      message: duplicate
-        ? `You are already subscribed to Route ${sub.routeId}.`
-        : 'Subscription limit reached (10). Please remove a subscription first.'
-    } as IAppError;
+    const existing = await this.getSubscriptionsByUserId(sub.userId);
+    if (existing.some((saved) => saved.routeId === sub.routeId)) {
+      throw clientError(
+        'DuplicateSubscription',
+        `You are already subscribed to Route ${sub.routeId}.`
+      );
+    }
+    throw clientError(
+      'SubscriptionLimitReached',
+      `Subscription limit reached (${MAX_SUBSCRIPTIONS_PER_USER}). Please remove a subscription first.`
+    );
   }
 
   async deleteSubscription(userId: string, routeId: string): Promise<boolean> {
@@ -540,39 +471,30 @@ export class MongoDB implements IDatabase {
   }
 
   async saveBusReport(report: IBusReport): Promise<IBusReport> {
-    const doc = new MBusReport(report);
-    const saved = await doc.save();
-    return saved.toObject();
-  }
-
-  async getLatestReportByVehicle(vid: string): Promise<IBusReport | null> {
-    return (await MBusReport.findOne({ vid })
-      .sort({ createdAt: -1 })
-      .lean()) as IBusReport | null;
+    return (await new MBusReport(report).save()).toObject();
   }
 
   async saveNotification(notification: INotification): Promise<INotification> {
-    const doc = new MNotification({
+    const saved = await new MNotification({
       ...notification,
-      _expiresAt: new Date(Date.now() + 30 * 60 * 1000)
-    });
-    const saved = await doc.save();
-    const obj = saved.toObject();
-    // Remove internal TTL field from returned object
-    delete (obj as Record<string, unknown>)._expiresAt;
-    return obj as unknown as INotification;
+      _expiresAt: new Date(Date.now() + NOTIFICATION_RETENTION_MS)
+    }).save();
+    return withoutInternalFields(saved.toObject());
   }
 
   async getRecentNotifications(
     filter: Record<string, unknown>
   ): Promise<INotification[]> {
-    const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-    const query = { ...filter, createdAt: { $gte: thirtyMinAgo } };
-    const docs = await MNotification.find(query).sort({ createdAt: -1 }).lean();
-    // Strip internal _expiresAt field
-    return docs.map((d) => {
-      const { _expiresAt, __v, ...rest } = d as Record<string, unknown>;
-      return rest as unknown as INotification;
-    });
+    // The TTL index deletes lazily; filter the retention window explicitly.
+    const since = new Date(
+      Date.now() - NOTIFICATION_RETENTION_MS
+    ).toISOString();
+    const docs = await MNotification.find({
+      ...filter,
+      createdAt: { $gte: since }
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+    return docs.map(withoutInternalFields);
   }
 }

@@ -7,10 +7,9 @@
  */
 
 import { GEMINI_API_KEY, GEMINI_MODEL } from '../env';
+import { createLogger, errorMessage } from '../logger';
 
-function tag(): string {
-  return `[ModerationService ${new Date().toISOString()}]`;
-}
+const log = createLogger('ModerationService');
 
 export interface IModerationResult {
   flagged: boolean;
@@ -44,9 +43,9 @@ class ModerationService {
       try {
         return await this.geminiModerate(comment);
       } catch (err) {
-        console.error(
-          `${tag()} Gemini moderation failed, falling back to keyword filter:`,
-          err instanceof Error ? err.message : err
+        log.error(
+          'Gemini moderation failed, falling back to keyword filter:',
+          errorMessage(err)
         );
         return this.keywordFilter(comment);
       }
@@ -96,15 +95,13 @@ class ModerationService {
     // Parse the JSON response from Gemini
     const jsonMatch = text.match(/\{[\s\S]*?\}/);
     if (!jsonMatch) {
-      console.warn(
-        `${tag()} Could not parse Gemini response, falling back to keyword filter`
-      );
+      log.warn('Could not parse Gemini response, falling back to keyword filter');
       return this.keywordFilter(comment);
     }
 
     const result = JSON.parse(jsonMatch[0]);
     if (result.flagged) {
-      console.log(`${tag()} Comment flagged by Gemini: ${result.reason}`);
+      log.info(`Comment flagged by Gemini: ${result.reason}`);
     }
     const categoryRaw =
       typeof result.category === 'string' ? result.category.toLowerCase() : '';
@@ -125,7 +122,7 @@ class ModerationService {
   private keywordFilter(comment: string): IModerationResult {
     for (const pattern of BLOCKED_PATTERNS) {
       if (pattern.test(comment)) {
-        console.log(`${tag()} Comment flagged by keyword filter`);
+        log.info('Comment flagged by keyword filter');
         return {
           flagged: true,
           reason: 'Comment contains inappropriate language.',

@@ -20,6 +20,7 @@ import {
   createServiceAlertCard
 } from './utils/notification-card';
 import { formatNotificationTime } from './utils/alert-content';
+import { authHeaders, getToken } from './services/session';
 
 type View = 'all' | 'service' | 'live';
 type Snapshot<T> = { items: T[]; loaded: boolean; failed: boolean };
@@ -64,10 +65,6 @@ const resolveRouteDisplay = (id: string) =>
   getRouteDisplay(id, routeDisplayById);
 const formatMessage = (message: string) =>
   formatNotificationMessage(message, routeDisplayById);
-
-function authHeaders(): Record<string, string> {
-  return { Authorization: `Bearer ${localStorage.getItem('token') ?? ''}` };
-}
 
 function renderCards(
   visibleAlerts: IServiceAlert[],
@@ -269,7 +266,7 @@ function scheduleRefresh(): void {
 }
 
 function init(): void {
-  const token = localStorage.getItem('token');
+  const token = getToken();
   if (!token) {
     window.location.replace('/auth');
     return;
@@ -313,7 +310,7 @@ function init(): void {
   });
   void refresh();
 
-  const socket = io({ query: { token } });
+  const socket = io({ auth: { token } });
   socket.on('alertUpdate', scheduleRefresh);
   document.addEventListener('scottygo:notification', scheduleRefresh);
   const visibilityRefresh = () => {

@@ -33,10 +33,8 @@ const POLL_SEC = argVal('--poll', 10);
 const DURATION_MS = DURATION_MIN * 60 * 1000;
 const POLL_MS = POLL_SEC * 1000;
 
-import {
-  TripshotLocation,
-  TripshotViaStop
-} from '../server/services/tripshot-api';
+import type { TripshotLocation } from '../server/services/tripshot-api';
+import type { TripshotViaStop } from '../tools/tripshot-route-summary';
 
 // ── Types ──────────────────────────────────────────────────────────────
 

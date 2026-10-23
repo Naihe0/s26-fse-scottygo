@@ -1,35 +1,59 @@
-// controller superclass for behavior common to all controllers
+// Base class for route controllers: response envelopes, authentication
+// middleware, and mapping of application errors to HTTP status codes.
 
 import { Router, Response, Request, NextFunction } from 'express';
 import { Server as SocketServer } from 'socket.io';
-import path from 'path';
 import { authenticateSession } from '../services/authentication.service';
 import type { ILogin, ITokenPayload } from '../../common/user.interface';
-import * as responses from '../../common/server.responses';
+import type {
+  ClientErrorName,
+  IAppError,
+  IPayload,
+  ISuccess,
+  ServerErrorName,
+  SuccessName
+} from '../../common/server.responses';
+import { clientError, serverError, toAppError } from '../errors';
+import { createLogger, type ILogger } from '../logger';
+
+/** Status codes for client errors that are not plain 400 Bad Request. */
+const CLIENT_ERROR_STATUS: Partial<Record<ClientErrorName, number>> = {
+  MissingToken: 401,
+  InvalidToken: 401,
+  ProximityViolation: 403,
+  RouteNotFound: 404,
+  StopNotFound: 404,
+  VehicleNotFound: 404,
+  SubscriptionNotFound: 404,
+  DuplicateSubscription: 409,
+  SubscriptionLimitReached: 409
+};
+
+export type AuthenticatedRequest = Request & { user: ITokenPayload };
 
 abstract class Controller {
-  // note the abstract keyword here
-  // path or partial URL managed by this controller
-  public path: string;
-
   public static io: SocketServer;
 
   public static clientDir: string;
 
-  // each controller has a router
-  public router: Router = Router();
+  public readonly router: Router = Router();
 
-  /**
-   * Helper to serve an HTML file from the client directory
-   */
-  protected sendPage(res: Response, htmlFile: string): void {
-    res.sendFile(path.join(Controller.clientDir, htmlFile));
+  protected readonly log: ILogger;
+
+  constructor(public readonly path: string) {
+    this.log = createLogger(this.constructor.name);
+    this.initializeRoutes();
   }
 
-  /**
-   * Return a copy of the given object with the password replaced by 'obfuscated'.
-   * T must contain a `credentials` field typed as ILogin.
-   */
+  /** Register this controller's endpoints on its router. */
+  public abstract initializeRoutes(): void;
+
+  /** Serve an HTML page from the built client directory. */
+  protected sendPage(res: Response, htmlFile: string): void {
+    res.sendFile(htmlFile, { root: Controller.clientDir });
+  }
+
+  /** Copy of a user with the password hash replaced by a placeholder. */
   protected sanitizeUser<T extends { credentials: ILogin }>(user: T): T {
     return {
       ...user,
@@ -40,103 +64,76 @@ abstract class Controller {
     };
   }
 
-  constructor(path: string) {
-    this.path = path;
-    this.initializeRoutes();
-  }
-
-  // each controller must define this method to set up its endpoints
-  public abstract initializeRoutes(): void;
-
-  /**
-   * Narrow an unknown caught value to IAppError, or return null.
-   * Use this instead of repeating the inline type guard.
-   */
-  protected asAppError(error: unknown): responses.IAppError | null {
-    if (
-      error &&
-      typeof error === 'object' &&
-      'type' in error &&
-      'name' in error
-    ) {
-      return error as responses.IAppError;
-    }
-    return null;
-  }
-
-  protected clientError(
-    name: responses.ClientErrorName,
-    message: string
-  ): responses.IAppError {
-    return { type: 'ClientError', name, message };
-  }
-
   protected success(
-    name: responses.SuccessName,
-    payload: responses.IPayload,
+    name: SuccessName,
+    payload: IPayload,
     message?: string,
     metadata?: Record<string, unknown>
-  ): responses.ISuccess {
-    const response: responses.ISuccess = { name, payload };
+  ): ISuccess {
+    const response: ISuccess = { name, payload };
     if (message) response.message = message;
     if (metadata) response.metadata = metadata;
     return response;
   }
 
+  protected sendClientError(
+    res: Response,
+    status: number,
+    name: ClientErrorName,
+    message: string
+  ): void {
+    res.status(status).json(clientError(name, message));
+  }
+
   /**
-   * Shared JWT middleware used by controllers that protect API routes.
-   * Attaches decoded token payload to req.user for downstream handlers.
+   * Middleware that rejects requests without an active session and exposes
+   * the token payload to later handlers as `req.user`.
    */
-  protected async authenticateToken(
+  public async authenticateToken(
     req: Request,
     res: Response,
     next: NextFunction
   ): Promise<void> {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) {
-      res
-        .status(401)
-        .json(this.clientError('MissingToken', 'Token is required'));
+      this.sendClientError(res, 401, 'MissingToken', 'Token is required');
       return;
     }
-
     try {
       const { payload } = await authenticateSession(token);
-      (req as Request & { user: ITokenPayload }).user = payload;
+      (req as AuthenticatedRequest).user = payload;
       next();
     } catch {
-      res
-        .status(401)
-        .json(this.clientError('InvalidToken', 'Invalid or expired token'));
+      this.sendClientError(res, 401, 'InvalidToken', 'Invalid or expired token');
     }
   }
 
   protected getTokenPayload(req: Request): ITokenPayload | null {
-    const tokenPayload = (req as Request & { user?: ITokenPayload }).user;
-    return tokenPayload ?? null;
+    return (req as Partial<AuthenticatedRequest>).user ?? null;
   }
 
   /**
-   * Uniform error handler for caught exceptions.
-   * Forwards known IAppError shapes directly; wraps unknown errors as ServerError.
+   * Send a caught error. Application errors keep their name with a mapped
+   * status; anything else is logged and reported as a generic server error.
    */
   protected handleAppError(
     res: Response,
     error: unknown,
-    fallbackMessage: string = 'An unexpected error occurred'
+    fallbackMessage = 'An unexpected error occurred',
+    fallbackName: ServerErrorName = 'MongoDBError'
   ): void {
-    const appError = this.asAppError(error);
+    const appError = toAppError(error);
     if (appError) {
-      const statusCode = appError.type === 'ClientError' ? 400 : 500;
-      res.status(statusCode).json(appError);
+      res.status(Controller.statusFor(appError)).json(appError);
       return;
     }
-    const unexpectedError: responses.IAppError = {
-      type: 'ServerError',
-      name: 'MongoDBError',
-      message: fallbackMessage
-    };
-    res.status(500).json(unexpectedError);
+    this.log.error('Unexpected error:', error);
+    res.status(500).json(serverError(fallbackName, fallbackMessage));
+  }
+
+  private static statusFor(error: IAppError): number {
+    if (error.type !== 'ClientError') return 500;
+    return CLIENT_ERROR_STATUS[error.name as ClientErrorName] ?? 400;
   }
 }
 

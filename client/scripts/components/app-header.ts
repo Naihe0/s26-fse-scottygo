@@ -5,6 +5,8 @@
  * Attributes:
  *   back  - Boolean attribute. If present, shows a back button that navigates to the previous page.
  */
+import { getToken, signOut } from '../services/session';
+
 export class AppHeader extends HTMLElement {
   private menuOpen = false;
 
@@ -70,7 +72,7 @@ export class AppHeader extends HTMLElement {
       page === path || (path === '/' && page === '/map')
         ? ' aria-current="page"'
         : '';
-    const signedIn = Boolean(localStorage.getItem('token'));
+    const signedIn = Boolean(getToken());
 
     const backButton = showBack
       ? `<button type="button" class="back-icon" id="back-icon" aria-label="Go back">
@@ -170,9 +172,7 @@ export class AppHeader extends HTMLElement {
 
     logoutBtn?.addEventListener('click', (event) => {
       event.preventDefault();
-      localStorage.removeItem('token');
-      localStorage.removeItem('username');
-      window.location.replace('/auth');
+      signOut();
     });
   }
 }

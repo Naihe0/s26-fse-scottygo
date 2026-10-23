@@ -1,4 +1,4 @@
-// Interfaces for PRT transit data (routes, vehicles, stops, predictions, detours)
+// Transit data shared by the server and browser (PRT and CMU).
 
 export interface IRoute {
   id: string; // e.g., "P1", "61C"
@@ -76,7 +76,7 @@ export interface IPattern {
 
 // ── Search Result Types ────────────────────────────────────────────────
 
-/** Combined result for the Stop and Route Search context (GET /map/search). */
+/** Combined result for the stop and route search (GET /search). */
 export interface ITransitSearchResult {
   routes: IRoute[];
   stops: IStop[];
@@ -94,7 +94,7 @@ export interface IBulkTransitData {
   stops: Record<string, IStop[]>;
 }
 
-// ── Discover Stops & Schedules (TUC4) ──────────────────────────────────
+// ── Nearby Stops ───────────────────────────────────────────────────────
 
 export interface INearbyStopsFilters {
   routeId?: string;
@@ -119,15 +119,20 @@ export interface INearbyStopsPayload {
   stops: INearbyStop[];
 }
 
-// ── Live Notification (TUC3) ───────────────────────────────────────────
+// ── Live Notifications ─────────────────────────────────────────────────
 
-export type ICrowdedness =
-  | 'Empty'
-  | 'Few Seats Taken'
-  | 'Standing Room'
-  | 'Packed';
-export type IPrioritySeating = 'Available' | 'Occupied';
-export type IBusCondition = 'Clean' | 'Dirty' | 'Average';
+export const CROWDEDNESS_LEVELS = [
+  'Empty',
+  'Few Seats Taken',
+  'Standing Room',
+  'Packed'
+] as const;
+export const PRIORITY_SEATING_STATES = ['Available', 'Occupied'] as const;
+export const BUS_CONDITIONS = ['Clean', 'Dirty', 'Average'] as const;
+
+export type ICrowdedness = (typeof CROWDEDNESS_LEVELS)[number];
+export type IPrioritySeating = (typeof PRIORITY_SEATING_STATES)[number];
+export type IBusCondition = (typeof BUS_CONDITIONS)[number];
 
 export interface ISubscription {
   _id?: string;
@@ -199,12 +204,12 @@ export interface IRouteSchedule {
 }
 
 // ── Transit Cache ──────────────────────────────────────────────────────
-// Cached TrueTime data stored in MongoDB to respect the daily API limit.
+// MongoDB cache entries for upstream transit data (currently detours).
 
 export type ITransitCacheType = 'routes' | 'stops' | 'patterns' | 'detours';
 
 export interface ITransitCache {
-  cacheKey: string; // e.g. "routes", "stops:61C:INBOUND", "patterns:61C", "detours:61C"
+  cacheKey: string; // e.g. "detours:all"
   dataType: ITransitCacheType;
   data: IRoute[] | IStop[] | IPattern[] | IDetour[];
   lastUpdated: Date;

@@ -1,11 +1,11 @@
 import type { Request, Response } from 'express';
-import BusController from '../../../server/controllers/transit.controller';
+import TransitController from '../../../server/controllers/transit.controller';
 import { TransitModel } from '../../../server/models/transit.model';
 import gtfsService from '../../../server/services/gtfs.service';
 import {
   parseTransitDate,
   validateTransitTime
-} from '../../../server/services/transit-date';
+} from '../../../server/services/transit-validation';
 
 function mockResponse() {
   const response = { status: jest.fn(), json: jest.fn() };
@@ -13,7 +13,7 @@ function mockResponse() {
   return response;
 }
 
-const controller = BusController.getInstance('/transit') as unknown as {
+const controller = TransitController.getInstance('/transit') as unknown as {
   getNearbyStops(req: Request, res: Response): Promise<void>;
   getStops(req: Request, res: Response): Promise<void>;
   filterRoutesByDateTime(req: Request, res: Response): Promise<void>;

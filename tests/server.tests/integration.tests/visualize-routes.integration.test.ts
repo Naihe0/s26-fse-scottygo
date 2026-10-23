@@ -13,7 +13,7 @@ import App from '../../../server/app';
 import { MongoDB } from '../../../server/db/mongo.db';
 import AuthController from '../../../server/controllers/auth.controller';
 import MapController from '../../../server/controllers/map.controller';
-import BusController from '../../../server/controllers/transit.controller';
+import TransitController from '../../../server/controllers/transit.controller';
 import DAC from '../../../server/db/dac';
 import { TransitModel } from '../../../server/models/transit.model';
 import * as responses from '../../../common/server.responses';
@@ -295,7 +295,7 @@ beforeAll(async () => {
     [
       AuthController.getInstance('/auth'),
       MapController.getInstance('/'),
-      BusController.getInstance('/transit')
+      TransitController.getInstance('/transit')
     ],
     {
       clientDir: './.dist/client',

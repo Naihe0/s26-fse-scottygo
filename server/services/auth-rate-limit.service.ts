@@ -1,6 +1,19 @@
-import type { RequestHandler } from 'express';
+import type { RequestHandler, Response } from 'express';
+import { clientError } from '../errors';
 
 type Bucket = { count: number; expiresAt: number };
+
+function rejectTooManyRequests(res: Response, retryAfterMs: number): void {
+  res.setHeader('Retry-After', Math.max(1, Math.ceil(retryAfterMs / 1000)));
+  res
+    .status(429)
+    .json(
+      clientError(
+        'UnauthorizedRequest',
+        'Too many authentication requests. Please try again later.'
+      )
+    );
+}
 
 /** A bounded, process-local abuse limit. Never reads forwarded headers directly. */
 export function createIpRateLimiter(options: {
@@ -32,30 +45,14 @@ export function createIpRateLimiter(options: {
     if (!bucket) {
       if (buckets.size >= capacity) {
         // Bound memory without evicting active limits (which would allow bypass).
-        res.setHeader(
-          'Retry-After',
-          Math.max(1, Math.ceil((nextCleanupAt - time) / 1000))
-        );
-        res.status(429).json({
-          type: 'ClientError',
-          name: 'UnauthorizedRequest',
-          message: 'Too many authentication requests. Please try again later.'
-        });
+        rejectTooManyRequests(res, nextCleanupAt - time);
         return;
       }
       bucket = { count: 0, expiresAt: time + options.windowMs };
       buckets.set(key, bucket);
     }
     if (bucket.count >= options.limit) {
-      res.setHeader(
-        'Retry-After',
-        Math.max(1, Math.ceil((bucket.expiresAt - time) / 1000))
-      );
-      res.status(429).json({
-        type: 'ClientError',
-        name: 'UnauthorizedRequest',
-        message: 'Too many authentication requests. Please try again later.'
-      });
+      rejectTooManyRequests(res, bucket.expiresAt - time);
       return;
     }
     bucket.count += 1;

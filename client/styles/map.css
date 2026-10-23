@@ -41,10 +41,6 @@ body {
   overflow: hidden;
 }
 
-body.dark {
-  background-color: var(--bg-dark);
-}
-
 /* Keep the root in normal flow: fixing both html and body can displace the
    entire app when WebKit sizes the page beneath the browser's toolbars. */
 app-header {
@@ -104,11 +100,6 @@ app-header {
   padding: 16px;
 }
 
-body.dark .panel {
-  background: rgba(31, 41, 55, 0.95);
-  color: var(--white);
-}
-
 .circle-btn {
   width: 48px;
   height: 48px;
@@ -135,11 +126,6 @@ body.dark .panel {
   transform: scale(0.95);
 }
 
-.circle-btn.primary {
-  background: var(--primary);
-  color: white;
-}
-
 .circle-btn.danger {
   background: #f3f4f6;
 }
@@ -147,31 +133,6 @@ body.dark .panel {
 .circle-btn.danger:hover {
   background: #fee2e2;
   color: #dc2626;
-}
-
-body.dark .circle-btn {
-  background: var(--gray-800);
-  color: var(--white);
-}
-
-body.dark .circle-btn.primary {
-  background: var(--primary);
-  color: var(--white);
-}
-
-body.dark .circle-btn.danger {
-  background: var(--gray-800);
-  color: #9ca3af;
-}
-
-body.dark .circle-btn.danger:hover {
-  background: #451a1a;
-  color: #f87171;
-}
-
-.floating {
-  position: absolute;
-  z-index: 20;
 }
 
 /* Transit Search Component */
@@ -212,28 +173,10 @@ body.dark .circle-btn.danger:hover {
     0 0 0 1px rgba(0, 0, 0, 0.06);
 }
 
-body.dark .search-box {
-  background: #1f2937;
-  color: var(--white);
-  box-shadow:
-    0 2px 6px rgba(0, 0, 0, 0.4),
-    0 0 0 1px rgba(255, 255, 255, 0.06);
-}
-
-body.dark .search-box:focus-within {
-  box-shadow:
-    0 4px 12px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(255, 255, 255, 0.1);
-}
-
 .search-box .search-icon {
   color: #5f6368;
   font-size: 22px;
   flex-shrink: 0;
-}
-
-body.dark .search-box .search-icon {
-  color: #9aa0a6;
 }
 
 .search-box input {
@@ -253,17 +196,8 @@ body.dark .search-box .search-icon {
   line-height: 48px;
 }
 
-body.dark .search-box input {
-  color: #e8eaed;
-}
-
 .search-box input::placeholder {
   color: #5f6368;
-  opacity: 1;
-}
-
-body.dark .search-box input::placeholder {
-  color: #9aa0a6;
   opacity: 1;
 }
 
@@ -292,14 +226,6 @@ body.dark .search-box input::placeholder {
   background: rgba(0, 0, 0, 0.06);
 }
 
-body.dark .search-clear-btn {
-  color: #9aa0a6;
-}
-
-body.dark .search-clear-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-}
-
 .search-box:focus-within .search-clear-btn,
 .search-clear-btn.is-visible {
   display: flex;
@@ -322,13 +248,6 @@ body.dark .search-clear-btn:hover {
   z-index: 40;
 }
 
-body.dark .search-dropdown {
-  background: #1f2937;
-  box-shadow:
-    0 4px 16px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(255, 255, 255, 0.06);
-}
-
 .search-dropdown::-webkit-scrollbar {
   width: 4px;
 }
@@ -336,10 +255,6 @@ body.dark .search-dropdown {
 .search-dropdown::-webkit-scrollbar-thumb {
   background: rgba(0, 0, 0, 0.15);
   border-radius: 4px;
-}
-
-body.dark .search-dropdown::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
 }
 
 /* Result items */
@@ -358,11 +273,6 @@ body.dark .search-dropdown::-webkit-scrollbar-thumb {
   outline: none;
 }
 
-body.dark .search-result-item:hover,
-body.dark .search-result-item:focus {
-  background: rgba(255, 255, 255, 0.06);
-}
-
 .search-result-icon {
   font-size: 20px;
   color: #5f6368;
@@ -371,14 +281,6 @@ body.dark .search-result-item:focus {
 
 .search-result-route .search-result-icon {
   color: var(--primary, #c41230);
-}
-
-body.dark .search-result-icon {
-  color: #9aa0a6;
-}
-
-body.dark .search-result-route .search-result-icon {
-  color: #f28b82;
 }
 
 .search-result-content {
@@ -394,10 +296,6 @@ body.dark .search-result-route .search-result-icon {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-body.dark .search-result-name {
-  color: #e8eaed;
 }
 
 .search-result-badges {
@@ -419,10 +317,6 @@ body.dark .search-result-name {
   text-align: center;
   color: #5f6368;
   font-size: 14px;
-}
-
-body.dark .search-no-results {
-  color: #9aa0a6;
 }
 
 /* Layers button */
@@ -474,10 +368,6 @@ body.dark .search-no-results {
   z-index: 20;
 }
 
-body.dark .control-panel {
-  background: rgba(31, 41, 55, 0.95);
-}
-
 /* Route Bell Component — sits above the zoom panel */
 route-bell {
   position: absolute;
@@ -499,11 +389,6 @@ route-bell.is-disabled .bell-btn {
   color: white;
 }
 
-body.dark .bell-btn.bell-subscribed {
-  background: var(--primary);
-  color: white;
-}
-
 /* Zoom Controls Component */
 .zoom-panel {
   position: absolute;
@@ -516,14 +401,6 @@ body.dark .bell-btn.bell-subscribed {
 }
 
 /* Dark Mode Toggle Component */
-.dark-btn {
-  position: absolute;
-  left: 20px;
-  bottom: 40px;
-  width: 48px;
-  height: 48px;
-  z-index: 20;
-}
 
 /* System Toggle Component */
 .system-panel {
@@ -541,62 +418,10 @@ body.dark .bell-btn.bell-subscribed {
   color: var(--gray-800);
 }
 
-body.dark .system-panel h3 {
-  color: var(--white);
-}
-
-.toggle-group {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.toggle-item {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  gap: 8px;
-}
-
-.toggle-item input[type='checkbox'] {
-  width: 40px;
-  height: 20px;
-  appearance: none;
-  background: #d1d5db;
-  border-radius: 10px;
-  position: relative;
-  cursor: pointer;
-  transition: background 0.3s ease;
-}
-
-.toggle-item input[type='checkbox']:checked {
-  background: var(--primary);
-}
-
-.toggle-item input[type='checkbox']::before {
-  content: '';
-  position: absolute;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: white;
-  top: 2px;
-  left: 2px;
-  transition: left 0.3s ease;
-}
-
-.toggle-item input[type='checkbox']:checked::before {
-  left: 22px;
-}
-
 .toggle-label {
   font-size: 14px;
   font-weight: 500;
   color: var(--gray-800);
-}
-
-body.dark .toggle-label {
-  color: var(--white);
 }
 
 /* System Icon in Map Controls */
@@ -692,10 +517,6 @@ body.dark .toggle-label {
   margin: 0;
 }
 
-body.dark .filter-label {
-  color: var(--gray-100);
-}
-
 .toggle-switch {
   position: relative;
   display: inline-block;
@@ -753,14 +574,6 @@ input:checked + .slider:before {
   transform: translateX(20px);
 }
 
-body.dark .slider {
-  background-color: var(--gray-700);
-}
-
-body.dark input:checked + .slider {
-  background-color: var(--primary);
-}
-
 .filter-actions {
   display: flex;
   justify-content: space-between;
@@ -768,10 +581,6 @@ body.dark input:checked + .slider {
   padding-top: 4px;
   margin-top: 4px;
   border-top: 1px solid rgba(0, 0, 0, 0.05);
-}
-
-body.dark .filter-actions {
-  border-top-color: rgba(255, 255, 255, 0.1);
 }
 
 .filter-btn {
@@ -794,162 +603,17 @@ body.dark .filter-actions {
   transform: scale(0.95);
 }
 
-body.dark .filter-btn {
-  color: #60a5fa;
-}
-
-body.dark .filter-btn:hover {
-  background: rgba(96, 165, 250, 0.1);
-}
-
 /* Time Picker Panel Component */
-.time-picker-panel {
-  position: absolute;
-  left: 90px;
-  top: 50%;
-  transform: translateY(-50%) translateX(-20px);
-  min-width: 280px;
-  z-index: 25;
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity 0.3s ease,
-    transform 0.3s ease;
-}
 
 /* Mobile: Reduce time picker panel width */
-@media (max-width: 480px) {
-  .time-picker-panel {
-    min-width: 240px;
-  }
-
-  .panel-title {
-    font-size: 11px;
-  }
-
-  .digital input {
-    font-size: 22px;
-  }
-
-  .analog-clock-face {
-    width: 180px;
-    height: 180px;
-  }
-}
-
-.time-picker-panel.visible {
-  opacity: 1;
-  transform: translateY(-50%) translateX(0);
-  pointer-events: auto;
-}
-
-.panel-title {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--gray-700);
-  margin: 0 0 16px 0;
-}
-
-body.dark .panel-title {
-  color: var(--gray-100);
-}
-
-.digital {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 16px;
-  gap: 8px;
-}
-
-.time-box {
-  background: var(--gray-100);
-  padding: 12px 16px;
-  border-radius: 12px;
-  text-align: center;
-  min-width: 60px;
-}
-
-body.dark .time-box {
-  background: var(--gray-800);
-}
-
-.time-box .time-input {
-  font-size: 32px;
-  font-family: 'Roboto Mono', monospace;
-  color: var(--primary);
-  font-weight: 500;
-  border: none;
-  background: transparent;
-  width: 100%;
-  text-align: center;
-  outline: none;
-  -moz-appearance: textfield; /* Remove spinners in Firefox */
-}
-
-.time-box .time-input::-webkit-outer-spin-button,
-.time-box .time-input::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
-body.dark .time-box .time-input {
-  color: var(--primary);
-}
 
 /* Legacy support for span if any component still uses it */
-.time-box span {
-  font-size: 32px;
-  font-family: 'Roboto Mono', monospace;
-  color: var(--primary);
-  font-weight: 500;
-}
-
-.colon {
-  font-size: 28px;
-  font-weight: bold;
-  color: var(--primary);
-}
 
 .period {
   display: flex;
   gap: 8px;
   justify-content: center;
   margin-bottom: 16px;
-}
-
-.period-btn {
-  padding: 8px 20px;
-  border: 1px solid #ddd;
-  background: white;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 13px;
-  color: #666;
-  border-radius: 8px;
-  transition: all 0.2s;
-}
-
-body.dark .period-btn {
-  background: var(--gray-800);
-  border-color: var(--gray-700);
-  color: var(--gray-100);
-}
-
-.period-btn:hover {
-  background: #f5f5f5;
-}
-
-body.dark .period-btn:hover {
-  background: var(--gray-700);
-}
-
-.period-btn.active {
-  background: var(--primary);
-  color: white;
-  border-color: var(--primary);
 }
 
 .clock {
@@ -962,243 +626,21 @@ body.dark .period-btn:hover {
   margin: 0 auto 20px auto;
 }
 
-body.dark .clock {
-  background: var(--gray-800);
-  border-color: var(--gray-700);
-}
-
-.clock-number {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  font-size: 13px;
-  color: #999;
-  cursor: pointer;
-  user-select: none;
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  transition: all 0.2s;
-  font-weight: 500;
-}
-
-.clock-number:hover {
-  background: #f0f0f0;
-  color: #333;
-}
-
-body.dark .clock-number {
-  color: var(--gray-100);
-}
-
-body.dark .clock-number:hover {
-  background: var(--gray-700);
-  color: var(--white);
-}
-
-.clock-number.active {
-  background: var(--primary);
-  color: white;
-  font-weight: bold;
-  box-shadow: 0 2px 8px rgba(196, 18, 48, 0.3);
-}
-
 /* Calendar Picker Panel Styles */
-.calendar-picker-panel {
-  position: absolute;
-  left: 90px;
-  top: 50%;
-  transform: translateY(-50%) translateX(-20px);
-  opacity: 0;
-  pointer-events: none;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  z-index: 1000;
-  width: 340px;
-  background: var(--white);
-  border-radius: 24px;
-  padding: 20px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
-  overflow: visible;
-}
-
-.calendar-picker-panel.visible {
-  transform: translateY(-50%) translateX(0);
-  opacity: 1;
-  pointer-events: auto;
-}
 
 /* Calendar Header */
-.cal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.cal-nav-btn {
-  border: none;
-  background: none;
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s;
-  color: var(--gray-700);
-}
-
-.cal-nav-btn:hover {
-  background: var(--gray-200);
-}
-
-.cal-nav-btn .material-icons-outlined {
-  font-size: 20px;
-}
-
-.cal-month-year {
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--gray-900);
-}
 
 /* Weekdays */
-.cal-weekdays {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  text-align: center;
-  margin-bottom: 8px;
-}
-
-.cal-weekdays div {
-  font-size: 11px;
-  color: var(--gray-600);
-  font-weight: 500;
-  padding: 8px 0;
-}
 
 /* Calendar Grid */
-.cal-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  text-align: center;
-  gap: 4px;
-  align-content: start;
-  padding: 0 4px;
-}
-
-.cal-day {
-  padding: 0;
-  cursor: pointer;
-  border-radius: 50%;
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto;
-  font-size: 14px;
-  color: var(--gray-900);
-  transition: all 0.2s;
-  user-select: none;
-  border: 2px solid transparent;
-}
-
-.cal-day:hover:not(.muted) {
-  background: var(--gray-200);
-}
-
-.cal-day.muted {
-  color: var(--gray-400);
-  cursor: default;
-}
-
-.cal-day.selected {
-  background: var(--primary);
-  color: white;
-  font-weight: 600;
-  border: 2px solid var(--primary);
-  box-shadow: 0 0 0 2px rgba(196, 18, 48, 0.2);
-  transform: scale(1.05);
-}
 
 /* Dark Mode Calendar Styles */
-body.dark .calendar-picker-panel {
-  background: var(--gray-800);
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
-}
-
-body.dark .cal-nav-btn {
-  color: var(--gray-300);
-}
-
-body.dark .cal-nav-btn:hover {
-  background: var(--gray-700);
-}
-
-body.dark .cal-month-year {
-  color: var(--gray-100);
-}
-
-body.dark .cal-weekdays div {
-  color: var(--gray-400);
-}
-
-body.dark .cal-day {
-  color: var(--gray-100);
-}
-
-body.dark .cal-day:hover:not(.muted) {
-  background: var(--gray-700);
-}
-
-body.dark .cal-day.muted {
-  color: var(--gray-600);
-}
 
 /* Mobile and Tablet: Reduce calendar to 6 columns */
 @media (max-width: 820px) {
-  .calendar-picker-panel {
-    width: 240px;
-    padding: 12px;
-    border-radius: 16px;
-    max-height: none;
-    overflow: visible;
-  }
-
-  .cal-header {
-    margin-bottom: 6px;
-  }
-
-  .cal-month-year {
-    font-size: 12px;
-  }
-
-  .cal-nav-btn .material-icons-outlined {
-    font-size: 18px;
-  }
 
   /* Hide weekday labels on mobile for 6-column layout */
-  .cal-weekdays {
-    display: none;
-  }
-
-  .cal-day {
-    width: 28px;
-    height: 28px;
-    font-size: 12px;
-  }
-
-  .cal-grid {
-    grid-template-columns: repeat(6, 1fr) !important;
-    min-height: auto;
-    max-height: 168px;
-    gap: 2px;
-    padding: 0;
-    margin-bottom: 6px;
-  }
+  
 
   .filter-actions {
     margin-top: 0;
@@ -1209,10 +651,6 @@ body.dark .cal-day.muted {
   .filter-btn {
     font-size: 12px;
     padding: 6px 12px;
-  }
-
-  body.dark .filter-actions {
-    border-top-color: rgba(255, 255, 255, 0.1);
   }
 }
 
@@ -1352,47 +790,6 @@ body.dark .cal-day.muted {
 }
 
 /* Dark Mode Route Selector Styles */
-body.dark .route-selector-panel {
-  background: var(--gray-800);
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
-}
-
-body.dark .route-search-input {
-  background: var(--gray-700);
-  border-color: var(--gray-600);
-  color: var(--gray-100);
-}
-
-body.dark .route-search-input:focus {
-  border-color: var(--primary);
-}
-
-body.dark .route-search-icon {
-  color: var(--gray-400);
-}
-
-body.dark .route-list::-webkit-scrollbar-track {
-  background: var(--gray-700);
-}
-
-body.dark .route-list::-webkit-scrollbar-thumb {
-  background: var(--gray-600);
-}
-
-body.dark .route-list::-webkit-scrollbar-thumb:hover {
-  background: var(--gray-500);
-}
-
-body.dark .route-btn {
-  background: var(--gray-700);
-  border-color: var(--gray-600);
-  color: var(--gray-100);
-}
-
-body.dark .route-btn:hover {
-  background: var(--gray-600);
-  border-color: var(--gray-500);
-}
 
 /* Responsive Design */
 @media (max-width: 768px) {
@@ -1416,25 +813,12 @@ body.dark .route-btn:hover {
     bottom: calc(200px + env(safe-area-inset-bottom, 0px)); /* 32 + 160 + 8 */
   }
 
-  .dark-btn {
-    left: 16px;
-    bottom: calc(30px + env(safe-area-inset-bottom, 0px));
-  }
-
   .system-panel {
     right: 16px;
     top: 90px;
   }
 
   .toggle-filter-panel {
-    left: 80px;
-  }
-
-  .time-picker-panel {
-    left: 80px;
-  }
-
-  .calendar-picker-panel {
     left: 80px;
   }
 
@@ -1484,12 +868,6 @@ body.dark .route-btn:hover {
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
 }
 
-body.dark .modal {
-  background: var(--gray-800);
-  border-color: var(--primary);
-  color: var(--white);
-}
-
 .modal-title {
   font-size: 18px;
   font-weight: 600;
@@ -1497,19 +875,11 @@ body.dark .modal {
   color: #c41230;
 }
 
-body.dark .modal-title {
-  color: var(--primary);
-}
-
 .modal-message {
   font-size: 14px;
   line-height: 1.6;
   color: #333;
   margin: 0 0 20px 0;
-}
-
-body.dark .modal-message {
-  color: var(--gray-100);
 }
 
 .modal-actions {
@@ -1633,31 +1003,6 @@ body.dark .modal-message {
 }
 
 /* Dark mode */
-body.dark .service-status-banner {
-  background: rgba(127, 29, 29, 0.4);
-  border-color: #991b1b;
-  color: #fca5a5;
-}
-
-body.dark .service-status-banner__icon {
-  color: #f87171;
-}
-
-body.dark .service-status-banner__text li {
-  color: #fca5a5;
-}
-
-body.dark .service-status-banner__text li::before {
-  color: #f87171;
-}
-
-body.dark .service-status-banner__close {
-  color: #fca5a5;
-}
-
-body.dark .service-status-banner__close:hover {
-  color: #fee2e2;
-}
 
 /* ============================================
    UNIFIED MAP POPUP  (stop info + bus info)
@@ -1845,27 +1190,6 @@ body.dark .service-status-banner__close:hover {
   font-weight: 500;
 }
 
-.map-popup__source {
-  display: inline-block;
-  margin-top: 10px;
-  padding: 2px 10px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-align: center;
-}
-
-.map-popup__source--live {
-  background: #dcfce7;
-  color: #166534;
-}
-
-.map-popup__source--static {
-  background: #fef9c3;
-  color: #854d0e;
-}
-
 .map-popup__value--live {
   display: flex;
   align-items: center;
@@ -1925,49 +1249,6 @@ body.dark .service-status-banner__close:hover {
 
 /* ── Dark mode ─── */
 
-body.dark .map-popup {
-  background: rgba(31, 41, 55, 0.97);
-  color: #f3f4f6;
-}
-
-body.dark .map-popup__close {
-  color: #9ca3af;
-}
-
-body.dark .map-popup__close:hover {
-  color: #f3f4f6;
-}
-
-body.dark .map-popup__subheader {
-  color: #9ca3af;
-}
-
-body.dark .map-popup__arrival {
-  border-bottom-color: #374151;
-}
-
-body.dark .map-popup__meta {
-  color: #9ca3af;
-}
-
-body.dark .map-popup__row {
-  border-bottom-color: #374151;
-}
-
-body.dark .map-popup__label {
-  color: #9ca3af;
-}
-
-body.dark .map-popup__source--live {
-  background: #065f46;
-  color: #a7f3d0;
-}
-
-body.dark .map-popup__source--static {
-  background: #713f12;
-  color: #fef08a;
-}
-
 /* ============================================
    MAP NOTIFICATION POPUPS
    Stacked toast-style cards in top-right corner
@@ -1986,161 +1267,7 @@ body.dark .map-popup__source--static {
   width: min(320px, calc(100% - 40px));
 }
 
-@keyframes mapNotifSlideIn {
-  from {
-    opacity: 0;
-    transform: translateX(32px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes mapNotifFadeOut {
-  from {
-    opacity: 1;
-    transform: translateX(0);
-    max-height: 200px;
-    margin-bottom: 0;
-  }
-  to {
-    opacity: 0;
-    transform: translateX(32px);
-    max-height: 0;
-    margin-bottom: -10px;
-  }
-}
-
-.map-notif-card {
-  background: #fff;
-  border-radius: 14px;
-  padding: 12px 12px 10px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
-  border-left: 4px solid #ccc;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  pointer-events: auto;
-  animation: mapNotifSlideIn 0.3s ease-out;
-  overflow: hidden;
-}
-
-.map-notif-card.is-dismissing {
-  animation: mapNotifFadeOut 0.3s ease-in forwards;
-}
-
-.map-notif-card[data-category='accessibility'] {
-  border-left-color: #f59e0b;
-}
-.map-notif-card[data-category='capacity'] {
-  border-left-color: #ef4444;
-}
-.map-notif-card[data-category='condition'] {
-  border-left-color: #3b82f6;
-}
-.map-notif-card[data-category='delay'] {
-  border-left-color: #8b5cf6;
-}
-
-.map-notif-header {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding-right: 20px;
-}
-
-.map-notif-icon {
-  flex-shrink: 0;
-  line-height: 0;
-}
-.map-notif-icon[data-category='accessibility'] {
-  color: #f59e0b;
-}
-.map-notif-icon[data-category='capacity'] {
-  color: #ef4444;
-}
-.map-notif-icon[data-category='condition'] {
-  color: #3b82f6;
-}
-.map-notif-icon[data-category='delay'] {
-  color: #8b5cf6;
-}
-
-.map-notif-title {
-  font-size: 14px;
-  font-weight: 700;
-  color: #111;
-  line-height: 1.2;
-}
-
-.map-notif-body {
-  font-size: 13px;
-  color: #444;
-  line-height: 1.4;
-}
-
-.map-notif-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 2px;
-}
-
-.map-notif-tag {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 500;
-  padding: 2px 9px;
-  border-radius: 999px;
-  background: #f0f0f0;
-  color: #555;
-}
-
-.map-notif-tag[data-category='accessibility'] {
-  background: #fef3c7;
-  color: #b45309;
-}
-.map-notif-tag[data-category='capacity'] {
-  background: #fee2e2;
-  color: #b91c1c;
-}
-.map-notif-tag[data-category='condition'] {
-  background: #dbeafe;
-  color: #1d4ed8;
-}
-.map-notif-tag[data-category='delay'] {
-  background: #ede9fe;
-  color: #6d28d9;
-}
-
-.map-notif-time {
-  font-size: 11px;
-  color: #aaa;
-}
-
-.map-notif-dismiss {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: #bbb;
-  padding: 2px;
-  line-height: 0;
-  border-radius: 4px;
-}
-
-.map-notif-dismiss:hover {
-  color: #666;
-  background: #f0f0f0;
-}
-
 /* Each card is position:relative to anchor the dismiss button */
-.map-notif-card {
-  position: relative;
-}
 
 @media (max-width: 768px) {
   .map-notif-container {
@@ -2375,47 +1502,6 @@ bus-report-form.is-open .bus-report-backdrop {
 }
 
 /* Dark mode */
-body.dark .bus-report {
-  background: #1f2937;
-  color: #f3f4f6;
-}
-
-body.dark .bus-report__subtitle {
-  color: #9ca3af;
-}
-
-body.dark .bus-report__bar {
-  background: #374151;
-}
-
-body.dark .bus-report__option {
-  background: #374151;
-  border-color: #4b5563;
-  color: #f3f4f6;
-}
-
-body.dark .bus-report__option--active {
-  background: var(--primary);
-  border-color: var(--primary);
-  color: #fff;
-}
-
-body.dark .bus-report__textarea {
-  background: #374151;
-  border-color: #4b5563;
-  color: #f3f4f6;
-}
-
-body.dark .bus-report__nav-btn--back,
-body.dark .bus-report__nav-btn--skip {
-  background: #374151;
-  color: #f3f4f6;
-}
-
-body.dark .bus-report__nav-btn--back:hover:not(:disabled),
-body.dark .bus-report__nav-btn--skip:hover {
-  background: #4b5563;
-}
 
 /* ============================================
    ROUTE POPUP – SUBSCRIBE BELL BUTTON
@@ -2463,27 +1549,6 @@ body.dark .bus-report__nav-btn--skip:hover {
   background: rgba(0, 0, 0, 0.06);
 }
 
-body.dark .map-popup__subscribe {
-  color: #9ca3af;
-  border-color: #4b5563;
-}
-
-body.dark .map-popup__subscribe:hover {
-  color: #f3f4f6;
-  background: rgba(255, 255, 255, 0.1);
-  border-color: #6b7280;
-}
-
-body.dark .map-popup__subscribe--active {
-  color: var(--primary);
-  border-color: var(--primary);
-}
-
-body.dark .map-popup__subscribe--active:hover {
-  color: var(--primary);
-  background: rgba(255, 255, 255, 0.1);
-}
-
 /* ============================================
    STOP POPUP – MINIMIZE BUTTON (TUC4 A3)
    ============================================ */
@@ -2503,14 +1568,6 @@ body.dark .map-popup__subscribe--active:hover {
   color: #1f2937;
 }
 
-body.dark .map-popup__minimize {
-  color: #9ca3af;
-}
-
-body.dark .map-popup__minimize:hover {
-  color: #f3f4f6;
-}
-
 .map-popup__close {
   background: none;
   border: none;
@@ -2523,14 +1580,6 @@ body.dark .map-popup__minimize:hover {
 
 .map-popup__close:hover {
   color: #1f2937;
-}
-
-body.dark .map-popup__close {
-  color: #9ca3af;
-}
-
-body.dark .map-popup__close:hover {
-  color: #f3f4f6;
 }
 
 /* ============================================
@@ -2549,14 +1598,6 @@ body.dark .map-popup__close:hover {
 .map-popup__walk-icon {
   font-size: 16px;
   color: #4285f4;
-}
-
-body.dark .map-popup__walk-time {
-  color: #9ca3af;
-}
-
-body.dark .map-popup__walk-icon {
-  color: #8ab4f8;
 }
 
 /* ============================================
@@ -2588,14 +1629,6 @@ body.dark .map-popup__walk-icon {
 
 .map-popup__directions-btn .material-icons-outlined {
   font-size: 20px;
-}
-
-body.dark .map-popup__directions-btn {
-  background: #5a9cf5;
-}
-
-body.dark .map-popup__directions-btn:hover {
-  background: #4285f4;
 }
 
 /* ============================================
@@ -2680,27 +1713,6 @@ body.dark .map-popup__directions-btn:hover {
   margin: 8px 0 0;
 }
 
-body.dark .directions-panel {
-  background: rgba(31, 41, 55, 0.97);
-  color: #f3f4f6;
-}
-
-body.dark .directions-panel__close {
-  color: #9ca3af;
-}
-
-body.dark .directions-panel__close:hover {
-  color: #f3f4f6;
-}
-
-body.dark .directions-panel__duration {
-  color: #f3f4f6;
-}
-
-body.dark .directions-panel__eta {
-  color: #9ca3af;
-}
-
 /* ── Directions Panel – Selected Bus Predictions ── */
 
 .directions-panel__buses {
@@ -2757,22 +1769,6 @@ body.dark .directions-panel__eta {
   margin-left: auto;
 }
 
-body.dark .directions-panel__buses {
-  border-top-color: #374151;
-}
-
-body.dark .directions-panel__buses-label {
-  color: #9ca3af;
-}
-
-body.dark .directions-panel__bus-time {
-  color: #f3f4f6;
-}
-
-body.dark .directions-panel__bus-vid {
-  color: #9ca3af;
-}
-
 /* ============================================
    STOP POPUP – SELECTABLE PREDICTIONS
    ============================================ */
@@ -2806,23 +1802,6 @@ body.dark .directions-panel__bus-vid {
   background: rgba(66, 133, 244, 0.18);
 }
 
-body.dark .map-popup__select-hint {
-  color: #6b7280;
-}
-
-body.dark .map-popup__arrival--selectable:hover {
-  background: rgba(138, 180, 248, 0.08);
-}
-
-body.dark .map-popup__arrival--selected {
-  background: rgba(138, 180, 248, 0.15);
-  box-shadow: inset 3px 0 0 #8ab4f8;
-}
-
-body.dark .map-popup__arrival--selected:hover {
-  background: rgba(138, 180, 248, 0.22);
-}
-
 /* ============================================
    DISABLED FILTER CONTROLS (directions mode)
    ============================================ */
@@ -2833,41 +1812,9 @@ map-controls.directions-active .control-panel {
 }
 
 toggle-panel.directions-active,
-time-picker-panel.directions-active,
-calendar-picker-panel.directions-active,
 route-selector-panel.directions-active {
   pointer-events: none;
   opacity: 0.35;
-}
-
-/* ============================================
-   TOAST NOTIFICATION (TUC4 Step 11)
-   Non-intrusive arrival-at-stop notification
-   ============================================ */
-
-.map-toast {
-  position: absolute;
-  bottom: 80px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 600;
-  background: #1f2937;
-  color: #fff;
-  padding: 10px 24px;
-  border-radius: 24px;
-  font-size: 14px;
-  font-weight: 600;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-  animation: mapPopupSlideUp 0.25s ease-out;
-  transition: opacity 0.4s;
-}
-
-.map-toast--fade {
-  opacity: 0;
-}
-
-body.dark .map-toast {
-  background: #374151;
 }
 
 /* ─── Route-Pick Popup ──────────────────────────────────────────────── */
@@ -2882,11 +1829,6 @@ body.dark .map-toast {
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
   pointer-events: auto;
-}
-
-body.dark .route-pick-popup {
-  background: #1f2937;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 
 .route-pick-badge {
@@ -2932,13 +1874,6 @@ location-search {
   pointer-events: auto;
 }
 
-body.dark .location-search-dropdown {
-  background: #1f2937;
-  box-shadow:
-    0 4px 16px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(255, 255, 255, 0.06);
-}
-
 .location-search-item {
   display: flex;
   align-items: center;
@@ -2954,11 +1889,6 @@ body.dark .location-search-dropdown {
   outline: none;
 }
 
-body.dark .location-search-item:hover,
-body.dark .location-search-item:focus {
-  background: rgba(255, 255, 255, 0.06);
-}
-
 .location-search-icon {
   font-size: 22px;
   color: #4285f4;
@@ -2967,14 +1897,6 @@ body.dark .location-search-item:focus {
 
 .location-search-custom .location-search-icon {
   color: #5f6368;
-}
-
-body.dark .location-search-icon {
-  color: #8ab4f8;
-}
-
-body.dark .location-search-custom .location-search-icon {
-  color: #9aa0a6;
 }
 
 .location-search-item-content {
@@ -2990,17 +1912,9 @@ body.dark .location-search-custom .location-search-icon {
   color: #202124;
 }
 
-body.dark .location-search-label {
-  color: #e8eaed;
-}
-
 .location-search-sublabel {
   font-size: 12px;
   color: #5f6368;
-}
-
-body.dark .location-search-sublabel {
-  color: #9aa0a6;
 }
 
 .location-search-arrow {
@@ -3009,18 +1923,10 @@ body.dark .location-search-sublabel {
   color: #5f6368;
 }
 
-body.dark .location-search-arrow {
-  color: #9aa0a6;
-}
-
 .location-search-divider {
   height: 1px;
   background: rgba(0, 0, 0, 0.08);
   margin: 0 16px;
-}
-
-body.dark .location-search-divider {
-  background: rgba(255, 255, 255, 0.08);
 }
 
 /* Places search mode */
@@ -3051,14 +1957,6 @@ body.dark .location-search-divider {
   background: rgba(0, 0, 0, 0.06);
 }
 
-body.dark .location-search-back-btn {
-  color: #9aa0a6;
-}
-
-body.dark .location-search-back-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-}
-
 .location-search-places-input {
   flex: 1;
   border: none;
@@ -3075,17 +1973,8 @@ body.dark .location-search-back-btn:hover {
     sans-serif;
 }
 
-body.dark .location-search-places-input {
-  background: rgba(255, 255, 255, 0.06);
-  color: #e8eaed;
-}
-
 .location-search-places-input::placeholder {
   color: #5f6368;
-}
-
-body.dark .location-search-places-input::placeholder {
-  color: #9aa0a6;
 }
 
 /* Google Places Autocomplete dropdown styling overrides */
@@ -3101,30 +1990,6 @@ body.dark .location-search-places-input::placeholder {
     system-ui,
     sans-serif;
   z-index: 9999;
-}
-
-body.dark .pac-container {
-  background: #1f2937;
-  box-shadow:
-    0 4px 16px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(255, 255, 255, 0.06);
-}
-
-body.dark .pac-item {
-  border-top-color: rgba(255, 255, 255, 0.06);
-  color: #e8eaed;
-}
-
-body.dark .pac-item:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-body.dark .pac-item-query {
-  color: #e8eaed;
-}
-
-body.dark .pac-matched {
-  color: #8ab4f8;
 }
 
 /* ============================================
@@ -3159,13 +2024,6 @@ body.dark .pac-matched {
   }
 }
 
-body.dark .planned-location-popup {
-  background: #1f2937;
-  box-shadow:
-    0 4px 20px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(255, 255, 255, 0.06);
-}
-
 .planned-location-popup__header {
   display: flex;
   align-items: center;
@@ -3186,18 +2044,10 @@ body.dark .planned-location-popup {
   text-overflow: ellipsis;
 }
 
-body.dark .planned-location-popup__label {
-  color: #e8eaed;
-}
-
 .planned-location-popup__desc {
   font-size: 12px;
   color: #5f6368;
   margin: 4px 0 12px 30px;
-}
-
-body.dark .planned-location-popup__desc {
-  color: #9aa0a6;
 }
 
 .planned-location-popup__remove {
@@ -3227,15 +2077,6 @@ body.dark .planned-location-popup__desc {
 
 .planned-location-popup__remove:hover {
   background: rgba(196, 18, 48, 0.06);
-}
-
-body.dark .planned-location-popup__remove {
-  border-color: rgba(255, 255, 255, 0.1);
-  color: #f28b82;
-}
-
-body.dark .planned-location-popup__remove:hover {
-  background: rgba(242, 139, 130, 0.1);
 }
 
 /* ============================================
@@ -3300,20 +2141,6 @@ body.dark .planned-location-popup__remove:hover {
   text-overflow: ellipsis;
 }
 
-body.dark .map-popup-tab {
-  background: rgba(31, 41, 55, 0.97);
-  color: #f3f4f6;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-}
-
-body.dark .map-popup-tab:hover {
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-}
-
-body.dark .map-popup-tab__arrow {
-  color: #9ca3af;
-}
-
 @media (max-width: 480px) {
   .map-popup-tab .map-popup-tab__label {
     display: none;
@@ -3336,11 +2163,6 @@ body.dark .map-popup-tab__arrow {
   font-size: 13px;
 }
 
-body.dark .map-popup__loading,
-body.dark .map-popup__empty {
-  color: #9ca3af;
-}
-
 .route-info__section {
   padding: 8px 0;
   border-bottom: 1px solid #f3f4f6;
@@ -3348,10 +2170,6 @@ body.dark .map-popup__empty {
 
 .route-info__section:last-child {
   border-bottom: none;
-}
-
-body.dark .route-info__section {
-  border-bottom-color: #374151;
 }
 
 .route-info__days {
@@ -3373,11 +2191,6 @@ body.dark .route-info__section {
   background: #f3f4f6;
 }
 
-body.dark .route-info__day {
-  background: #374151;
-  color: #6b7280;
-}
-
 .route-info__day--active {
   color: #fff;
 }
@@ -3389,10 +2202,6 @@ body.dark .route-info__day {
   text-transform: uppercase;
   letter-spacing: 0.03em;
   margin-bottom: 6px;
-}
-
-body.dark .route-info__label {
-  color: #9ca3af;
 }
 
 .route-info__hours {
@@ -3414,18 +2223,10 @@ body.dark .route-info__label {
   text-transform: capitalize;
 }
 
-body.dark .route-info__dir {
-  color: #9ca3af;
-}
-
 .route-info__headsign {
   font-size: 11px;
   color: #9ca3af;
   font-style: italic;
-}
-
-body.dark .route-info__headsign {
-  color: #6b7280;
 }
 
 .route-info__times {
@@ -3439,18 +2240,10 @@ body.dark .route-info__headsign {
   color: #d97706;
 }
 
-body.dark .route-info__alert {
-  color: #fbbf24;
-}
-
 .route-info__detour {
   padding: 6px 0;
   font-size: 13px;
   color: #6366f1;
-}
-
-body.dark .route-info__detour {
-  color: #a5b4fc;
 }
 
 /* ============================================
@@ -3588,37 +2381,6 @@ body.dark .route-info__detour {
 }
 
 /* ── Dark mode ── */
-
-body.dark .tutorial-popup {
-  background: rgba(31, 41, 55, 0.92);
-  box-shadow:
-    0 4px 24px rgba(0, 0, 0, 0.35),
-    0 1px 4px rgba(0, 0, 0, 0.15);
-}
-
-body.dark .tutorial-popup__step {
-  color: #e8485e;
-}
-
-body.dark .tutorial-popup__title {
-  color: #e0e0e0;
-}
-
-body.dark .tutorial-popup__desc {
-  color: #9ca3af;
-}
-
-body.dark .tutorial-popup__ok {
-  color: #e8485e;
-}
-
-body.dark .tutorial-popup__dismiss {
-  color: #6b7280;
-}
-
-body.dark .tutorial-popup__dismiss:hover {
-  color: #9ca3af;
-}
 
 /* WebKit zooms small editable fields on focus, which can pan the map shell. */
 @media (max-width: 1024px) {

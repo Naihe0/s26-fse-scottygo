@@ -12,7 +12,7 @@
  */
 
 import { Request, Response } from 'express';
-import BusController from '../../../server/controllers/transit.controller';
+import TransitController from '../../../server/controllers/transit.controller';
 import { IRoute, IPattern, IStop } from '../../../common/transit.interface';
 import { IAppError } from '../../../common/server.responses';
 import {
@@ -646,7 +646,7 @@ describe('TUC1 – Visualize Routes unit tests', () => {
   // ── Controller filterRoutesByDateTime validation ─────────────────────
 
   describe('filterRoutesByDateTime controller validation', () => {
-    const controller = BusController.getInstance('/transit');
+    const controller = TransitController.getInstance('/transit');
 
     // Access private method for testing
     const callFilterRoutesByDateTime = async (

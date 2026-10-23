@@ -1,4 +1,5 @@
 import type { ILatLng } from '../../../common/map.interface';
+import { haversineMeters } from '../../../common/geo';
 import type {
   IPattern,
   IStop,
@@ -104,7 +105,6 @@ interface Track {
   } | null;
 }
 
-const EARTH_RADIUS = 6_371_000;
 const radians = (degrees: number) => (degrees * Math.PI) / 180;
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
@@ -118,16 +118,7 @@ function validPosition(point: ILatLng): boolean {
   );
 }
 
-function distance(a: ILatLng, b: ILatLng): number {
-  const dLat = radians(b.lat - a.lat);
-  const dLng = radians(b.lng - a.lng);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(radians(a.lat)) *
-      Math.cos(radians(b.lat)) *
-      Math.sin(dLng / 2) ** 2;
-  return 2 * EARTH_RADIUS * Math.asin(Math.sqrt(clamp(h, 0, 1)));
-}
+const distance = haversineMeters;
 
 function bearing(a: ILatLng, b: ILatLng): number {
   const y = Math.sin(radians(b.lng - a.lng)) * Math.cos(radians(b.lat));

@@ -1,5 +1,4 @@
-// This is the model for users
-// It is used by the controllers to access functionality related users, including database access
+// User registration, credential checks, and account management rules.
 
 import {
   ILogin,
@@ -9,20 +8,34 @@ import {
   IPrivilegeLevel
 } from '../../common/user.interface';
 import { randomUUID as uuidV4 } from 'node:crypto';
-import DAC from '../db/dac';
-import { IAppError } from '../../common/server.responses';
 import bcrypt from 'bcrypt';
+import DAC from '../db/dac';
+import { clientError, serverError } from '../errors';
 import {
+  BCRYPT_ROUNDS,
   validateUsernameFormat,
   validateEmailFormat,
   validatePasswordStrength
 } from './user.validation';
-import { ensureNotLastAdmin, isLastAdministrator } from './user.admin-rules';
+import { ensureNotLastAdmin } from './user.admin-rules';
+
+/** Throw PatchRequestFailure when an update matched no account. */
+function requireUpdated(
+  account: IUserAccount | null,
+  message: string
+): IUserAccount {
+  if (!account) throw serverError('PatchRequestFailure', message);
+  return account;
+}
+
+async function findAccount(username: string): Promise<IUserAccount | null> {
+  return DAC.db.findUserAccountByUsername(username.toLowerCase());
+}
 
 export class User implements IUser {
   credentials: ILogin;
-  email: string; // this carries the email of the user
-  agreed: boolean; // reflects if user agreed to Terms of Services
+  email: string;
+  agreed: boolean; // whether the user accepted the Terms of Service
   _id?: string;
 
   constructor(credentials: ILogin, email: string, agreed: boolean) {
@@ -32,355 +45,164 @@ export class User implements IUser {
     this._id = uuidV4();
   }
 
+  /** Register this user; usernames are stored lowercase. */
   async join(): Promise<IUser> {
-    // Validate email format
     validateEmailFormat(this.email);
-
-    // Validate username format
     validateUsernameFormat(this.credentials.username);
 
-    // Check if user already exists
-    const existingUser = await DAC.db.findUserByUsername(
-      this.credentials.username.toLowerCase()
-    );
+    const existingUser = await findAccount(this.credentials.username);
     if (existingUser) {
-      // Compare provided password with stored hashed password
-      const isValid = await bcrypt.compare(
+      const passwordMatches = await bcrypt.compare(
         this.credentials.password,
         existingUser.credentials.password
       );
-
-      if (!isValid) {
-        // Wrong password - either existing user entered wrong password or new user
-        // entered username that already exists
-
-        // Handle case where existing user entered wrong password
-        if (this.email === existingUser.email) {
-          const error: IAppError = {
-            type: 'ClientError',
-            name: 'IncorrectPassword',
-            message: 'Re-enter username and/or password'
-          };
-          throw error;
-        }
-        // Handle case where new user entered username that already exists
-        const error: IAppError = {
-          type: 'ClientError',
-          name: 'InvalidUsername',
-          message: 'Please provide a different username'
-        };
-        throw error;
-      }
-
-      const error: IAppError = {
-        type: 'ClientError',
-        name: 'UserExists',
-        message:
+      if (passwordMatches) {
+        throw clientError(
+          'UserExists',
           'User with this username and password already exists - please log in'
-      };
-      throw error;
+        );
+      }
+      // Same email suggests the owner mistyped their password; otherwise the
+      // username belongs to someone else.
+      throw this.email === existingUser.email
+        ? clientError('IncorrectPassword', 'Re-enter username and/or password')
+        : clientError('InvalidUsername', 'Please provide a different username');
     }
 
-    // Validate password strength
     validatePasswordStrength(this.credentials.password);
 
-    // Hash password before saving
-    const passwordToStore = await bcrypt.hash(this.credentials.password, 10);
-
-    const userToSave: IUser = {
+    return DAC.db.saveUser({
       credentials: {
         username: this.credentials.username.toLowerCase(),
-        password: passwordToStore
+        password: await bcrypt.hash(this.credentials.password, BCRYPT_ROUNDS)
       },
       email: this.email,
       agreed: this.agreed,
       _id: this._id
-    };
-
-    // Save to database
-    const savedUser = await DAC.db.saveUser(userToSave);
-    return savedUser;
+    });
   }
 
+  /** Return the user when the credentials match; throw otherwise. */
   static async validateUser(credentials: ILogin): Promise<IUser> {
-    // Validate user credentials by checking username and password
-    // Returns user if valid
-    // Throws IAppError for specific failure cases
+    const user = await findAccount(credentials.username);
+    if (!user) throw clientError('UserNotFound', 'User not found');
 
-    // Get user from database
-    const user = await DAC.db.findUserByUsername(
-      credentials.username.toLowerCase()
-    );
-    if (!user) {
-      // User not found - throw specific error
-      const error: IAppError = {
-        type: 'ClientError',
-        name: 'UserNotFound',
-        message: 'User not found'
-      };
-      throw error;
-    }
-
-    // Compare provided password with stored hashed password
-    const isValid = await bcrypt.compare(
+    const passwordMatches = await bcrypt.compare(
       credentials.password,
       user.credentials.password
     );
-
-    if (!isValid) {
-      // Wrong password - throw specific error
-      const error: IAppError = {
-        type: 'ClientError',
-        name: 'IncorrectPassword',
-        message: 'Incorrect password'
-      };
-      throw error;
+    if (!passwordMatches) {
+      throw clientError('IncorrectPassword', 'Incorrect password');
     }
-
     return user;
   }
 
-  static async getUserForUsername(username: string): Promise<IUser | null> {
-    // get user from database
-    const user = await DAC.db.findUserByUsername(username.toLowerCase());
+  static async getUserForUsername(username: string): Promise<IUser> {
+    const user = await findAccount(username);
     if (!user) {
-      // if user not found, throw error
-      const error: IAppError = {
-        type: 'ClientError',
-        name: 'UserNotFound',
-        message: 'User not found - user does not exist'
-      };
-      throw error;
+      throw clientError('UserNotFound', 'User not found - user does not exist');
     }
     return user;
   }
 
   static async setUserAgreedToTrue(user: IUser): Promise<IUser> {
     user.agreed = true;
-    const userWhoAgreed: IUser | null = await DAC.db.setUserAgreedToTrue(user);
-    if (!userWhoAgreed) {
-      // If patch fails, tell User
-      // ServerErrorName = 'PatchRequestFailure'
-      const error: IAppError = {
-        type: 'ServerError',
-        name: 'PatchRequestFailure',
-        message: 'Update of user agreed status failed'
-      };
-      throw error;
+    const agreedUser = await DAC.db.setUserAgreedToTrue(user);
+    if (!agreedUser) {
+      throw serverError(
+        'PatchRequestFailure',
+        'Update of user agreed status failed'
+      );
     }
-    return userWhoAgreed;
+    return agreedUser;
   }
 
-  // ==================== Account Management Methods ====================
+  // ── Account management ─────────────────────────────────────────────
 
-  private static throwUserNotFound(): never {
-    throw {
-      type: 'ClientError',
-      name: 'UserNotFound',
-      message: 'User not found'
-    } as IAppError;
-  }
-
-  /**
-   * Get all usernames (for admin dropdown)
-   */
   static async getAllUsernames(): Promise<string[]> {
     return DAC.db.getAllUsernames();
   }
 
-  /**
-   * Get a user account by userId (immutable _id)
-   */
+  /** Look up an account by its immutable ID. */
   static async getUserAccountById(userId: string): Promise<IUserAccount> {
-    const userAccount = await DAC.db.findUserAccountById(userId);
-    if (!userAccount) {
-      User.throwUserNotFound();
-    }
-    return userAccount;
+    const account = await DAC.db.findUserAccountById(userId);
+    if (!account) throw clientError('UserNotFound', 'User not found');
+    return account;
   }
 
-  /**
-   * Get a user account by username
-   */
   static async getUserAccount(username: string): Promise<IUserAccount> {
-    const userAccount = await DAC.db.findUserAccountByUsername(
-      username.toLowerCase()
-    );
-    if (!userAccount) {
-      User.throwUserNotFound();
-    }
-    return userAccount;
+    const account = await findAccount(username);
+    if (!account) throw clientError('UserNotFound', 'User not found');
+    return account;
   }
 
-  /**
-   * Update user account status (Active/Inactive)
-   */
+  /** Change Active/Inactive status; the last administrator stays active. */
   static async updateStatus(
     username: string,
     status: IAccountStatus
   ): Promise<IUserAccount> {
-    // R1 At-Least-One-Administrator Rule
-    if (status === 'Inactive') {
-      await ensureNotLastAdmin(username, 'inactivate');
-    }
-
-    const updatedUser = await DAC.db.updateUserStatus(
-      username.toLowerCase(),
-      status
+    if (status === 'Inactive') await ensureNotLastAdmin(username, 'inactivate');
+    return requireUpdated(
+      await DAC.db.updateUserStatus(username.toLowerCase(), status),
+      'Failed to update user status'
     );
-    if (!updatedUser) {
-      const error: IAppError = {
-        type: 'ServerError',
-        name: 'PatchRequestFailure',
-        message: 'Failed to update user status'
-      };
-      throw error;
-    }
-    return updatedUser;
   }
 
-  /**
-   * Update user privilege level
-   * Enforces R1 At-Least-One-Administrator Rule
-   */
+  /** Change privilege level; the last active administrator cannot be demoted. */
   static async updatePrivilege(
     username: string,
     privilegeLevel: IPrivilegeLevel
   ): Promise<IUserAccount> {
-    // R1 At-Least-One-Administrator Rule: Check before demoting an admin
     if (privilegeLevel !== 'Administrator') {
       await ensureNotLastAdmin(username, 'demote');
     }
-
-    const updatedUser = await DAC.db.updateUserPrivilege(
-      username.toLowerCase(),
-      privilegeLevel
+    return requireUpdated(
+      await DAC.db.updateUserPrivilege(username.toLowerCase(), privilegeLevel),
+      'Failed to update user privilege level'
     );
-    if (!updatedUser) {
-      const error: IAppError = {
-        type: 'ServerError',
-        name: 'PatchRequestFailure',
-        message: 'Failed to update user privilege level'
-      };
-      throw error;
-    }
-    return updatedUser;
   }
 
-  /**
-   * Update username with validation
-   */
   static async updateUsername(
     oldUsername: string,
     newUsername: string
   ): Promise<IUserAccount> {
-    const normalizedNewUsername = newUsername.toLowerCase();
-
-    // Validate username format (length and reserved list)
     validateUsernameFormat(newUsername);
-
-    // Check if new username already exists
-    const existingUser = await DAC.db.findUserByUsername(normalizedNewUsername);
-    if (existingUser) {
-      const error: IAppError = {
-        type: 'ClientError',
-        name: 'UsernameExists',
-        message: 'Username already exists'
-      };
-      throw error;
+    if (await findAccount(newUsername)) {
+      throw clientError('UsernameExists', 'Username already exists');
     }
-
-    const updatedUser = await DAC.db.updateUsername(
-      oldUsername.toLowerCase(),
-      normalizedNewUsername
+    return requireUpdated(
+      await DAC.db.updateUsername(
+        oldUsername.toLowerCase(),
+        newUsername.toLowerCase()
+      ),
+      'Failed to update username'
     );
-    if (!updatedUser) {
-      const error: IAppError = {
-        type: 'ServerError',
-        name: 'PatchRequestFailure',
-        message: 'Failed to update username'
-      };
-      throw error;
-    }
-    return updatedUser;
   }
 
-  /**
-   * Update user email with validation
-   */
   static async updateEmail(
     username: string,
     email: string
   ): Promise<IUserAccount> {
-    // Validate email format
     validateEmailFormat(email);
-
-    const updatedUser = await DAC.db.updateUserEmail(
-      username.toLowerCase(),
-      email
+    return requireUpdated(
+      await DAC.db.updateUserEmail(username.toLowerCase(), email),
+      'Failed to update email'
     );
-    if (!updatedUser) {
-      const error: IAppError = {
-        type: 'ServerError',
-        name: 'PatchRequestFailure',
-        message: 'Failed to update email'
-      };
-      throw error;
-    }
-    return updatedUser;
   }
 
-  /**
-   * Update user password with validation
-   * @param username - The username of the user
-   * @param newPassword - The new password (plain text, will be hashed)
-   */
+  /** Hash and store a new password; this revokes earlier sessions. */
   static async updatePassword(
     username: string,
     newPassword: string
   ): Promise<IUserAccount> {
-    // Validate new password strength
     validatePasswordStrength(newPassword);
-
-    // Hash and update password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    const updatedUser = await DAC.db.updateUserPassword(
-      username.toLowerCase(),
-      hashedPassword
+    const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    return requireUpdated(
+      await DAC.db.updateUserPassword(username.toLowerCase(), hashedPassword),
+      'Failed to update password'
     );
-    if (!updatedUser) {
-      const error: IAppError = {
-        type: 'ServerError',
-        name: 'PatchRequestFailure',
-        message: 'Failed to update password'
-      };
-      throw error;
-    }
-    return updatedUser;
   }
 
-  /**
-   * Validate a password against stored hash
-   */
-  static async validatePassword(
-    username: string,
-    password: string
-  ): Promise<boolean> {
-    const user = await DAC.db.findUserByUsername(username.toLowerCase());
-    if (!user) {
-      return false;
-    }
-    return bcrypt.compare(password, user.credentials.password);
-  }
-
-  /**
-   * Check if a user is the last active administrator
-   */
-  static isLastAdministrator = isLastAdministrator;
-
-  /**
-   * Mark onboarding tutorial as complete for a user
-   */
   static async markOnboardingComplete(userId: string): Promise<boolean> {
     return DAC.db.markOnboardingComplete(userId);
   }

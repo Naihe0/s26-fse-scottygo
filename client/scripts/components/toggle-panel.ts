@@ -130,7 +130,6 @@ export class TogglePanel extends HTMLElement implements ITogglePanelElement {
   show(): void {
     const panel = this.querySelector('.toggle-filter-panel') as HTMLElement;
     if (panel) {
-      console.log('Showing panel:', this.config?.eventName);
       panel.style.display = 'block';
       this.isVisible = true;
       // Use requestAnimationFrame to ensure display change is applied before adding visible class
@@ -150,7 +149,6 @@ export class TogglePanel extends HTMLElement implements ITogglePanelElement {
   hide(): void {
     const panel = this.querySelector('.toggle-filter-panel') as HTMLElement;
     if (panel) {
-      console.log('Hiding panel:', this.config?.eventName);
       panel.classList.remove('visible');
       panel.style.display = 'none';
       this.isVisible = false;

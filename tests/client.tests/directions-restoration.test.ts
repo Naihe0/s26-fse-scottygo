@@ -231,7 +231,8 @@ describe('Map restoration after exiting directions', () => {
       const target =
         phase === 'nearby stops' ? api.getNearbyStops : api.getPatterns;
       (target as jest.Mock).mockImplementationOnce(pending.run);
-      const restore = controller.restoreDefaultState(position, isCurrent);
+      mockState.selectedRouteId = null;
+      const restore = controller.showNearbyStops(position, isCurrent);
       await pending.reached;
       session = 3;
       jest.clearAllMocks();

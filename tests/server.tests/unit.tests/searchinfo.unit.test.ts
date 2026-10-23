@@ -3,14 +3,10 @@
  *
  * Coverage goals:
  * - R2 Stopword Rule: at least 2 focused tests
- * - R1 Search Rules: at least 10 focused tests across contexts
+ * - R1 Search Rules: focused tests across user, route, and transit contexts
  */
 
-import type {
-  INotification,
-  IRoute,
-  IStop
-} from '../../../common/transit.interface';
+import type { IRoute, IStop } from '../../../common/transit.interface';
 
 jest.mock('../../../server/models/transit.model', () => ({
   __esModule: true,
@@ -66,24 +62,14 @@ import {
   filterStopWords,
   UserSearchStrategy,
   RouteSearchStrategy,
-  TransitSearchStrategy,
-  NotificationSearchStrategy,
-  NotificationSearchStrategyFactory,
-  NotificationCompositeSearchStrategy,
-  RecentNotificationsStrategy,
-  NotificationRouteSearchStrategy,
-  NotificationBusSearchStrategy
+  TransitSearchStrategy
 } from '../../../server/search/search-strategy';
 import { TransitModel } from '../../../server/models/transit.model';
 import { User } from '../../../server/models/user.model';
-import { NotificationModel } from '../../../server/models/notification.model';
 import gtfsService from '../../../server/services/gtfs.service';
 
 const mockTransitModel = TransitModel as jest.Mocked<typeof TransitModel>;
 const mockUser = User as jest.Mocked<typeof User>;
-const mockNotificationModel = NotificationModel as jest.Mocked<
-  typeof NotificationModel
->;
 const mockGtfs = gtfsService as jest.Mocked<typeof gtfsService>;
 
 const sampleRoutes: IRoute[] = [
@@ -136,60 +122,12 @@ const sampleStops: IStop[] = [
 
 const sampleUsers: string[] = ['zeta', 'alpha', 'beta', 'adminUser'];
 
-const sampleNotifications: INotification[] = [
-  {
-    _id: 'n1',
-    routeId: '61C',
-    vid: '2201',
-    message: 'Bus #2201 on Route 61C - Crowdedness changed to Packed',
-    changedFields: ['crowdedness'],
-    reportId: 'r1',
-    createdAt: new Date().toISOString()
-  },
-  {
-    _id: 'n2',
-    routeId: 'P1',
-    vid: '3302',
-    message: 'Bus #3302 on Route P1 - Condition changed to Dirty',
-    changedFields: ['condition'],
-    reportId: 'r2',
-    createdAt: new Date().toISOString()
-  }
-];
-
 describe('SearchInfo unit tests (R1 + R2)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockTransitModel.getRoutes.mockResolvedValue(sampleRoutes);
     mockGtfs.getAllStops.mockReturnValue(sampleStops);
     mockUser.getAllUsernames.mockResolvedValue(sampleUsers);
-    mockNotificationModel.searchNotifications.mockImplementation(
-      async (params: { route?: string; bus?: string; q?: string } = {}) => {
-        let notifications = [...sampleNotifications];
-
-        if (params.route) {
-          notifications = notifications.filter(
-            (n) => n.routeId === params.route
-          );
-        }
-
-        if (params.bus) {
-          notifications = notifications.filter((n) => n.vid === params.bus);
-        }
-
-        if (params.q) {
-          const lower = params.q.toLowerCase();
-          notifications = notifications.filter(
-            (n) =>
-              n.message.toLowerCase().includes(lower) ||
-              n.routeId.toLowerCase().includes(lower) ||
-              n.vid.toLowerCase().includes(lower)
-          );
-        }
-
-        return notifications;
-      }
-    );
   });
 
   // ---------------------------------------------------------------------------
@@ -309,30 +247,6 @@ describe('SearchInfo unit tests (R1 + R2)', () => {
       const result = await strategy.search('5005');
 
       expect(result.stops.map((s) => s.stopId)).toContain('5005');
-    });
-
-    test('NotificationSearchStrategy filters by message/route/vehicle text', async () => {
-      const strategy = new NotificationSearchStrategy();
-      const result = await strategy.search('packed');
-
-      expect(result).toHaveLength(1);
-      expect(result[0].routeId).toBe('61C');
-      expect(result[0].vid).toBe('2201');
-    });
-
-    test('NotificationSearchStrategyFactory selects expected strategy by context criteria', () => {
-      expect(NotificationSearchStrategyFactory.create({})).toBeInstanceOf(
-        RecentNotificationsStrategy
-      );
-      expect(
-        NotificationSearchStrategyFactory.create({ route: '61C' })
-      ).toBeInstanceOf(NotificationRouteSearchStrategy);
-      expect(
-        NotificationSearchStrategyFactory.create({ bus: '2201' })
-      ).toBeInstanceOf(NotificationBusSearchStrategy);
-      expect(
-        NotificationSearchStrategyFactory.create({ route: '61C', q: 'packed' })
-      ).toBeInstanceOf(NotificationCompositeSearchStrategy);
     });
   });
 });

@@ -5,15 +5,14 @@
  *   - filterDetoursByRouteIds  (route-based filtering with edge cases)
  *   - parseLimit               (input clamping / NaN handling)
  *   - getDetoursWithGeometry   (detour + geometry merge logic)
- *   - handleError              (IAppError → HTTP status mapping)
+ *   - error handling           (IAppError → HTTP status mapping)
  *   - getVehicles              (CMU vs PRT service dispatch)
  */
 
 import { Request, Response } from 'express';
 import { TransitModel } from '../../../server/models/transit.model';
-import BusController, {
-  parseLimit
-} from '../../../server/controllers/transit.controller';
+import TransitController from '../../../server/controllers/transit.controller';
+import { parseLimit } from '../../../server/controllers/health.controller';
 import trueTimeService from '../../../server/services/truetime.service';
 import vehiclePositionsService from '../../../server/services/vehicle-positions.service';
 import tripshotService from '../../../server/services/tripshot.service';
@@ -41,7 +40,7 @@ const createMockResponse = (): MockResponse => {
 };
 
 describe('TUC2 – Track Bus in Real-Time unit tests', () => {
-  const controller = BusController.getInstance('/transit');
+  const controller = TransitController.getInstance('/transit');
 
   beforeEach(() => {
     jest.restoreAllMocks();
@@ -114,25 +113,31 @@ describe('TUC2 – Track Bus in Real-Time unit tests', () => {
   // ── parseLimit ──────────────────────────────────────────────────────
 
   describe('parseLimit', () => {
+    const limits = { default: 120, max: 2000 };
+
     test('returns default when input is undefined', () => {
-      expect(parseLimit(undefined, 120, 2000)).toBe(120);
+      expect(parseLimit(undefined, limits)).toBe(120);
     });
 
     test('returns default when input is non-numeric string', () => {
-      expect(parseLimit('abc', 120, 2000)).toBe(120);
+      expect(parseLimit('abc', limits)).toBe(120);
+    });
+
+    test('returns default when input is repeated query values', () => {
+      expect(parseLimit(['5', '6'], limits)).toBe(120);
     });
 
     test('clamps to 1 when parsed value is zero or negative', () => {
-      expect(parseLimit('0', 120, 2000)).toBe(1);
-      expect(parseLimit('-5', 120, 2000)).toBe(1);
+      expect(parseLimit('0', limits)).toBe(1);
+      expect(parseLimit('-5', limits)).toBe(1);
     });
 
     test('clamps to maxLimit when parsed value exceeds it', () => {
-      expect(parseLimit('9999', 120, 2000)).toBe(2000);
+      expect(parseLimit('9999', limits)).toBe(2000);
     });
 
     test('returns parsed value when within bounds', () => {
-      expect(parseLimit('50', 120, 2000)).toBe(50);
+      expect(parseLimit('50', limits)).toBe(50);
     });
   });
 
@@ -229,13 +234,13 @@ describe('TUC2 – Track Bus in Real-Time unit tests', () => {
 
   // ── handleError ─────────────────────────────────────────────────────
 
-  describe('handleError', () => {
+  describe('error handling', () => {
     const callHandleError = (error: unknown, res: MockResponse) =>
       (
         controller as unknown as {
-          handleError: (e: unknown, r: Response) => void;
+          handleError: (r: Response, e: unknown) => void;
         }
-      ).handleError(error, res as unknown as Response);
+      ).handleError(res as unknown as Response, error);
 
     test('maps RouteNotFound IAppError to 404', () => {
       const res = createMockResponse();
@@ -264,7 +269,7 @@ describe('TUC2 – Track Bus in Real-Time unit tests', () => {
       const res = createMockResponse();
       const err: IAppError = {
         type: 'ClientError',
-        name: 'InvalidInput',
+        name: 'OutOfBounds',
         message: 'bad request'
       };
       callHandleError(err, res);
@@ -275,24 +280,23 @@ describe('TUC2 – Track Bus in Real-Time unit tests', () => {
       const res = createMockResponse();
       const err: IAppError = {
         type: 'ServerError',
-        name: 'InternalError',
+        name: 'UpstreamError',
         message: 'server failure'
       };
       callHandleError(err, res);
       expect(res.status).toHaveBeenCalledWith(500);
     });
 
-    test('wraps plain Error as 500 with error message', () => {
+    test('wraps plain Error as 500 without exposing its message', () => {
+      jest.spyOn(console, 'error').mockImplementation(() => undefined);
       const res = createMockResponse();
       callHandleError(new Error('something broke'), res);
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'ServerError',
-          name: 'GetRequestFailure',
-          message: 'something broke'
-        })
-      );
+      expect(res.json).toHaveBeenCalledWith({
+        type: 'ServerError',
+        name: 'GetRequestFailure',
+        message: 'Failed to retrieve transit data'
+      });
     });
   });
 
@@ -323,7 +327,6 @@ describe('TUC2 – Track Bus in Real-Time unit tests', () => {
         }
       ];
 
-      jest.spyOn(tripshotService, 'isConfigured').mockReturnValue(true);
       jest.spyOn(tripshotService, 'getVehicles').mockResolvedValue(cmuVehicles);
       const vpSpy = jest.spyOn(vehiclePositionsService, 'getVehicles');
 

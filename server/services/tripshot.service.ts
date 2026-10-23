@@ -1,5 +1,5 @@
-// Service for interfacing with the Tripshot API for CMU Shuttle routes
-// Tripshot provides real-time transit data for Carnegie Mellon University shuttle services
+// CMU Shuttle routes: static metadata and geometry from the exported CSVs,
+// live vehicles and arrivals from the TripShot liveStatus poller.
 
 import {
   IRoute,
@@ -11,142 +11,101 @@ import {
 } from '../../common/transit.interface';
 import {
   CMU_ROUTE_METADATA,
-  CMURouteMetadata,
-  CMUScheduleWindow,
   extractRouteIndex,
   findCmuRouteIdByTripshotRouteId
 } from './tripshot-metadata';
 import tripshotLiveStatusService from './tripshot-livestatus.service';
 import cmuStaticDataService from './cmu-static-data.service';
+import { createLogger } from '../logger';
+
+const log = createLogger('Tripshot');
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** Compact label for a set of weekdays, e.g. [1,2,3,4,5] → "Mon–Fri". */
+function formatDayRangeLabel(days: number[]): string {
+  const key = [...days].sort((a, b) => a - b).join(',');
+  const labels: Record<string, string> = {
+    '0,1,2,3,4,5,6': 'Mon–Sun',
+    '1,2,3,4,5': 'Mon–Fri',
+    '0,6': 'Sat–Sun',
+    '4,5,6': 'Thu–Sat'
+  };
+  return labels[key] ?? days.map((day) => DAY_NAMES[day]).join(', ');
+}
 
 class TripshotService {
-  /**
-   * Get all CMU Shuttle routes
-   */
   async getRoutes(): Promise<IRoute[]> {
-    const routes: IRoute[] = [];
-
-    for (const [index, metadata] of Object.entries(CMU_ROUTE_METADATA)) {
+    return Object.entries(CMU_ROUTE_METADATA).map(([index, metadata]) => {
       const cmuRouteId = `CMU-${index}`;
-      routes.push({
+      return {
         id: cmuRouteId,
         name: cmuStaticDataService.getRouteName(cmuRouteId) ?? metadata.name,
         system: 'CMU',
         color: metadata.color,
-        directions: ['OUTBOUND'], // CMU shuttles typically run as loops
+        directions: ['OUTBOUND'], // CMU shuttles run as loops.
         activeStatus: true,
         operatingDays: metadata.operatingDays
-      });
-    }
-
-    return routes;
+      };
+    });
   }
 
-  /**
-   * Fetch route geometry (patterns) from static route-scoped CMU CSVs.
-   * @param routeId - Format: "CMU-{index}" (e.g., "CMU-1" for A Route)
-   */
+  /** Route geometry for a "CMU-{index}" route ID. */
   async getPatterns(routeId: string): Promise<IPattern[]> {
     const { metadata } = extractRouteIndex(routeId);
-    const tripshotRouteId = metadata.routeId;
-
-    const staticPatterns =
-      cmuStaticDataService.getPatternsForTripshotRoute(tripshotRouteId);
-    if (staticPatterns.length === 0) {
-      console.warn(
-        `[Tripshot ${new Date().toISOString()}] No static patterns found for ${routeId} (${tripshotRouteId})`
+    const patterns = cmuStaticDataService.getPatternsForTripshotRoute(
+      metadata.routeId
+    );
+    if (patterns.length === 0) {
+      log.warn(
+        `No static patterns found for ${routeId} (${metadata.routeId})`
       );
     }
-
-    return staticPatterns;
+    return patterns;
   }
 
-  /**
-   * Warm static pattern reads for all known CMU routes.
-   * Called once after the liveStatus service completes its first poll.
-   */
+  /** Load the static CMU geometry ahead of the first route selection. */
   async warmPatternCache(): Promise<void> {
-    if (process.env.NODE_ENV === 'test') {
-      return;
-    }
-
-    const routeIds = Object.keys(CMU_ROUTE_METADATA).map((k) => `CMU-${k}`);
-    console.log(
-      `[Tripshot ${new Date().toISOString()}] Pre-warming pattern cache for ${routeIds.length} routes`
-    );
-    for (const routeId of routeIds) {
+    for (const index of Object.keys(CMU_ROUTE_METADATA)) {
       try {
-        await this.getPatterns(routeId);
+        await this.getPatterns(`CMU-${index}`);
       } catch {
         // Non-fatal — static data may be incomplete for this route.
       }
     }
-    console.log(
-      `[Tripshot ${new Date().toISOString()}] Static pattern warm-up complete`
-    );
+    log.info('Static pattern warm-up complete');
   }
 
-  /**
-   * Get stops for a specific route
-   * @param routeId - Format: "CMU-{index}"
-   * @param direction - INBOUND or OUTBOUND (CMU routes only support OUTBOUND)
-   */
+  /** Ordered stops for a CMU route; loops only have an OUTBOUND direction. */
   async getStops(routeId: string, direction?: string): Promise<IStop[]> {
     const { metadata } = extractRouteIndex(routeId);
+    if (direction?.toUpperCase() === 'INBOUND') return [];
 
-    // CMU shuttles run as loops and only have OUTBOUND direction
-    if (direction && direction.toUpperCase() === 'INBOUND') {
-      console.log(
-        `[Tripshot ${new Date().toISOString()}] CMU routes only support OUTBOUND direction, returning empty for INBOUND request`
-      );
-      return [];
-    }
-
-    const tripshotRouteId = metadata.routeId;
-
-    const staticStops = cmuStaticDataService.getStopsForTripshotRoute(
-      tripshotRouteId,
+    const stops = cmuStaticDataService.getStopsForTripshotRoute(
+      metadata.routeId,
       routeId
     );
-    if (staticStops.length > 0) {
-      return staticStops;
+    if (stops.length === 0) {
+      log.warn(`No static stops found for ${routeId} (${metadata.routeId})`);
     }
-
-    if (staticStops.length === 0) {
-      console.warn(
-        `[Tripshot ${new Date().toISOString()}] No static stops found for ${routeId} (${tripshotRouteId})`
-      );
-    }
-
-    return staticStops;
+    return stops;
   }
 
-  /**
-   * Get real-time vehicle positions for a CMU shuttle route.
-   * Data is sourced from the liveStatus poller (updated every 30 s).
-   * @param routeId - Format: "CMU-{index}" (e.g., "CMU-1")
-   */
+  /** Live vehicles for a CMU route, reported under the "CMU-n" route ID. */
   async getVehicles(routeId: string): Promise<IVehicle[]> {
     const { metadata } = extractRouteIndex(routeId);
-    const vehicles = tripshotLiveStatusService.getVehiclesByTsRouteId(
-      metadata.routeId
-    );
-    // Rewrite internal TripShot UUID to our CMU-n route ID so the client
-    // receives a consistent routeId regardless of data source.
-    return vehicles.map((v) => ({ ...v, routeId }));
+    return tripshotLiveStatusService
+      .getVehiclesByTsRouteId(metadata.routeId)
+      .map((vehicle) => ({ ...vehicle, routeId }));
   }
 
   /**
-   * Get ETA predictions for a TripShot stop UUID.
-   * Data is sourced from the liveStatus poller (updated every 30 s).
-   * @param stopId - TripShot stop UUID
+   * Arrivals at a TripShot stop UUID. With a "CMU-n" route filter, only that
+   * route's arrivals are returned, labelled with the requested ID so aliases
+   * sharing one TripShot UUID keep the rider's chosen route.
    */
   getPredictions(stopId: string, routeIdFilter?: string): IPrediction[] {
-    const hasCmuRouteFilter =
-      typeof routeIdFilter === 'string' && routeIdFilter.startsWith('CMU-');
-
     let filterTripshotRouteId: string | null = null;
-    if (hasCmuRouteFilter && routeIdFilter) {
+    if (routeIdFilter?.startsWith('CMU-')) {
       try {
         filterTripshotRouteId = extractRouteIndex(routeIdFilter)
           .metadata.routeId.trim()
@@ -164,29 +123,17 @@ class TripshotService {
           p.routeId.trim().toLowerCase() === filterTripshotRouteId
       )
       .map((p) => {
-        // When a CMU route filter is applied, preserve that route ID in the
-        // response so aliases that share a TripShot UUID (e.g., A/C) still
-        // display the member-selected route consistently.
-        if (hasCmuRouteFilter && routeIdFilter) {
-          return { ...p, routeId: routeIdFilter };
-        }
-
-        const cmuRouteId = findCmuRouteIdByTripshotRouteId(p.routeId);
-        return cmuRouteId ? { ...p, routeId: cmuRouteId } : p;
-      })
-      .sort((a, b) => a.predictedArrivalTime - b.predictedArrivalTime);
+        const routeId = filterTripshotRouteId
+          ? routeIdFilter!
+          : findCmuRouteIdByTripshotRouteId(p.routeId);
+        return routeId ? { ...p, routeId } : p;
+      });
   }
 
   /**
-   * Return the schedule summary (operating days + first/last trip per
-   * direction) for a CMU shuttle route.
-   *
-   * Routes with a known timetable in CMU_ROUTE_METADATA use that static data
-   * directly so the popup is always correct regardless of the current day or
-   * liveStatus feed availability.  Routes without static schedule data (e.g.
-   * NightSafe, CCL) fall back to the TripShot liveStatus feed.
-   *
-   * @param routeId - Format: "CMU-{index}" (e.g., "CMU-1")
+   * Operating days and first/last trips for a CMU route. Routes with a
+   * published timetable use it; others (NightSafe, CCL) fall back to today's
+   * rides from the liveStatus feed.
    */
   getRouteSchedule(routeId: string): {
     operatingDays: number[];
@@ -194,25 +141,21 @@ class TripshotService {
   } | null {
     const { metadata } = extractRouteIndex(routeId);
 
-    // --- Static timetable path (preferred) ---
-    if (metadata.schedule && metadata.schedule.length > 0) {
-      const directions: IDirectionSchedule[] = metadata.schedule.map(
-        (window: CMUScheduleWindow) => ({
-          direction: this.formatDayRangeLabel(window.days),
+    if (metadata.schedule?.length) {
+      return {
+        operatingDays: metadata.operatingDays,
+        directions: metadata.schedule.map((window) => ({
+          direction: formatDayRangeLabel(window.days),
           firstTrip: window.firstTrip,
           lastTrip: window.lastTrip
-        })
-      );
-      return { operatingDays: metadata.operatingDays, directions };
+        }))
+      };
     }
 
-    // --- liveStatus fallback (NightSafe, CCL, etc.) ---
     const liveSchedule = tripshotLiveStatusService.getScheduleByTsRouteId(
       metadata.routeId
     );
-    if (!liveSchedule) {
-      return null;
-    }
+    if (!liveSchedule) return null;
     return {
       operatingDays: metadata.operatingDays,
       directions: [
@@ -224,45 +167,7 @@ class TripshotService {
       ]
     };
   }
-
-  /**
-   * Convert an array of weekday indices (0=Sun…6=Sat) into a compact label
-   * suitable for the route-info popup, e.g. [1,2,3,4,5] → "Mon–Fri".
-   */
-  private formatDayRangeLabel(days: number[]): string {
-    const SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    if (days.length === 7) return 'Mon–Sun';
-    if (days.length === 5 && days.every((d, i) => d === i + 1))
-      return 'Mon–Fri';
-    if (days.length === 2 && days.includes(0) && days.includes(6))
-      return 'Sat–Sun';
-    if (
-      days.length === 3 &&
-      days.includes(4) &&
-      days.includes(5) &&
-      days.includes(6)
-    )
-      return 'Thu–Sat';
-    // Generic: list abbreviated day names
-    return days.map((d) => SHORT[d]).join(', ');
-  }
-
-  /**
-   * Get route metadata by index
-   */
-  getRouteMetadata(index: number): CMURouteMetadata | null {
-    return CMU_ROUTE_METADATA[index] || null;
-  }
-
-  /**
-   * Check if service is configured
-   * Tripshot CMU API is public, so always returns true
-   */
-  isConfigured(): boolean {
-    return true;
-  }
 }
 
-// Export singleton instance
 const tripshotService = new TripshotService();
 export default tripshotService;

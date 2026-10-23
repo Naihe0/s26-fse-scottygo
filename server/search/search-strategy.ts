@@ -1,20 +1,14 @@
 /**
- * Search Strategy Pattern — SearchInfo Use Case (R1, R2)
+ * Contextual keyword search (Strategy pattern).
  *
- * Implements the Strategy Design Pattern for contextual keyword search on the backend.
- * The server selects the appropriate concrete strategy based on which endpoint (context)
- * the client calls. Each strategy encapsulates its own search algorithm and data source.
+ * Each search context uses its own strategy and data source:
+ *  - UserSearchStrategy                GET /account/users/search
+ *  - RouteSearchStrategy               GET /routes/search
+ *  - TransitSearchStrategy             GET /search
+ *  - TransitAutocompleteStrategy       map search autocomplete (Socket.IO)
+ *  - NotificationAutocompleteStrategy  notification autocomplete (Socket.IO)
  *
- * Contexts and their strategies:
- *  1. UserSearchStrategy        — GET /account/users/search    (Manage Account)
- *  2. RouteSearchStrategy       — GET /map/routes/search       (Route Search on Map)
- *  3. TransitSearchStrategy     — GET /map/search              (Stop & Route Search on Map)
- *  4. SubscriptionSearchStrategy— GET /map/routes/search       (Add Route on Subscriptions page)
- *  5. NotificationSearchStrategy— GET /notifications/notifications (Notification Search)
- *
- * Rule R1: Search is contextual — each endpoint picks a different strategy.
- * Rule R2: Stop words are filtered before search (applied in strategies that search
- *          natural-language fields: transit stops/routes names, notification messages).
+ * Strategies that search natural-language text drop stop words first.
  */
 
 import { TransitModel } from '../models/transit.model';
@@ -32,383 +26,178 @@ import {
 } from './search.utils';
 import type {
   IRoute,
-  INotification,
-  IServiceAlert,
+  IStop,
   ITransitSearchResult
 } from '../../common/transit.interface';
 import type { ISearchSuggestion } from '../../common/socket.interface';
 
 export { filterStopWords } from './search.utils';
 
-// ── Strategy Interface ────────────────────────────────────────────────────────
+const MAX_TRANSIT_RESULTS = 5;
+const MAX_AUTOCOMPLETE_SUGGESTIONS = 8;
 
-/**
- * Generic search strategy interface.
- * T is the shape of the result payload (e.g. IRoute[], ITransitSearchResult).
- */
 export interface ISearchStrategy<T> {
   search(query: string): Promise<T>;
 }
 
-// ── Search Context ────────────────────────────────────────────────────────────
-
-/**
- * Context class — holds and delegates to the active ISearchStrategy.
- * Controllers create one of these with the appropriate concrete strategy,
- * then call executeSearch() to get results.
- */
+/** Runs a search with the strategy chosen for the current context. */
 export class SearchContext<T> {
-  private strategy: ISearchStrategy<T>;
-
-  constructor(strategy: ISearchStrategy<T>) {
-    this.strategy = strategy;
-  }
-
-  setStrategy(strategy: ISearchStrategy<T>): void {
-    this.strategy = strategy;
-  }
+  constructor(private readonly strategy: ISearchStrategy<T>) {}
 
   executeSearch(query: string): Promise<T> {
     return this.strategy.search(query);
   }
 }
 
-// ── Concrete Strategy 1: User Search ─────────────────────────────────────────
+const routeMatches = (route: IRoute, lowerQuery: string) =>
+  route.id.toLowerCase().includes(lowerQuery) ||
+  route.name.toLowerCase().includes(lowerQuery);
 
-/**
- * Searches all usernames for partial keyword matches (case-insensitive).
- * Stop word filtering is NOT applied — usernames are not natural language.
- *
- * Context : Manage Account page (Admin combobox, GET /account/users/search).
- * Criteria: One or more words matching an existing username (or part of one).
- * Results : Matching usernames in alphabetical order.
- */
+/** Usernames containing the query (case-insensitive), alphabetically. */
 export class UserSearchStrategy implements ISearchStrategy<string[]> {
   async search(query: string): Promise<string[]> {
     const lower = query.trim().toLowerCase();
     const usernames = await User.getAllUsernames();
-
-    const filtered = lower
-      ? usernames.filter((u) => u.toLowerCase().includes(lower))
-      : usernames;
-
-    return filtered.sort((a, b) => a.localeCompare(b));
+    return usernames
+      .filter((username) => username.toLowerCase().includes(lower))
+      .sort((a, b) => a.localeCompare(b));
   }
 }
 
-// ── Concrete Strategy 2: Route Search ────────────────────────────────────────
-
-/**
- * Searches the cached route list by route ID or route name (case-insensitive).
- * Applies stop word filtering (R2).
- * Returns up to 5 matching routes.
- *
- * Context : Route Selector / Route Search on the Map page (GET /map/routes/search).
- *           Also reused by the Subscriptions page "Add Route" sheet.
- * Criteria: Keywords matching route IDs (e.g. "61C") or route names (e.g. "Murray").
- * Results : Up to 5 matching IRoute objects.
- */
+/** Up to five PRT routes whose ID or name contains the query. */
 export class RouteSearchStrategy implements ISearchStrategy<IRoute[]> {
   async search(query: string): Promise<IRoute[]> {
     const filtered = filterStopWords(query);
     if (filtered === null) return [];
-
     const routes = await TransitModel.getRoutes();
-    const lower = filtered;
-
     return routes
-      .filter(
-        (r) =>
-          r.id.toLowerCase().includes(lower) ||
-          r.name.toLowerCase().includes(lower)
-      )
-      .slice(0, 5);
+      .filter((route) => routeMatches(route, filtered))
+      .slice(0, MAX_TRANSIT_RESULTS);
   }
 }
 
-// ── Concrete Strategy 3: Transit Search (routes + stops) ─────────────────────
-
 /**
- * Searches both routes and stops by keywords (case-insensitive).
- * Applies stop word filtering (R2).
- * Returns up to 5 matching routes and up to 5 matching stops.
- * Stops include a populated `routes` array (which route IDs serve each stop).
- *
- * Context : Main transit search bar on the Map page (GET /map/search).
- * Criteria: Keywords matching stop names, stop IDs, route IDs, or route names.
- * Results : { routes: IRoute[], stops: IStop[] } — up to 5 of each.
+ * Up to five routes and five stops (PRT and CMU) whose text contains every
+ * query token. Stops include the routes that serve them.
  */
 export class TransitSearchStrategy implements ISearchStrategy<ITransitSearchResult> {
   async search(query: string): Promise<ITransitSearchResult> {
     const queryTokens = toSearchTokens(query);
     if (queryTokens.length === 0) return { routes: [], stops: [] };
 
-    const [prtRoutes, prtStops, cmuRoutes] = await Promise.all([
+    const [prtRoutes, cmuRoutes] = await Promise.all([
       TransitModel.getRoutes(),
-      Promise.resolve(gtfsService.getAllStops()),
       tripshotService.getRoutes()
     ]);
-
-    const cmuStopsNested = await Promise.all(
-      cmuRoutes.map((r) => tripshotService.getStops(r.id))
+    const cmuStops = await Promise.all(
+      cmuRoutes.map((route) => tripshotService.getStops(route.id))
     );
-    const seenStopIds = new Set<string>();
-    const cmuStops = cmuStopsNested.flat().filter((s) => {
-      if (seenStopIds.has(s.stopId)) return false;
-      seenStopIds.add(s.stopId);
-      return true;
-    });
 
-    const allRoutes = [...prtRoutes, ...cmuRoutes];
-    const allStops = [...prtStops, ...cmuStops];
-
-    const routes = allRoutes
+    const routes = [...prtRoutes, ...cmuRoutes]
       .filter((r) => matchesAllQueryTokens(queryTokens, `${r.id} ${r.name}`))
-      .slice(0, 5);
-
-    const stops = allStops
+      .slice(0, MAX_TRANSIT_RESULTS);
+    const stops = uniqueStops([...gtfsService.getAllStops(), ...cmuStops.flat()])
       .filter((s) =>
         matchesAllQueryTokens(queryTokens, `${s.stopName} ${s.stopId}`)
       )
-      .slice(0, 5);
+      .slice(0, MAX_TRANSIT_RESULTS);
 
     return { routes, stops };
   }
 }
 
-// ── Concrete Strategy 4: Subscription Search ─────────────────────────────────
+/** First occurrence of each stop ID; CMU routes share many stops. */
+function uniqueStops(stops: IStop[]): IStop[] {
+  const seen = new Set<string>();
+  return stops.filter((stop) => {
+    if (seen.has(stop.stopId)) return false;
+    seen.add(stop.stopId);
+    return true;
+  });
+}
 
-/**
- * Searches routes for the purpose of subscribing to them.
- * Identical search criteria to RouteSearchStrategy but in the subscription context,
- * and returns results without a hard 5-item cap (shows all matches).
- * Stop word filtering is NOT applied — route IDs are not natural language.
- *
- * Context : "Add Route" sheet on the Subscriptions page (GET /map/routes/search
- *           can be reused; a dedicated endpoint may be added later).
- * Criteria: Keywords matching route IDs or route names.
- * Results : All matching IRoute objects.
- */
-export class SubscriptionSearchStrategy implements ISearchStrategy<IRoute[]> {
-  async search(query: string): Promise<IRoute[]> {
-    const routes = await TransitModel.getRoutes();
-    if (!query) return routes;
-    const lower = query.toLowerCase();
-    return routes.filter(
-      (r) =>
-        r.id.toLowerCase().includes(lower) ||
-        r.name.toLowerCase().includes(lower)
+/** First occurrence of each label, ignoring case and blank labels. */
+function uniqueLabels<T>(items: T[], label: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = label(item).trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** Up to five route IDs/names and stop names/IDs for the map search bar. */
+export class TransitAutocompleteStrategy implements ISearchStrategy<string[]> {
+  async search(query: string): Promise<string[]> {
+    const { routes, stops } = await new TransitSearchStrategy().search(query);
+    const labels = [
+      ...routes.flatMap((route) => [route.id, route.name]),
+      ...stops.flatMap((stop) => [stop.stopName, stop.stopId])
+    ].map((label) => label.trim());
+    return uniqueLabels(labels, (label) => label).slice(
+      0,
+      MAX_TRANSIT_RESULTS
     );
   }
 }
 
-// ── Concrete Strategy 5: Notification Search ─────────────────────────────────
-
 /**
- * Searches recent notifications (last 30 min) by free-text keywords.
- * Applies stop word filtering (R2) to the query before searching.
- * Delegates to NotificationModel which handles DB retrieval and message filtering.
- *
- * Context : Notification search bar on the Notifications page
- *           (GET /notifications/notifications).
- * Criteria: Keywords matching notification message content, route IDs, or vehicle IDs.
- * Results : Matching INotification objects, newest first.
- */
-export class NotificationSearchStrategy implements ISearchStrategy<
-  INotification[]
-> {
-  async search(query: string): Promise<INotification[]> {
-    const filtered = filterStopWords(query);
-    if (filtered === null) return [];
-
-    return NotificationModel.searchNotifications({ q: filtered });
-  }
-}
-
-export interface INotificationSearchCriteria {
-  route?: string;
-  bus?: string;
-  q?: string;
-}
-
-export class RecentNotificationsStrategy implements ISearchStrategy<
-  INotification[]
-> {
-  async search(_query: string): Promise<INotification[]> {
-    return NotificationModel.searchNotifications({});
-  }
-}
-
-export class NotificationRouteSearchStrategy implements ISearchStrategy<
-  INotification[]
-> {
-  constructor(private readonly routeId: string) {}
-
-  async search(_query: string): Promise<INotification[]> {
-    return NotificationModel.searchNotifications({ route: this.routeId });
-  }
-}
-
-export class NotificationBusSearchStrategy implements ISearchStrategy<
-  INotification[]
-> {
-  constructor(private readonly vid: string) {}
-
-  async search(_query: string): Promise<INotification[]> {
-    return NotificationModel.searchNotifications({ bus: this.vid });
-  }
-}
-
-export class NotificationCompositeSearchStrategy implements ISearchStrategy<
-  INotification[]
-> {
-  constructor(
-    private readonly criteria: {
-      route?: string;
-      bus?: string;
-    }
-  ) {}
-
-  async search(query: string): Promise<INotification[]> {
-    if (!query.trim()) {
-      return NotificationModel.searchNotifications({
-        route: this.criteria.route,
-        bus: this.criteria.bus
-      });
-    }
-
-    const filtered = filterStopWords(query);
-    return NotificationModel.searchNotifications({
-      route: this.criteria.route,
-      bus: this.criteria.bus,
-      // Preserve existing behavior: stopword-only query behaves like no q filter.
-      q: filtered ?? undefined
-    });
-  }
-}
-
-export class NotificationSearchStrategyFactory {
-  static create(
-    criteria: INotificationSearchCriteria
-  ): ISearchStrategy<INotification[]> {
-    const route = criteria.route?.trim();
-    const bus = criteria.bus?.trim();
-    const q = criteria.q?.trim();
-
-    const hasRoute = Boolean(route);
-    const hasBus = Boolean(bus);
-    const hasQ = Boolean(q);
-
-    if (!hasRoute && !hasBus && !hasQ) {
-      return new RecentNotificationsStrategy();
-    }
-    if (hasRoute && !hasBus && !hasQ) {
-      return new NotificationRouteSearchStrategy(route!);
-    }
-    if (!hasRoute && hasBus && !hasQ) {
-      return new NotificationBusSearchStrategy(bus!);
-    }
-    if (!hasRoute && !hasBus && hasQ) {
-      return new NotificationSearchStrategy();
-    }
-
-    return new NotificationCompositeSearchStrategy({ route, bus });
-  }
-}
-
-// ── Concrete Strategy 6: Notification Autocomplete ───────────────────────────
-
-/**
- * Returns short autocomplete suggestions (route IDs + vehicle IDs) for the
- * notification search bar.
- *
- * Priority order:
- *  1. Route IDs from GTFS data that match the query (always available).
- *  2. Vehicle IDs from recent notifications that match the query.
- *
- * This keeps suggestions useful even when no notifications have been filed yet.
- * Stop word filtering is applied (R2) before querying.
- *
- * Context : Notification search autocomplete (socket 'searchAutocomplete', context='notifications').
- * Results : Up to 8 deduplicated short strings (route IDs / vehicle IDs).
+ * Short suggestions for the notifications search bar: matching routes, live
+ * vehicles, recent rider notifications (labelled by route and bus so a click
+ * runs a reliable route/bus search), and agency alert headlines.
  */
 export class NotificationAutocompleteStrategy implements ISearchStrategy<
   ISearchSuggestion[]
 > {
   async search(query: string): Promise<ISearchSuggestion[]> {
-    const filtered = filterStopWords(query);
-    if (filtered === null) return [];
-    const lower = filtered.toLowerCase();
+    const lower = filterStopWords(query);
+    if (lower === null) return [];
 
-    const [routes, notifications, allLiveVehicles] = await Promise.all([
+    const [routes, notifications, vehicles] = await Promise.all([
       notificationSourcesService.getAllSubscribableRoutes(),
-      NotificationModel.getRecentNotifications(),
-      notificationSourcesService.getAllLiveVehiclesForNotifications()
+      NotificationModel.searchNotifications({}),
+      notificationSourcesService.getAllLiveVehicles()
     ]);
 
-    // 1. Route IDs from GTFS that match the query (always available)
-    const routeSuggestions: ISearchSuggestion[] = routes
-      .filter(
-        (r) =>
-          r.id.toLowerCase().includes(lower) ||
-          r.name.toLowerCase().includes(lower)
-      )
-      .slice(0, 4)
-      .map((r) => ({ label: r.id, type: 'route' as const }));
+    const suggestions: ISearchSuggestion[] = [
+      ...routes
+        .filter((route) => routeMatches(route, lower))
+        .slice(0, 4)
+        .map((route) => ({ label: route.id, type: 'route' as const })),
+      ...vehicles
+        .filter((vehicle) => vehicle.vid.toLowerCase().includes(lower))
+        .slice(0, 3)
+        .map((vehicle) => ({
+          label: vehicle.vid,
+          type: 'vehicle' as const,
+          vid: vehicle.vid
+        })),
+      ...notifications
+        .filter((notification) => matchesNotificationText(notification, lower))
+        .slice(0, 2)
+        .map((notification) => ({
+          label: `Route ${notification.routeId} · Bus #${notification.vid}`,
+          type: 'notification' as const,
+          routeId: notification.routeId,
+          vid: notification.vid
+        })),
+      ...alertsService
+        .getAlerts()
+        .filter(
+          (alert) =>
+            alert.headerText.toLowerCase().includes(lower) ||
+            alert.descriptionText.toLowerCase().includes(lower) ||
+            alert.routeIds.some((id) => id.toLowerCase().includes(lower))
+        )
+        .slice(0, 3)
+        .filter((alert) => alert.headerText)
+        .map((alert) => ({ label: alert.headerText, type: 'alert' as const }))
+    ];
 
-    // 2. All live vehicle IDs from the GTFS-RT feed that match the query
-    const vidSuggestions: ISearchSuggestion[] = allLiveVehicles
-      .filter((v) => v.vid.toLowerCase().includes(lower))
-      .slice(0, 3)
-      .map((v) => ({ label: v.vid, type: 'vehicle' as const, vid: v.vid }));
-
-    // 3. User-submitted notifications that match the query — labelled with
-    //    route + bus so clicking them triggers a reliable route/bus search
-    //    rather than a fragile free-text search on the message.
-    const matchingNotifs = notifications.filter((n) =>
-      matchesNotificationText(n, lower)
+    return uniqueLabels(suggestions, (suggestion) => suggestion.label).slice(
+      0,
+      MAX_AUTOCOMPLETE_SUGGESTIONS
     );
-
-    const notifSuggestions: ISearchSuggestion[] = matchingNotifs
-      .slice(0, 2)
-      .map((n) => ({
-        label: `Route ${n.routeId} · Bus #${n.vid}`,
-        type: 'notification' as const,
-        routeId: n.routeId,
-        vid: n.vid
-      }));
-
-    // 4. Service alert headerTexts that match the query
-    const alertSuggestions: ISearchSuggestion[] = alertsService
-      .getAlerts()
-      .filter(
-        (a: IServiceAlert) =>
-          a.headerText.toLowerCase().includes(lower) ||
-          a.descriptionText.toLowerCase().includes(lower) ||
-          a.routeIds.some((id) => id.toLowerCase().includes(lower))
-      )
-      .slice(0, 3)
-      .map((a: IServiceAlert) => ({
-        label: a.headerText,
-        type: 'alert' as const
-      }))
-      .filter((s) => s.label);
-
-    const seen = new Set<string>();
-    const result: ISearchSuggestion[] = [];
-    for (const s of [
-      ...routeSuggestions,
-      ...vidSuggestions,
-      ...notifSuggestions,
-      ...alertSuggestions
-    ]) {
-      const key = s.label.toLowerCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        result.push(s);
-      }
-      if (result.length >= 8) break;
-    }
-    return result;
   }
 }

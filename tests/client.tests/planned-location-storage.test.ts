@@ -13,7 +13,7 @@ async function bootState() {
   const { MapStateManager } =
     await import('../../client/scripts/state/map-state');
   const state = MapStateManager.getInstance();
-  state.setGpsDenied();
+  state.setGpsUnavailable();
   return state;
 }
 
@@ -126,7 +126,7 @@ test('revoking GPS preserves a custom selection while discarding the old current
   const state = await bootState();
   state.setCurrentLocation({ lat: 40.45, lng: -79.95 });
   state.setPlannedLocation({ lat: 40.4, lng: -79.9 }, 'Chosen place');
-  state.setGpsDenied();
+  state.setGpsUnavailable();
   expect(state.getState()).toMatchObject({
     currentLocation: null,
     gpsPermissionGranted: false,

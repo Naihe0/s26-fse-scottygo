@@ -1,7 +1,8 @@
 /**
  * Filter Controller
- * Coordinates filter application and manages API calls
- * Implements the progressive filtering strategy
+ * Applies route, system, direction, and schedule filters to the map; loads
+ * transit data, shows nearby stops and Route Info, and recovers the view
+ * when the transit feeds become available.
  */
 
 import { transitApiService } from '../services/transit-api.service';
@@ -9,10 +10,7 @@ import type {
   IRoute,
   IStop,
   IPattern,
-  IBulkTransitData,
-  IDetour,
   INearbyStop,
-  INearbyStopsPayload,
   IRouteSchedule
 } from '../../../common/transit.interface';
 import type { IServiceHealth } from '../services/transit-api.service';
@@ -41,13 +39,9 @@ import {
   estimateWalkMinutes
 } from './filter-controller.helpers';
 import { AuthService } from '../services/auth.service';
-
-// Augment the global Window interface with the showModal utility
-declare global {
-  interface Window {
-    showModal?: (title: string, message: string) => void;
-  }
-}
+import { getToken, isSameSession } from '../services/session';
+import { escapeHtml } from '../utils/html';
+import { showModal } from '../utils/modal';
 
 export class FilterController {
   private static instance: FilterController;
@@ -69,15 +63,6 @@ export class FilterController {
   private viewRevision = 0;
   private viewRendering = false;
   private pendingRouteBody: HTMLElement | null = null;
-
-  /** Return the stop cache (routeId:DIRECTION → stops) for the search component. */
-  getStopsData(): Record<string, IStop[]> {
-    const result: Record<string, IStop[]> = {};
-    for (const [key, stops] of this.stopCache.entries()) {
-      result[key] = stops;
-    }
-    return result;
-  }
   /** Interval handle for health polling */
   private healthPollInterval: number | null = null;
   private healthPollEnabled = false;
@@ -96,8 +81,6 @@ export class FilterController {
   /** Route IDs that have nearby stops (used to restore hidden routes) */
   private nearbyRouteIds = new Set<string>();
 
-  /** Walk-time heuristic: 1 km ≈ 15 min (TUC4 R4) */
-  private static readonly WALK_MINUTES_PER_KM = 15;
   private static readonly DAY_NAMES = [
     'Sun',
     'Mon',
@@ -219,7 +202,6 @@ export class FilterController {
    */
   async initialize(renderInitial = true): Promise<void> {
     try {
-      console.log('Fetching bulk transit data from backend...');
       const routes = await this.resolveInitialRoutes();
       this.publishInitializedRoutes(routes);
       this.transitRecoveryPending = !this.bulkLoaded;
@@ -230,8 +212,6 @@ export class FilterController {
 
       // Start polling service health status every 60 seconds
       this.startHealthPolling();
-
-      this.logInitializeSummary(routes.length);
     } catch (error) {
       console.error('Failed to initialize filter controller:', error);
       throw error;
@@ -273,14 +253,7 @@ export class FilterController {
     }
 
     const allRoutes = await this.fetchAllRoutes();
-    if (allRoutes.length === 0) {
-      return routes;
-    }
-
-    console.log(
-      'Restored CMU route context detected - initialized with full route list'
-    );
-    return allRoutes;
+    return allRoutes.length === 0 ? routes : allRoutes;
   }
 
   /**
@@ -289,17 +262,6 @@ export class FilterController {
   private publishInitializedRoutes(routes: IRoute[]): void {
     routes.forEach((route) => this.routeColorCache.set(route.id, route.color));
     this.publishAvailableRoutes(routes);
-  }
-
-  /**
-   * Log standardized initialization summary.
-   */
-  private logInitializeSummary(routeCount: number): void {
-    console.log(
-      'Filter controller initialized with',
-      routeCount,
-      'routes (bulk)'
-    );
   }
 
   /**
@@ -339,11 +301,6 @@ export class FilterController {
     for (const routeId of this.patternCache.keys())
       this.syncMotionGeometry(routeId);
     this.bulkLoaded = bulk.routes.some((route) => route.system === 'PRT');
-    console.log(
-      `Bulk data loaded: ${bulk.routes.length} routes, ` +
-        `${this.patternCache.size} pattern sets, ` +
-        `${this.stopCache.size} stop sets`
-    );
     return bulk.routes;
   }
 
@@ -362,37 +319,6 @@ export class FilterController {
   }
 
   /**
-   * Apply system filter (PRT/CMU toggle)
-   */
-  async applySystemFilter(): Promise<void> {
-    const state = this.getCurrentState();
-
-    if (this.handleAllSystemsDisabled(state.selectedSystems)) {
-      this.stateManager.reapplyFilters();
-      this.updateRouteSelectorFromState(state.availableRoutes);
-      this.syncURLWithCurrentState();
-      return;
-    }
-
-    this.clearSelectedRouteIfSystemDisabled(state);
-    await this.prefetchRoutesForEnabledSystems(
-      state.availableRoutes,
-      state.selectedSystems
-    );
-
-    // Re-apply all filters
-    this.stateManager.reapplyFilters();
-
-    const updatedState = this.getCurrentState();
-    this.updateRouteSelectorFromState(updatedState.availableRoutes);
-
-    await this.renderFilteredRoutes();
-    await this.restoreMapContentAfterSystemFilter();
-
-    this.syncURLWithCurrentState();
-  }
-
-  /**
    * A8: both systems disabled means we show only the base map.
    */
   private handleAllSystemsDisabled(selectedSystems: {
@@ -405,7 +331,6 @@ export class FilterController {
 
     this.routeRenderer.clearAllRoutes();
     this.vehicleTracker.stopPolling();
-    console.log('All systems disabled - showing base map only');
     return true;
   }
 
@@ -440,73 +365,11 @@ export class FilterController {
       return;
     }
 
-    console.log(
-      `Clearing route ${state.selectedRouteId} - system ${selectedRoute.system} is disabled`
-    );
     this.routeRenderer.clearRoutePolylines(state.selectedRouteId);
     this.routeRenderer.clearStopMarkers(`${state.selectedRouteId}_INBOUND`);
     this.routeRenderer.clearStopMarkers(`${state.selectedRouteId}_OUTBOUND`);
     this.vehicleTracker.stopPolling();
     this.stateManager.updateFilter('selectedRouteId', null);
-  }
-
-  /**
-   * Prefetch routes when newly-enabled systems need metadata not in memory.
-   */
-  private async prefetchRoutesForEnabledSystems(
-    availableRoutes: IRoute[],
-    selectedSystems: { prt: boolean; cmu: boolean }
-  ): Promise<void> {
-    const hasCMURoutes = availableRoutes.some(
-      (route) => route.system === 'CMU'
-    );
-
-    if (selectedSystems.cmu && !hasCMURoutes) {
-      console.log('CMU system enabled - prefetching CMU routes...');
-      await this.prefetchRoutes();
-    }
-  }
-
-  /**
-   * Restore the correct post-filter map content (selected route or nearby stops).
-   */
-  private async restoreMapContentAfterSystemFilter(): Promise<void> {
-    const postRenderState = this.getCurrentState();
-
-    // If a route is still selected after system filter, re-render it fully (geometry + stops)
-    if (postRenderState.selectedRouteId) {
-      await this.applyRouteFilter(postRenderState.selectedRouteId);
-      return;
-    }
-
-    // Re-render nearby stops filtered to the newly enabled systems (TUC4).
-    // Use userLocation (not nearbyStopsActive) because showNearbyStops sets the flag
-    // to false when it returns empty (e.g. CMU-only mode before CMU stops load),
-    // which would prevent subsequent toggles from re-fetching.
-    if (this.userLocation) {
-      await this.showNearbyStops(this.userLocation);
-    }
-  }
-
-  /**
-   * Prefetch routes for newly enabled systems.
-   * Always uses the /transit/routes endpoint so that CMU routes (which are
-   * absent from the bulk/GTFS payload) are included alongside PRT routes.
-   */
-  private async prefetchRoutes(): Promise<void> {
-    try {
-      const routes = await this.fetchAllRoutes();
-      routes.forEach((r) => this.routeColorCache.set(r.id, r.color));
-      this.publishAvailableRoutes(routes);
-
-      console.log(
-        'Routes prefetched successfully:',
-        routes.length,
-        'total routes'
-      );
-    } catch (error) {
-      console.error('Failed to prefetch routes:', error);
-    }
   }
 
   /**
@@ -543,8 +406,6 @@ export class FilterController {
   ): Promise<boolean> {
     if (!isCurrent()) return false;
     try {
-      console.log('Applying route filter:', routeId);
-
       const selectedRoute = await this.ensureRouteAvailable(routeId, isCurrent);
       if (!isCurrent()) return false;
       this.prepareMapForRouteSelection();
@@ -679,17 +540,6 @@ export class FilterController {
   }
 
   /**
-   * Clear the active route filter and re-render all filtered routes
-   */
-  async clearRouteFilter(): Promise<void> {
-    this.stateManager.updateFilter('selectedRouteId', null);
-    this.vehicleTracker.stopPolling();
-    this.routeRenderer.clearAllRoutes();
-    await this.renderFilteredRoutes();
-    this.syncURLWithCurrentState();
-  }
-
-  /**
    * Apply date/time filter
    */
   async applyDateTimeFilter(
@@ -701,11 +551,6 @@ export class FilterController {
     if (!selection) return false;
 
     try {
-      console.log('Applying date/time filter', {
-        date: selection.dateToUse,
-        time: selection.selectedTime
-      });
-
       // Call backend to get available routes for this date/time
       const availableRoutes = await this.fetchAvailableRoutes(
         selection.dateToUse,
@@ -745,17 +590,8 @@ export class FilterController {
     dateToUse: Date;
     selectedTime: ISelectedTime;
   } | null {
-    // If neither date nor time is selected, nothing to do
-    if (!state.selectedDate && !state.selectedTime) {
-      console.log('Date and time not selected');
-      return null;
-    }
-
-    // If only date is selected without time, we can't filter properly
-    if (!state.selectedTime) {
-      console.log('Time not selected, cannot apply time-based filter');
-      return null;
-    }
+    // Filtering needs a time; a date alone is not enough.
+    if (!state.selectedTime) return null;
 
     return {
       dateToUse: state.selectedDate || new Date(),
@@ -769,19 +605,7 @@ export class FilterController {
   private handleNoServiceAvailableForDateTimeFilter(): void {
     this.routeRenderer.clearAllRoutes();
     this.vehicleTracker.stopPolling();
-    console.log('A7: No service available for this selection');
-
-    // Use modal instead of alert
-    const showModal = window.showModal;
-    if (showModal && typeof showModal === 'function') {
-      showModal(
-        'No Service Available',
-        'No service available for this selection.'
-      );
-    } else {
-      console.error('showModal function not available');
-      alert('No service available for this selection.');
-    }
+    showModal('No Service Available', 'No service available for this selection.');
   }
 
   /**
@@ -928,10 +752,7 @@ export class FilterController {
     if (!isCurrent()) return false;
     const state = this.getCurrentState();
 
-    if (!state.selectedRouteId) {
-      console.log('No route selected for direction filter');
-      return false;
-    }
+    if (!state.selectedRouteId) return false;
 
     try {
       const selectedRoute = this.findAvailableRoute(
@@ -997,8 +818,6 @@ export class FilterController {
     const state = this.getCurrentState();
     const routesToRender = state.filteredRoutes;
 
-    console.log(`Rendering ${routesToRender.length} filtered routes`);
-
     const visibleRouteIds = new Set(routesToRender.map((r) => r.id));
     this.clearRoutesOutsideFilteredSet(state.availableRoutes, visibleRouteIds);
 
@@ -1034,12 +853,7 @@ export class FilterController {
     isCurrent: () => boolean = () => true
   ): Promise<boolean> {
     try {
-      if (this.routeRenderer.hasRouteGeometry(route.id)) {
-        console.log(
-          `Route ${route.id} already has geometry, showing existing polylines`
-        );
-        return true;
-      }
+      if (this.routeRenderer.hasRouteGeometry(route.id)) return true;
 
       const geometry = await this.fetchRouteGeometry(route.id);
       if (!isCurrent()) return false;
@@ -1077,7 +891,6 @@ export class FilterController {
   private async fetchRouteGeometry(routeId: string): Promise<RouteData | null> {
     // Try local pattern cache first (populated by fetchBulkData)
     if (this.bulkLoaded && this.patternCache.has(routeId)) {
-      console.log(`Route ${routeId} geometry served from local cache`);
       return this.patternCache.get(routeId) as unknown as RouteData;
     }
 
@@ -1118,8 +931,6 @@ export class FilterController {
         hour24 = 0;
       }
       const timeStr = `${hour24.toString().padStart(2, '0')}:${time.minute.toString().padStart(2, '0')}`;
-
-      console.log('Fetching routes for:', { date: dateStr, time: timeStr });
       return transitApiService.filterRoutesByDateTime(dateStr, timeStr);
     } catch (error) {
       console.error('Error fetching available routes:', error);
@@ -1138,7 +949,6 @@ export class FilterController {
     // Try local stop cache first (populated by fetchBulkData)
     const cacheKey = `${routeId}:${direction}`;
     if (this.bulkLoaded && this.stopCache.has(cacheKey)) {
-      console.log(`Stops for ${cacheKey} served from local cache`);
       return this.stopCache.get(cacheKey) || [];
     }
 
@@ -1474,15 +1284,15 @@ export class FilterController {
   private buildRouteInfoHoursSection(schedule: IRouteSchedule): string {
     const hoursMarkup = schedule.directions
       .map((directionSchedule) => {
-        const direction = this.escapeHtml(directionSchedule.direction);
-        const firstTrip = this.escapeHtml(directionSchedule.firstTrip);
-        const lastTrip = this.escapeHtml(directionSchedule.lastTrip);
+        const direction = escapeHtml(directionSchedule.direction);
+        const firstTrip = escapeHtml(directionSchedule.firstTrip);
+        const lastTrip = escapeHtml(directionSchedule.lastTrip);
         const rawHeadsign = directionSchedule.headsign ?? '';
         const destination = rawHeadsign
           .replace(new RegExp(`^${directionSchedule.direction}-`, 'i'), '')
           .trim();
         const headsign = destination
-          ? `<span class="route-info__headsign">${this.escapeHtml(destination)}</span>`
+          ? `<span class="route-info__headsign">${escapeHtml(destination)}</span>`
           : '';
         return [
           '<div class="route-info__hours">',
@@ -1524,7 +1334,7 @@ export class FilterController {
   private buildRouteInfoAlertsSection(schedule: IRouteSchedule): string {
     const items = schedule.alerts.map(
       (alert) =>
-        `<div class="route-info__alert">${this.escapeHtml(alert.headerText)}</div>`
+        `<div class="route-info__alert">${escapeHtml(alert.headerText)}</div>`
     );
     return this.buildRouteInfoSection(
       'alerts',
@@ -1540,21 +1350,9 @@ export class FilterController {
   private buildRouteInfoDetoursSection(schedule: IRouteSchedule): string {
     const items = schedule.detours.map(
       (detour) =>
-        `<div class="route-info__detour">${this.escapeHtml(detour.description)}</div>`
+        `<div class="route-info__detour">${escapeHtml(detour.description)}</div>`
     );
     return this.buildRouteInfoSection('detours', 'alt_route', 'Detours', items);
-  }
-
-  /**
-   * Escape interpolated route-info strings before injecting into HTML.
-   */
-  private escapeHtml(text: string): string {
-    return text
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
   }
 
   /**
@@ -1627,7 +1425,7 @@ export class FilterController {
     const system = this.getNearbySystemFilter(state.selectedSystems);
 
     try {
-      const nearbyData = await this.fetchNearbyStops(
+      const nearbyData = await transitApiService.getNearbyStops(
         position.lat,
         position.lng,
         system
@@ -1646,8 +1444,6 @@ export class FilterController {
       this.renderNearbyStopMarkers(stopsByRoute);
 
       this.nearbyStopsActive = true;
-
-      this.logNearbyStopsSummary(nearbyData);
       return true;
     } catch (error) {
       console.error('[FilterController] Error showing nearby stops:', error);
@@ -1802,36 +1598,6 @@ export class FilterController {
     }
   }
 
-  /**
-   * Log nearby-stops render summary.
-   */
-  private logNearbyStopsSummary(nearbyData: INearbyStopsPayload): void {
-    console.log(
-      `[FilterController] Rendered ${nearbyData.stops.length} nearby stops ` +
-        `(${this.nearbyRouteIds.size} routes, radius: ${nearbyData.radiusMeters}m` +
-        `${nearbyData.expandedRadiusApplied ? ', expanded' : ''})`
-    );
-  }
-
-  /**
-   * Restore the default map state: user location, nearby stops, and their
-   * route/pattern geometry — without real-time bus locations.
-   * Called when exiting directions mode or any overlay that replaced the
-   * default view.
-   */
-  async restoreDefaultState(
-    position: ILatLng,
-    isCurrent: () => boolean = () => true
-  ): Promise<void> {
-    if (!isCurrent()) return;
-    this.clearMapForDefaultState();
-    this.resetFiltersForDefaultState();
-    this.resetNearbyStopsTracking();
-
-    // Re-show nearby stops with their route geometry (no vehicles)
-    await this.showNearbyStops(position, isCurrent);
-  }
-
   /** Revoke both foreground restoration and any older startup recovery. */
   invalidateView(): void {
     this.viewRevision++;
@@ -1903,19 +1669,6 @@ export class FilterController {
   }
 
   /**
-   * Reset filter controls to the default map-state values.
-   */
-  private resetFiltersForDefaultState(): void {
-    this.stateManager.updateFilter('selectedRouteId', null);
-    this.stateManager.updateFilter('selectedDate', null);
-    this.stateManager.updateFilter('selectedTime', null);
-    this.stateManager.updateFilter('selectedDirections', {
-      inbound: true,
-      outbound: true
-    });
-  }
-
-  /**
    * Clear nearby stop markers from the map.
    * Called when the user selects a specific route.
    */
@@ -1927,10 +1680,6 @@ export class FilterController {
     this.clearNearbyMarkersForRouteIds(routes.map((route) => route.id));
     this.restoreRoutesHiddenByNearbyStops(routes);
     this.resetNearbyStopsTracking();
-
-    console.log(
-      '[FilterController] Cleared nearby stop markers and restored routes'
-    );
   }
 
   /**
@@ -1944,45 +1693,9 @@ export class FilterController {
     }
   }
 
-  /**
-   * Fetch nearby stops from the server endpoint.
-   * GET /transit/stops/nearbystops?lat=...&lon=...
-   */
-  private async fetchNearbyStops(
-    lat: number,
-    lon: number,
-    system?: string
-  ): Promise<INearbyStopsPayload | null> {
-    return transitApiService.getNearbyStops(lat, lon, system);
-  }
-
-  // -------------------------------------------------------------------
-  // Haversine utility (TUC4 R4 — walk-time heuristic)
-  // -------------------------------------------------------------------
-
-  /**
-   * Estimate walking time in minutes using the R4 heuristic (1 km ≈ 15 min).
-   */
+  /** Estimated walk from the rider's location (1 km ≈ 15 min). */
   private estimateWalkMinutes(stopLat: number, stopLon: number): number | null {
-    return estimateWalkMinutes(
-      this.userLocation,
-      stopLat,
-      stopLon,
-      FilterController.WALK_MINUTES_PER_KM
-    );
-  }
-
-  /**
-   * Reset all filters to default
-   */
-  async resetFilters(): Promise<void> {
-    this.stopHealthPolling();
-    this.vehicleTracker.stopPolling();
-    this.routeRenderer.clearAllRoutes();
-    dismissPopup();
-    this.stateManager.resetFilters();
-    await this.initialize();
-    this.syncURLWithCurrentState();
+    return estimateWalkMinutes(this.userLocation, stopLat, stopLon);
   }
 
   // -------------------------------------------------------------------
@@ -1995,11 +1708,11 @@ export class FilterController {
     this.healthPollEnabled = true;
     this.recoveryChecks = 0;
     const version = ++this.healthPollVersion;
-    const token = localStorage.getItem('token');
+    const token = getToken();
     const isCurrent = () =>
       this.healthPollEnabled &&
       version === this.healthPollVersion &&
-      token === localStorage.getItem('token');
+      isSameSession(token);
     const poll = async (): Promise<void> => {
       if (!isCurrent()) return;
       const request = new AbortController();
@@ -2179,9 +1892,6 @@ export class FilterController {
     isCurrent: () => boolean
   ): Promise<void> {
     if (health.trueTimeColors.available && !this.colorsWereAvailable) {
-      console.log(
-        '[FilterController] TrueTime colors now available — refreshing routes'
-      );
       const applied = await this.refreshRouteColors(isCurrent);
       if (!applied) return;
     }
@@ -2263,7 +1973,6 @@ export class FilterController {
         }
       }
 
-      console.log('[FilterController] Route colors refreshed from server');
       return true;
     } catch (err) {
       console.warn('[FilterController] Failed to refresh route colors:', err);

@@ -18,12 +18,16 @@ import {
   IStop,
   IDirectionSchedule
 } from '../../common/transit.interface';
-import { IAppError } from '../../common/server.responses';
+import { serverError } from '../errors';
+import { createLogger, errorMessage } from '../logger';
 
 const GTFS_URL = 'https://www.rideprt.org/developerresources/GTFS.zip';
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 const TABLE_TIMEOUT_MS = 5 * 60_000;
 const MAX_LOAD_ATTEMPTS = 3;
+const DEFAULT_ROUTE_COLOR = '#1e90ff';
+
+const log = createLogger('GTFS');
 
 // GTFS calendar days array indexed by JS getDay() (0=Sun, 1=Mon, ..., 6=Sat)
 const GTFS_DAY_COLS = [
@@ -46,6 +50,22 @@ interface ServiceCalendar {
 export function timeToMinutes(gtfsTime: string): number {
   const parts = gtfsTime.split(':');
   return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+}
+
+/** Format minutes after midnight (possibly past 24 h) as a clock "HH:MM". */
+function formatClockTime(minutes: number): string {
+  const hours = Math.floor(minutes / 60) % 24;
+  return `${String(hours).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+/** Map stop IDs to their parsed stops, skipping IDs missing from stops.txt. */
+function resolveStops(stopIds: Set<string>, stopMap: Map<string, IStop>): IStop[] {
+  const stops: IStop[] = [];
+  for (const stopId of stopIds) {
+    const stop = stopMap.get(stopId);
+    if (stop) stops.push(stop);
+  }
+  return stops;
 }
 
 /** Format a Date as YYYYMMDD for comparison against GTFS date strings. */
@@ -109,16 +129,16 @@ export class GTFSService {
         this.computeOperatingDays();
         await this.streamStopTimes(zipPath);
         this.loaded = true;
-        console.log(
-          `[GTFS ${new Date().toISOString()}] Ready: ${this.routeMap.size} routes, ${this.tripRoute.size} trips, ${this.stopMap.size} stops`
+        log.info(
+          `Ready: ${this.routeMap.size} routes, ${this.tripRoute.size} trips, ${this.stopMap.size} stops`
         );
         return;
       } catch (error) {
         this.clearData();
         if (attempt === MAX_LOAD_ATTEMPTS) throw error;
-        console.warn(
-          `[GTFS ${new Date().toISOString()}] Load attempt ${attempt} failed; retrying:`,
-          error instanceof Error ? error.message : 'Unknown feed error'
+        log.warn(
+          `Load attempt ${attempt} failed; retrying:`,
+          errorMessage(error)
         );
       } finally {
         if (zipPath) await unlink(zipPath).catch(() => undefined);
@@ -146,9 +166,7 @@ export class GTFSService {
 
   /** Download the GTFS feed and persist the zip to a temp file. */
   private async downloadFeed(): Promise<string> {
-    console.log(
-      `[GTFS ${new Date().toISOString()}] Downloading feed from PRT...`
-    );
+    log.info('Downloading feed from PRT...');
     const zipPath = join(tmpdir(), `scottygo-gtfs-${randomUUID()}.zip`);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
@@ -195,7 +213,7 @@ export class GTFSService {
         color:
           r.route_color && r.route_color.toUpperCase() !== 'FFFFFF'
             ? `#${r.route_color}`
-            : '#1e90ff',
+            : DEFAULT_ROUTE_COLOR,
         directions: ['INBOUND', 'OUTBOUND'],
         activeStatus: true,
         operatingDays: []
@@ -365,9 +383,7 @@ export class GTFSService {
     filename: string,
     consume: (record: Record<string, string>) => void
   ): Promise<void> {
-    console.log(
-      `[GTFS ${new Date().toISOString()}] Parsing ${filename} (streaming)...`
-    );
+    log.info(`Parsing ${filename} (streaming)...`);
     const child = spawn('unzip', ['-p', zipPath, filename]);
     child.stdin.end();
     let stderr = '';
@@ -431,20 +447,10 @@ export class GTFSService {
     routeDirStopIds: Map<string, Set<string>>
   ): void {
     for (const [routeId, stopIds] of routeStopIds) {
-      const stops: IStop[] = [];
-      for (const stopId of stopIds) {
-        const stop = this.stopMap.get(stopId);
-        if (stop) stops.push(stop);
-      }
-      this.routeStops.set(routeId, stops);
+      this.routeStops.set(routeId, resolveStops(stopIds, this.stopMap));
     }
     for (const [dirKey, stopIds] of routeDirStopIds) {
-      const stops: IStop[] = [];
-      for (const stopId of stopIds) {
-        const stop = this.stopMap.get(stopId);
-        if (stop) stops.push(stop);
-      }
-      this.routeDirectionStops.set(dirKey, stops);
+      this.routeDirectionStops.set(dirKey, resolveStops(stopIds, this.stopMap));
     }
   }
 
@@ -474,11 +480,6 @@ export class GTFSService {
 
   getTripShapeId(tripId: string): string | undefined {
     return this.tripShape.get(tripId);
-  }
-
-  /** Return all stops for a route from static GTFS data. */
-  getStops(routeId: string): IStop[] {
-    return this.routeStops.get(routeId) ?? [];
   }
 
   /** Return stops for a route filtered by direction (INBOUND or OUTBOUND). */
@@ -513,22 +514,19 @@ export class GTFSService {
     return result;
   }
 
+  private assertGtfsLoaded(): void {
+    if (!this.loaded) {
+      throw serverError(
+        'GetRequestFailure',
+        'GTFS schedule data is not yet loaded'
+      );
+    }
+  }
+
   /**
    * Return routes that have at least one trip running on the given date,
    * based on GTFS calendar.txt and calendar_dates.txt.
    */
-
-  private assertGtfsLoaded(): void {
-    if (!this.loaded) {
-      const err: IAppError = {
-        type: 'ServerError',
-        name: 'GetRequestFailure',
-        message: 'GTFS schedule data is not yet loaded'
-      };
-      throw err;
-    }
-  }
-
   filterRoutesByDate(date: Date): IRoute[] {
     this.assertGtfsLoaded();
 
@@ -606,16 +604,11 @@ export class GTFSService {
 
     const directions: IDirectionSchedule[] = [];
     for (const [dir, range] of directionRanges) {
-      const fmtTime = (mins: number): string => {
-        const h = Math.floor(mins / 60) % 24;
-        const m = mins % 60;
-        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
-      };
       const headsign = this.routeDirectionHeadsign.get(`${routeId}:${dir}`);
       directions.push({
         direction: dir,
-        firstTrip: fmtTime(range.first),
-        lastTrip: fmtTime(range.last),
+        firstTrip: formatClockTime(range.first),
+        lastTrip: formatClockTime(range.last),
         ...(headsign ? { headsign } : {})
       });
     }

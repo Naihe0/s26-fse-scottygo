@@ -1,25 +1,56 @@
-import type { Socket } from 'socket.io';
+// Socket.IO session authentication, account-room permissions, and expiry.
+
+import type { Server, Socket } from 'socket.io';
 import type { IUserAccount, ITokenPayload } from '../../common/user.interface';
+import { MAX_IDENTIFIER_LENGTH } from '../../common/limits';
 import { authenticateSession } from './authentication.service';
 
 type AuthenticatedSocket = Socket & { user?: ITokenPayload };
 
+/** Largest delay setTimeout accepts (about 24.8 days). */
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+export const accountRoom = (username: string) =>
+  `account:${username.toLowerCase()}`;
+export const routeRoom = (routeId: string) => `route:${routeId}`;
+export const ADMIN_USERNAMES_ROOM = 'admin:usernames';
+
+export function isValidRoomId(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= MAX_IDENTIFIER_LENGTH
+  );
+}
+
+/** Run `action` for every connected socket authenticated as `userId`. */
+export function forEachUserSocket(
+  io: Server,
+  userId: string | undefined,
+  action: (socket: Socket) => void
+): void {
+  io.sockets.sockets.forEach((socket) => {
+    if ((socket as AuthenticatedSocket).user?.userId === userId) action(socket);
+  });
+}
+
+/** Leave rooms the account may no longer watch; admins join admin rooms. */
 export function updateSocketAccountPermissions(
   socket: Socket,
   account: IUserAccount
 ): void {
   const isAdmin = account.privilegeLevel === 'Administrator';
-  const ownRoom = `account:${account.credentials.username.toLowerCase()}`;
+  const ownRoom = accountRoom(account.credentials.username);
   for (const room of socket.rooms) {
     if (
       !isAdmin &&
-      (room === 'admin:usernames' ||
+      (room === ADMIN_USERNAMES_ROOM ||
         (room.startsWith('account:') && room !== ownRoom))
     ) {
       socket.leave(room);
     }
   }
-  if (isAdmin) socket.join('admin:usernames');
+  if (isAdmin) socket.join(ADMIN_USERNAMES_ROOM);
 }
 
 export async function authenticateSocket(
@@ -27,8 +58,10 @@ export async function authenticateSocket(
   next: (err?: Error) => void
 ): Promise<void> {
   try {
-    const token = socket.handshake.auth?.token ?? socket.handshake.query.token;
-    const { account, payload } = await authenticateSession(token);
+    // Tokens travel in the handshake body only; URLs end up in proxy logs.
+    const { account, payload } = await authenticateSession(
+      socket.handshake.auth?.token
+    );
     (socket as AuthenticatedSocket).user = payload;
     socket.data.account = account;
     next();
@@ -37,17 +70,21 @@ export async function authenticateSocket(
   }
 }
 
-/** Recheck existing sockets, and end passive subscriptions when their JWT expires. */
+function forceLogout(socket: Socket, reason: string): void {
+  socket.emit('forceLogout', reason);
+  socket.disconnect(true);
+}
+
+/**
+ * Recheck the account on every inbound event, and end passive sessions when
+ * their JWT expires.
+ */
 export function configureSocketSession(socket: Socket): void {
   updateSocketAccountPermissions(socket, socket.data.account as IUserAccount);
   socket.use((_packet, next) => {
     void authenticateSocket(socket, (error) => {
       if (error) {
-        socket.emit(
-          'forceLogout',
-          'Your session has ended. Please log in again.'
-        );
-        socket.disconnect(true);
+        forceLogout(socket, 'Your session has ended. Please log in again.');
         next(error);
         return;
       }
@@ -58,32 +95,29 @@ export function configureSocketSession(socket: Socket): void {
       next();
     });
   });
+
   const expiresAt = (socket as AuthenticatedSocket).user?.exp;
   if (!expiresAt) return;
   let timer: ReturnType<typeof setTimeout>;
   const checkExpiry = () => {
     const remaining = expiresAt * 1000 - Date.now();
     if (remaining <= 0) {
-      socket.emit(
-        'forceLogout',
-        'Your session has expired. Please log in again.'
-      );
-      socket.disconnect(true);
+      forceLogout(socket, 'Your session has expired. Please log in again.');
       return;
     }
-    timer = setTimeout(checkExpiry, Math.min(remaining, 2_147_483_647));
+    timer = setTimeout(checkExpiry, Math.min(remaining, MAX_TIMER_DELAY_MS));
     timer.unref?.();
   };
   checkExpiry();
   socket.once('disconnect', () => clearTimeout(timer));
 }
 
+/** Join an account room: one's own, or any account's for administrators. */
 export function subscribeSocketToAccount(
   socket: Socket,
   username: unknown
 ): void {
-  if (typeof username !== 'string' || !username || username.length > 128)
-    return;
+  if (!isValidRoomId(username)) return;
   const account = socket.data.account as IUserAccount | undefined;
   if (!account || account.status !== 'Active') return;
   if (
@@ -91,5 +125,5 @@ export function subscribeSocketToAccount(
     account.credentials.username.toLowerCase() !== username.toLowerCase()
   )
     return;
-  socket.join(`account:${username.toLowerCase()}`);
+  socket.join(accountRoom(username));
 }

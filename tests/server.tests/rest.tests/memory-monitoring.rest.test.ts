@@ -1,7 +1,9 @@
 import express from 'express';
+import path from 'path';
 import { AddressInfo } from 'net';
 import { Server as HttpServer } from 'http';
-import BusController from '../../../server/controllers/transit.controller';
+import Controller from '../../../server/controllers/controller';
+import TransitController from '../../../server/controllers/transit.controller';
 import HealthController from '../../../server/controllers/health.controller';
 import DAC from '../../../server/db/dac';
 
@@ -48,7 +50,9 @@ describe('REST smoke: memory monitoring endpoints', () => {
       getRecentMemorySamples: jest.fn().mockResolvedValue(samples)
     } as never;
 
-    const transit = BusController.getInstance('/transit');
+    // Serve page sources so this suite does not depend on a client build.
+    Controller.clientDir = path.join(__dirname, '../../../client/pages');
+    const transit = TransitController.getInstance('/transit');
     const health = HealthController.getInstance('/transit');
     app.use('/transit', transit.router);
     app.use('/transit', health.router);

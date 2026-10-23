@@ -20,7 +20,7 @@ test('vehicle requests have a finite timeout and use caller cancellation', async
     data: { name: 'VehiclesLocated', payload: [] }
   });
   expect(
-    await transitApiService.getVehicles('61C', undefined, request.signal)
+    await transitApiService.getVehicles('61C', request.signal)
   ).toEqual({ vehicles: [] });
   expect(get).toHaveBeenCalledWith(
     '/transit/vehicles/61C',

@@ -1,7 +1,6 @@
 import { transit_realtime } from 'gtfs-realtime-bindings';
 import { VehiclePositionsService } from '../../../server/services/vehicle-positions.service';
 import { TripShotLiveStatusService } from '../../../server/services/tripshot-livestatus.service';
-import trueTimeService from '../../../server/services/truetime.service';
 
 beforeEach(() => {
   jest.useFakeTimers();
@@ -132,50 +131,6 @@ describe('TripShot bearing availability', () => {
       } finally {
         service.stop();
       }
-    }
-  );
-});
-
-describe('TrueTime heading parsing', () => {
-  it.each([
-    [undefined, undefined],
-    [null, undefined],
-    ['', undefined],
-    ['   ', undefined],
-    ['bad', undefined],
-    ['90bad', undefined],
-    ['Infinity', undefined],
-    ['0', 0],
-    ['270', 270],
-    [' 45.5 ', 45.5]
-  ])(
-    'returns heading %s as %s through the public service',
-    async (hdg, expected) => {
-      jest.spyOn(globalThis, 'fetch').mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            'bustime-response': {
-              vehicle: [
-                {
-                  vid: 'prt-vehicle',
-                  rt: '61C',
-                  lat: '40.44',
-                  lon: '-79.94',
-                  tmstmp: '20260919 08:00',
-                  hdg
-                }
-              ]
-            }
-          })
-        )
-      );
-      const vehicles = await trueTimeService.getVehicles('61C');
-      expect(vehicles).toHaveLength(1);
-      expect(vehicles[0].heading).toBe(expected);
-      if (expected === undefined)
-        expect(JSON.parse(JSON.stringify(vehicles[0]))).not.toHaveProperty(
-          'heading'
-        );
     }
   );
 });

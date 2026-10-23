@@ -1,8 +1,11 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "types": ["jest", "node"],
-    "rootDir": "../"
+    "target": "ES2021",
+    "lib": ["ES2021", "DOM", "DOM.Iterable"],
+    "types": ["jest", "node", "google.maps"],
+    "rootDir": "../",
+    "noEmit": true
   },
   "include": ["./**/*.ts", "../common/**/*.ts", "../server/**/*.ts"]
 }

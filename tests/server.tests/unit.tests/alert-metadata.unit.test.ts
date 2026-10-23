@@ -1,19 +1,13 @@
 import { transit_realtime } from 'gtfs-realtime-bindings';
-import alertsService from '../../../server/services/alerts.service';
+import { decodeAlertEntity } from '../../../server/services/alerts.service';
 import type { IServiceAlert } from '../../../common/transit.interface';
-
-const decoder = alertsService as unknown as {
-  decodeAlertEntity(entity: transit_realtime.IFeedEntity): IServiceAlert | null;
-};
 
 function decode(alert: transit_realtime.IAlert): IServiceAlert {
   const encoded = transit_realtime.FeedEntity.encode({
     id: 'agency-alert',
     alert
   }).finish();
-  return decoder.decodeAlertEntity(
-    transit_realtime.FeedEntity.decode(encoded)
-  )!;
+  return decodeAlertEntity(transit_realtime.FeedEntity.decode(encoded))!;
 }
 
 test('preserves explicit agency metadata with English translations and deduplicated routes', () => {
@@ -55,7 +49,8 @@ test('does not mistake inherited protobuf defaults for agency metadata', () => {
 
 test('unknown and generic enums do not imply a particular effect or urgency', () => {
   const alert = decode({
-    effect: 999,
+    // A value outside the protobuf enum, as a newer feed might send.
+    effect: 999 as transit_realtime.Alert.Effect,
     cause: transit_realtime.Alert.Cause.OTHER_CAUSE,
     severityLevel: transit_realtime.Alert.SeverityLevel.UNKNOWN_SEVERITY
   });
@@ -114,7 +109,7 @@ test('open-ended periods remain open and explicit epoch zero is preserved', () =
 });
 
 test('malformed and reversed periods cannot abort valid alert decoding', () => {
-  const alert = decoder.decodeAlertEntity({
+  const alert = decodeAlertEntity({
     id: 'bad-period',
     alert: {
       headerText: { translation: [{ text: 'Still useful' }] },
@@ -135,5 +130,5 @@ test('malformed and reversed periods cannot abort valid alert decoding', () => {
 });
 
 test('non-alert feed entities are skipped', () => {
-  expect(decoder.decodeAlertEntity({ id: 'vehicle', vehicle: {} })).toBeNull();
+  expect(decodeAlertEntity({ id: 'vehicle', vehicle: {} })).toBeNull();
 });

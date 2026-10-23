@@ -16,6 +16,7 @@ import { RouteRenderer } from '../renderers/route-renderer';
 import { VehicleTracker } from '../trackers/vehicle-tracker';
 import { closeMapPopup } from '../utils/map-popup';
 import { requestWalkingDirections } from '../services/walking-directions.service';
+import { haversineMeters } from '../../../common/geo';
 export type { IDirectionsResult } from '../services/walking-directions.service';
 
 /** Minimum interval between automatic reroute requests (R3) */
@@ -28,8 +29,6 @@ const DEVIATION_THRESHOLD_M = 50;
 const ARRIVAL_THRESHOLD_M = 20;
 /** Tap debounce for Directions button (R1) */
 const TAP_DEBOUNCE_MS = 500;
-/** Earth radius in meters for haversine */
-const EARTH_RADIUS_M = 6_371_000;
 
 export class DirectionsController {
   private static instance: DirectionsController;
@@ -148,7 +147,7 @@ export class DirectionsController {
     if (!position || !this._isActive || !this.selectedStop) return;
 
     // Deviation/arrival checks use real GPS, not planned location
-    const distToStop = this.haversine(position, {
+    const distToStop = haversineMeters(position, {
       lat: this.selectedStop.lat,
       lng: this.selectedStop.lon
     });
@@ -364,7 +363,6 @@ export class DirectionsController {
 
   /** Handle arrival at stop (Step 10) */
   private handleArrival(): void {
-    console.log('[DirectionsController] Arrived at stop!');
     this.toastCallback?.('Arrived!');
     this.exitDirections();
   }
@@ -412,19 +410,6 @@ export class DirectionsController {
 
   // ── Geo utilities ────────────────────────────────────────────────────
 
-  /** Haversine distance between two points in meters */
-  private haversine(a: ILatLng, b: ILatLng): number {
-    const toRad = (deg: number) => (deg * Math.PI) / 180;
-    const dLat = toRad(b.lat - a.lat);
-    const dLng = toRad(b.lng - a.lng);
-    const sinDLat = Math.sin(dLat / 2);
-    const sinDLng = Math.sin(dLng / 2);
-    const h =
-      sinDLat * sinDLat +
-      Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * sinDLng * sinDLng;
-    return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(h));
-  }
-
   /** Minimum distance from a point to a polyline (in meters) */
   private distanceToPolyline(point: ILatLng, path: ILatLng[]): number {
     let minDist = Infinity;
@@ -439,7 +424,7 @@ export class DirectionsController {
   private distanceToSegment(p: ILatLng, a: ILatLng, b: ILatLng): number {
     const dx = b.lng - a.lng;
     const dy = b.lat - a.lat;
-    if (dx === 0 && dy === 0) return this.haversine(p, a);
+    if (dx === 0 && dy === 0) return haversineMeters(p, a);
 
     let t = ((p.lng - a.lng) * dx + (p.lat - a.lat) * dy) / (dx * dx + dy * dy);
     t = Math.max(0, Math.min(1, t));
@@ -448,6 +433,6 @@ export class DirectionsController {
       lat: a.lat + t * dy,
       lng: a.lng + t * dx
     };
-    return this.haversine(p, closest);
+    return haversineMeters(p, closest);
   }
 }

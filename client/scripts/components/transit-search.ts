@@ -6,6 +6,7 @@
 import { MapStateManager } from '../state/map-state';
 import type { IRoute, IStop } from '../../../common/transit.interface';
 import { escapeHtml } from '../utils/html';
+import { authHeaders } from '../services/session';
 
 /** Fallback color for route badges when the route has no assigned color. */
 const DEFAULT_BADGE_COLOR = '#888888';
@@ -71,13 +72,12 @@ export class TransitSearch extends HTMLElement {
     if (!this.dropdown) return;
     const requestVersion = ++this.requestVersion;
 
-    const token = localStorage.getItem('token') ?? '';
     let matchedRoutes: IRoute[] = [];
     let matchedStops: IStop[] = [];
 
     try {
       const res = await fetch(`/search?q=${encodeURIComponent(query)}`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: authHeaders()
       });
 
       if (!res.ok) throw new Error(`Search failed (${res.status})`);

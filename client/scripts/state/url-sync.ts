@@ -181,13 +181,6 @@ export class URLSyncManager {
   }
 
   /**
-   * Clear the URL back to the bare path (remove hash entirely)
-   */
-  clearURL(): void {
-    history.replaceState(null, '', window.location.pathname);
-  }
-
-  /**
    * Restore state from URL (called on page load or hash change)
    */
   restoreStateFromURL(): Partial<IMapState> {
@@ -199,11 +192,8 @@ export class URLSyncManager {
     return urlState;
   }
 
-  /**
-   * Initialize URL sync on page load
-   */
+  /** Apply the filters in the current URL on page load. */
   initialize(): void {
-    const urlState = this.restoreStateFromURL();
-    console.log('Restored state from URL:', urlState);
+    this.restoreStateFromURL();
   }
 }

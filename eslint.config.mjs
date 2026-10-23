@@ -3,7 +3,7 @@ import pluginJs from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
 export default [
-  { files: ['**/*.{ts}'] },
+  { files: ['**/*.ts'] },
   {
     ignores: [
       '**/*.js',
@@ -11,12 +11,8 @@ export default [
       'private/**',
       'tmp/**',
       '**/.dist',
-      '**/.dist-server',
       '**/jest.config.ts',
-      '**/types',
-      '**/types-not-needed',
-      'trials/**/*.ts',
-      'tests/trials.tests/**.ts'
+      'trials/**/*.ts'
     ]
   },
 
@@ -38,11 +34,15 @@ export default [
     },
 
     rules: {
-      'comma-dangle': 'off',
-      '@typescript-eslint/comma-dangle': 'off',
-      '@typescript-eslint/no-unused-vars': 'off',
-      '@typescript-eslint/no-dupe-class-members': 'off',
-      '@typescript-eslint/indent': 'off'
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrors: 'none',
+          ignoreRestSiblings: true
+        }
+      ]
     }
   }
 ];

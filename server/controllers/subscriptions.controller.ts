@@ -1,7 +1,6 @@
-// Controller serving the subscriptions page
+// Subscriptions page. The subscription API lives under /notifications.
 
 import Controller from './controller';
-import { Request, Response } from 'express';
 
 export default class SubscriptionsController extends Controller {
   private static instance: SubscriptionsController | null = null;
@@ -18,10 +17,8 @@ export default class SubscriptionsController extends Controller {
   }
 
   public initializeRoutes(): void {
-    this.router.get('/', this.subscriptionsPage.bind(this));
-  }
-
-  public subscriptionsPage(_req: Request, res: Response): void {
-    this.sendPage(res, 'subscriptions.html');
+    this.router.get('/', (_req, res) =>
+      this.sendPage(res, 'subscriptions.html')
+    );
   }
 }

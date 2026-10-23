@@ -354,11 +354,3 @@ function getOrCreateTabContainer(): HTMLElement | null {
   mapContainer.appendChild(container);
   return container;
 }
-
-/**
- * Returns true if there is at least one minimised popup tab currently visible.
- */
-export function hasMinimisedTab(): boolean {
-  const container = document.getElementById('map-popup-tabs');
-  return !!container && container.hasChildNodes();
-}

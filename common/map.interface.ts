@@ -1,4 +1,5 @@
-// Interfaces for Google Maps API configuration and transit response wrapper
+// Map configuration and the map-provider abstraction, which decouples the
+// app from a specific map SDK (Google Maps today).
 
 export interface IConfig {
   apiKey: string;
@@ -6,18 +7,6 @@ export interface IConfig {
   lon: number; // Default center longitude
   defaultZoom: number;
 }
-
-// Generic success response for transit endpoints
-// Extends the base success pattern with a source field for live/static data
-export interface ITransitSuccess<T> {
-  name: string;
-  desc?: string;
-  source: 'live' | 'static'; // Indicates if data is real-time or from local cache
-  payload: T | null;
-}
-
-// Map abstraction layer interfaces
-// These decouple the app from any specific map SDK (Google Maps, Leaflet, etc.)
 
 export interface ILatLng {
   lat: number;
@@ -47,9 +36,6 @@ export interface IMapMarker {
   id: string;
   setPosition(position: ILatLng): void;
   animatePosition(position: ILatLng, durationMs?: number): void;
-  setIcon(icon: string): void;
-  setVisible(visible: boolean): void;
-  setTitle?(title: string): void;
   setIcon(
     icon:
       | string
@@ -59,6 +45,8 @@ export interface IMapMarker {
           size: { width: number; height: number };
         }
   ): void;
+  setVisible(visible: boolean): void;
+  setTitle?(title: string): void;
   onClick(callback: () => void): void;
   remove(): void;
 }

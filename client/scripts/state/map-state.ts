@@ -248,11 +248,6 @@ export class MapStateManager {
     this.notifyListeners();
   }
 
-  /** Compatibility alias for callers handling denied GPS permission. */
-  setGpsDenied(): void {
-    this.setGpsUnavailable();
-  }
-
   /**
    * Get the effective location for features (planned location or fallback)
    */

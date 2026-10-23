@@ -14,25 +14,13 @@ import type {
   ClientToServerEvents
 } from '../../common/socket.interface';
 
-export {};
-
-// ---------------------------------------------------------------------------
-// Auth helpers
-// ---------------------------------------------------------------------------
-
-const getToken = (): string | null => localStorage.getItem('token');
-const getStoredUsername = (): string | null => localStorage.getItem('username');
-
-const handleLogout = (): void => {
-  localStorage.removeItem('token');
-  localStorage.removeItem('username');
-  window.location.replace('/auth');
-};
-
-const authHeaders = (): Record<string, string> => {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-};
+import {
+  authHeaders,
+  getToken,
+  getUsername,
+  setUsername,
+  signOut
+} from './services/session';
 
 // ---------------------------------------------------------------------------
 // DOM references
@@ -48,9 +36,6 @@ const userSelector = document.getElementById(
   'user-selector'
 ) as HTMLInputElement;
 const userListbox = document.getElementById('user-listbox') as HTMLUListElement;
-const comboboxWrapper = document.getElementById(
-  'combobox-wrapper'
-) as HTMLDivElement;
 const searchStatusEl = document.getElementById(
   'search-status'
 ) as HTMLParagraphElement;
@@ -589,7 +574,7 @@ const connectSocket = (): void => {
   const token = getToken();
   if (!token || socket) return;
 
-  socket = io({ query: { token } });
+  socket = io({ auth: { token } });
 
   socket.on('accountUpdated', (account: IUserAccount) => {
     // Update admin dropdown if a username changed
@@ -627,11 +612,7 @@ const connectSocket = (): void => {
     }
   });
 
-  socket.on('forceLogout', (_reason: string) => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('username');
-    window.location.replace('/auth');
-  });
+  socket.on('forceLogout', () => signOut());
 
   // Live update admin dropdown when any user renames themselves
   socket.on('usernameChanged', (oldUsername: string, newUsername: string) => {
@@ -899,7 +880,7 @@ const updateUsernameIfChanged = async (
 
   if (status >= 200 && status < 300) {
     if (ownAcct) {
-      localStorage.setItem('username', newUsername);
+      setUsername(newUsername);
     }
     return applyPatchSuccess(state, account, data);
   }
@@ -1046,7 +1027,7 @@ const updateAdminStatusIfChanged = async (
           }
         );
         if (s >= 200 && s < 300) {
-          handleLogout();
+          signOut();
         } else {
           const msg = getResponseMessage(d, 'Status update failed.');
           setFormStatus(msg, true);
@@ -1388,7 +1369,7 @@ statusToggle.addEventListener('change', () => {
           { status: 'Inactive' as IAccountStatus }
         );
         if (status >= 200 && status < 300) {
-          handleLogout();
+          signOut();
         } else {
           const msg = getResponseMessage(data, 'Status update failed.');
           setFormStatus(msg, true);
@@ -1438,7 +1419,7 @@ confirmNo.addEventListener('click', () => {
 
 document.addEventListener('DOMContentLoaded', async () => {
   const token = getToken();
-  const username = getStoredUsername();
+  const username = getUsername();
 
   if (!token || !username) {
     window.location.replace('/auth');
@@ -1450,9 +1431,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const { status, data } = await fetchAccount(username);
 
   if (status === 401) {
-    localStorage.removeItem('token');
-    localStorage.removeItem('username');
-    window.location.replace('/auth');
+    signOut();
     return;
   }
 

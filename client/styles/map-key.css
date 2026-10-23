@@ -101,18 +101,6 @@ map-key {
 .map-key__lines i + i {
   border-color: #e9462f;
 }
-body.dark .map-key__toggle,
-body.dark .map-key__panel {
-  background: #1e293b;
-  border-color: #475569;
-  color: #e2e8f0;
-}
-body.dark .map-key__panel h2 {
-  color: #f8fafc;
-}
-body.dark .map-key__panel small {
-  color: #cbd5e1;
-}
 @media (max-width: 600px) {
   map-key {
     left: 16px;

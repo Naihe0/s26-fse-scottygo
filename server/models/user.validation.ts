@@ -1,10 +1,19 @@
-// Validation helpers for user registration and account management
-// Extracted from user.model.ts to reduce module size and coupling (Sigrid Item #7)
+// Username, email, and password rules for registration and account updates.
 
-import { IAppError } from '../../common/server.responses';
+import { clientError } from '../errors';
+
+/** bcrypt cost factor for stored password hashes. */
+export const BCRYPT_ROUNDS = 10;
+
+const MIN_USERNAME_LENGTH = 4;
+const MAX_USERNAME_LENGTH = 64;
+const MAX_EMAIL_LENGTH = 254;
+const MIN_PASSWORD_LENGTH = 4;
+/** bcrypt silently ignores input beyond 72 bytes. */
+const MAX_PASSWORD_BYTES = 72;
 
 /** Reserved usernames that cannot be used during registration. */
-const RESERVED_USERNAMES: string[] = [
+const RESERVED_USERNAMES: ReadonlySet<string> = new Set([
   'about',
   'access',
   'account',
@@ -312,130 +321,76 @@ const RESERVED_USERNAMES: string[] = [
   'yourusername',
   'yoursite',
   'yourdomain'
-];
+]);
 
-/**
- * Validate username format (length and reserved list).
- * Throws IAppError if username doesn't meet requirements.
- */
+/** Throw InvalidUsername unless the username is allowed. */
 export function validateUsernameFormat(username: string): void {
-  // Check minimum length
-  if (typeof username !== 'string' || username.length < 4) {
-    const error: IAppError = {
-      type: 'ClientError',
-      name: 'InvalidUsername',
-      message: 'Username must be at least 4 characters long'
-    };
-    throw error;
+  if (typeof username !== 'string' || username.length < MIN_USERNAME_LENGTH) {
+    throw clientError(
+      'InvalidUsername',
+      'Username must be at least 4 characters long'
+    );
   }
-
-  if (username.length > 64 || !/^[a-zA-Z0-9_.-]+$/.test(username)) {
-    throw {
-      type: 'ClientError',
-      name: 'InvalidUsername',
-      message:
-        'Username must be 4–64 letters, numbers, periods, underscores, or hyphens'
-    } as IAppError;
+  if (
+    username.length > MAX_USERNAME_LENGTH ||
+    !/^[a-zA-Z0-9_.-]+$/.test(username)
+  ) {
+    throw clientError(
+      'InvalidUsername',
+      'Username must be 4–64 letters, numbers, periods, underscores, or hyphens'
+    );
   }
-
-  // Check reserved username list
-  if (RESERVED_USERNAMES.includes(username.toLowerCase())) {
-    const error: IAppError = {
-      type: 'ClientError',
-      name: 'InvalidUsername',
-      message: 'This username is invalid - please choose a valid one'
-    };
-    throw error;
+  if (RESERVED_USERNAMES.has(username.toLowerCase())) {
+    throw clientError(
+      'InvalidUsername',
+      'This username is invalid - please choose a valid one'
+    );
   }
 }
 
-/**
- * Validate email format (CMU email).
- * Throws IAppError if email doesn't meet requirements.
- */
+/** Throw InvalidEmail unless the address is at cmu.edu or a subdomain. */
 export function validateEmailFormat(email: string): void {
-  // CMU email regex: allows @cmu.edu and @subdomain.cmu.edu (e.g., @andrew.cmu.edu)
-  const emailRegex = /^[^\s@]+@([^\s@]+\.)?cmu\.edu$/;
   if (
     typeof email !== 'string' ||
-    email.length > 254 ||
+    email.length > MAX_EMAIL_LENGTH ||
     /[<>"'\\]/.test(email) ||
-    !emailRegex.test(email)
+    !/^[^\s@]+@([^\s@]+\.)?cmu\.edu$/.test(email)
   ) {
-    const error: IAppError = {
-      type: 'ClientError',
-      name: 'InvalidEmail',
-      message: 'Email must be a valid CMU email address'
-    };
-    throw error;
+    throw clientError('InvalidEmail', 'Email must be a valid CMU email address');
   }
 }
 
 /**
- * Validate password strength according to password rules.
- * Throws IAppError if password doesn't meet requirements.
+ * Throw WeakPassword or InvalidPassword unless the password has at least four
+ * characters including a letter, a digit, and one of $%#@!*&~^-+, and uses
+ * only those characters.
  */
 export function validatePasswordStrength(password: string): void {
   if (
     typeof password !== 'string' ||
-    Buffer.byteLength(password, 'utf8') > 72
+    Buffer.byteLength(password, 'utf8') > MAX_PASSWORD_BYTES
   ) {
-    throw {
-      type: 'ClientError',
-      name: 'InvalidPassword',
-      message: 'Password must be a string of at most 72 bytes'
-    } as IAppError;
+    throw clientError(
+      'InvalidPassword',
+      'Password must be a string of at most 72 bytes'
+    );
   }
-  // Rule 1: At least 4 characters long
-  if (password.length < 4) {
-    const error: IAppError = {
-      type: 'ClientError',
-      name: 'WeakPassword',
-      message: 'Password must be at least 4 characters long'
-    };
-    throw error;
+  const strengthRules: [boolean, string][] = [
+    [
+      password.length >= MIN_PASSWORD_LENGTH,
+      'Password must be at least 4 characters long'
+    ],
+    [/[a-zA-Z]/.test(password), 'Password must contain at least one letter'],
+    [/[0-9]/.test(password), 'Password must contain at least one number'],
+    [
+      /[$%#@!*&~^\-+]/.test(password),
+      'Password must contain at least one special character'
+    ]
+  ];
+  for (const [passes, message] of strengthRules) {
+    if (!passes) throw clientError('WeakPassword', message);
   }
-
-  // (Voluntary, not in UC) Rule 2: Must contain at least one letter
-  if (!/[a-zA-Z]/.test(password)) {
-    const error: IAppError = {
-      type: 'ClientError',
-      name: 'WeakPassword',
-      message: 'Password must contain at least one letter'
-    };
-    throw error;
-  }
-
-  // (Voluntary, not in UC) Rule 3: Must contain at least one number
-  if (!/[0-9]/.test(password)) {
-    const error: IAppError = {
-      type: 'ClientError',
-      name: 'WeakPassword',
-      message: 'Password must contain at least one number'
-    };
-    throw error;
-  }
-
-  // (Voluntary, not in UC) Rule 4: Must contain at least one special character
-  const specialChars = /[$%#@!*&~^\-+]/;
-  if (!specialChars.test(password)) {
-    const error: IAppError = {
-      type: 'ClientError',
-      name: 'WeakPassword',
-      message: 'Password must contain at least one special character'
-    };
-    throw error;
-  }
-
-  // (Voluntary, not in UC) Rule 5: Cannot contain any characters other than letters, numbers,
-  //                                and allowed special chars
-  const validChars = /^[a-zA-Z0-9$%#@!*&~^\-+]+$/;
-  if (!validChars.test(password)) {
-    const error: IAppError = {
-      type: 'ClientError',
-      name: 'InvalidPassword',
-      message: 'Password contains invalid characters'
-    };
-    throw error;
+  if (!/^[a-zA-Z0-9$%#@!*&~^\-+]+$/.test(password)) {
+    throw clientError('InvalidPassword', 'Password contains invalid characters');
   }
 }

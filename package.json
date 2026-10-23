@@ -58,7 +58,7 @@
     "test:server": "npm-run-all --continue-on-error test:unit test:integration test:rest",
     "prepush:check": "node ./tools/prepush-safety-check.mjs",
     "check:paths": "node tools/check-paths.mjs",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.client.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.client.json && tsc -p tests/tsconfig.json",
     "test:ci": "jest --runInBand --detectOpenHandles"
   },
   "dependencies": {
@@ -116,7 +116,8 @@
         "client/pages/map.html",
         "client/pages/account.html",
         "client/pages/notifications.html",
-        "client/pages/subscriptions.html"
+        "client/pages/subscriptions.html",
+        "client/pages/memory-dashboard.html"
       ],
       "distDir": ".dist/client",
       "context": "browser"

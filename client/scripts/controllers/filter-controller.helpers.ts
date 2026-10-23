@@ -1,8 +1,11 @@
 import type { IRoute } from '../../../common/transit.interface';
 import type { ILatLng } from '../../../common/map.interface';
+import { haversineMeters } from '../../../common/geo';
 import type { IRouteOption } from '../components/route-selector';
+import { escapeHtml } from '../utils/html';
 
-const EARTH_RADIUS_M = 6_371_000;
+/** Walking-time heuristic: minutes to walk one kilometer. */
+const WALK_MINUTES_PER_KM = 15;
 
 export const formatRouteName = (route: IRoute): string => {
   if (route.system === 'CMU') {
@@ -17,39 +20,19 @@ export const buildRouteOptions = (routes: IRoute[]): IRouteOption[] =>
     name: formatRouteName(route)
   }));
 
-export const haversineMeters = (a: ILatLng, b: ILatLng): number => {
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const sinDLat = Math.sin(dLat / 2);
-  const sinDLng = Math.sin(dLng / 2);
-  const h =
-    sinDLat * sinDLat +
-    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * sinDLng * sinDLng;
-  return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(h));
-};
-
+/** Straight-line walking estimate in minutes, or null without a location. */
 export const estimateWalkMinutes = (
   userLocation: ILatLng | null,
   stopLat: number,
-  stopLon: number,
-  walkMinutesPerKm: number
+  stopLon: number
 ): number | null => {
   if (!userLocation) return null;
-  const distMeters = haversineMeters(userLocation, {
+  const distanceMeters = haversineMeters(userLocation, {
     lat: stopLat,
     lng: stopLon
   });
-  return Math.ceil((distMeters / 1000) * walkMinutesPerKm);
+  return Math.ceil((distanceMeters / 1000) * WALK_MINUTES_PER_KM);
 };
-
-const escapeHtml = (text: string): string =>
-  text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
 
 export const buildServiceBannerMarkup = (
   issues: string[],

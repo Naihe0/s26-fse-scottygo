@@ -1,35 +1,23 @@
-/**
- * Client-side auth and subscription service.
- *
- * Extracted from map.ts so that authentication checks and subscription state
- * management can change independently of the map orchestration logic.
- */
+// Session validation and the locally cached list of subscribed routes.
 
-import axios, { AxiosResponse } from 'axios';
+import axios from 'axios';
 import type { IUser, IUserAccount } from '../../../common/user.interface';
 import type { IResponse } from '../../../common/server.responses';
 import { mapSignInPath } from '../utils/map-auth-return';
-
-function authHeaders(): { Authorization: string } {
-  const token = localStorage.getItem('token');
-  return { Authorization: `Bearer ${token}` };
-}
+import {
+  authHeaders,
+  getToken,
+  getUsername,
+  isSameSession,
+  signOut
+} from './session';
 
 export class AuthService {
   private static instance: AuthService;
 
-  /** Local cache of subscribed route IDs — synced from server on load. */
+  /** Route IDs the current session is subscribed to, synced from the server. */
   private subscribedRoutes = new Set<string>();
   private subscriptionToken: string | null = null;
-
-  private currentSubscriptionToken(): string | null {
-    const token = localStorage.getItem('token');
-    if (token !== this.subscriptionToken) {
-      this.subscribedRoutes.clear();
-      this.subscriptionToken = token;
-    }
-    return token;
-  }
 
   private constructor() {}
 
@@ -40,94 +28,92 @@ export class AuthService {
     return AuthService.instance;
   }
 
-  /** Returns true when a valid token and matching user record exist. */
-  async isLoggedIn(): Promise<boolean> {
-    const token = localStorage.getItem('token');
-    if (!token) return false;
-    const username = localStorage.getItem('username');
-    if (!username) return false;
-    const userInDB = await this.getUser(username);
-    return userInDB !== null;
+  /** Forget cached subscriptions when a different session signs in. */
+  private currentSubscriptionToken(): string | null {
+    const token = getToken();
+    if (token !== this.subscriptionToken) {
+      this.subscribedRoutes.clear();
+      this.subscriptionToken = token;
+    }
+    return token;
   }
 
-  /** Fetches the user record for `username`. Returns null on any failure. */
+  /** True when a stored session still resolves to a user on the server. */
+  async isLoggedIn(): Promise<boolean> {
+    const username = getUsername();
+    if (!getToken() || !username) return false;
+    return (await this.getUser(username)) !== null;
+  }
+
+  /**
+   * The user record for `username`, or null on any failure. An unauthorized
+   * response ends the session and returns to sign-in.
+   */
   async getUser(username: string): Promise<IUser | null> {
-    const token = localStorage.getItem('token');
+    const token = getToken();
     try {
-      const res: AxiosResponse = await axios.request({
+      const res = await axios.request<IResponse>({
         method: 'get',
-        headers: { Authorization: `Bearer ${token}` },
-        url: '/users/' + encodeURIComponent(username),
+        url: `/users/${encodeURIComponent(username)}`,
+        headers: authHeaders(),
         validateStatus: () => true
       });
-      if (localStorage.getItem('token') !== token) return null;
-      const response: IResponse = res.data;
-
+      if (!isSameSession(token)) return null;
+      const response = res.data;
       if (res.status === 200 && response.name === 'UserFound') {
         return response.payload as IUser;
       }
-
       if (res.status === 401) {
-        // Token invalid or user deleted — clear credentials and redirect.
-        console.error('[AuthService] Unauthorized:', response.message);
-        localStorage.removeItem('token');
-        localStorage.removeItem('username');
-        window.location.replace(mapSignInPath());
+        signOut(mapSignInPath());
         return null;
       }
-
       console.error('[AuthService] getUser failed:', res.status, response);
       return null;
     } catch (error) {
-      if (localStorage.getItem('token') !== token) return null;
-      console.error('[AuthService] getUser error:', error);
+      if (isSameSession(token)) {
+        console.error('[AuthService] getUser error:', error);
+      }
       return null;
     }
   }
 
-  /** Fetches the account record for `username` (role, plan, etc.). */
+  /** The account record (role, onboarding state) for `username`. */
   async getCurrentUserAccount(username: string): Promise<IUserAccount | null> {
     try {
-      const res: AxiosResponse = await axios.request({
+      const res = await axios.request<IResponse>({
         method: 'get',
-        headers: authHeaders(),
         url: `/account/users/${encodeURIComponent(username)}`,
+        headers: authHeaders(),
         validateStatus: () => true
       });
-      const response: IResponse = res.data;
-      if (res.status === 200 && response.name === 'AccountRetrieved') {
-        return response.payload as IUserAccount;
-      }
-      return null;
+      return res.status === 200 && res.data.name === 'AccountRetrieved'
+        ? (res.data.payload as IUserAccount)
+        : null;
     } catch {
       return null;
     }
   }
 
-  // ─── Subscription helpers ────────────────────────────────────────────────
+  // ── Subscriptions ────────────────────────────────────────────────────
 
-  /** Returns true when the user is locally known to be subscribed to `routeId`. */
   isRouteSubscribed(routeId: string): boolean {
     this.currentSubscriptionToken();
     return this.subscribedRoutes.has(routeId);
   }
 
-  /** Records a local subscription (call after a successful server subscribe). */
+  /** Record a subscription after the server accepted it. */
   addSubscription(routeId: string): void {
     this.currentSubscriptionToken();
     this.subscribedRoutes.add(routeId);
   }
 
-  /** Removes a local subscription (call after a successful server unsubscribe). */
+  /** Forget a subscription after the server removed it. */
   removeSubscription(routeId: string): void {
     this.currentSubscriptionToken();
     this.subscribedRoutes.delete(routeId);
   }
 
-  /**
-   * Fetches the authoritative subscription list from the server and rebuilds
-   * the local cache. Call once during app init so bell icons are accurate.
-   */
+  /** Replace the local cache with the server's list so bell icons are accurate. */
   async syncSubscriptionsFromServer(): Promise<void> {
     const token = this.currentSubscriptionToken();
     if (!token) return;
@@ -138,13 +124,12 @@ export class AuthService {
       });
       if (this.currentSubscriptionToken() !== token) return;
       if (res.status === 200 && res.data.name === 'SubscriptionsRetrieved') {
-        this.subscribedRoutes.clear();
-        (res.data.payload as { routeId: string }[]).forEach((s) =>
-          this.subscribedRoutes.add(s.routeId)
+        this.subscribedRoutes = new Set(
+          (res.data.payload as { routeId: string }[]).map((s) => s.routeId)
         );
       }
     } catch {
-      // Best-effort — bell state may be stale until next load
+      // Best effort: bell state may be stale until the next page load.
     }
   }
 }

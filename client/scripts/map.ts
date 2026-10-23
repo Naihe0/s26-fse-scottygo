@@ -1,8 +1,13 @@
-import axios, { type AxiosResponse } from 'axios';
+// Map page entry point: wires the map provider, filters, live tracking,
+// directions, location handling, and page-level panels and popups.
+
+import axios from 'axios';
 import type { IResponse } from '../../common/server.responses';
 import { authService } from './services/auth.service';
-import type { IMapProvider, IConfig } from '../../common/map.interface';
+import { authHeaders, getToken, getUsername, isSameSession } from './services/session';
+import type { IConfig, IMapMarker } from '../../common/map.interface';
 import type { IStop, IPrediction } from '../../common/transit.interface';
+import { MAX_SUBSCRIPTIONS_PER_USER } from '../../common/limits';
 import { GoogleMapProvider } from './maps/google-map.provider';
 
 // Import web components
@@ -18,6 +23,7 @@ import type {
   IBusReportSubmission
 } from './components/bus-report-form';
 import { showToast } from './utils/toast';
+import { showModal } from './utils/modal';
 import type { IRouteBellElement } from './components/route-bell';
 import './components/map-key';
 import { createLocationIcon } from './utils/location-icon';
@@ -57,54 +63,6 @@ import {
   clearLocationFeedback
 } from './components/location-feedback';
 
-// Export empty object to treat as module
-export {};
-
-// Modal utility functions
-
-// Extend the global Window interface to include showModal
-declare global {
-  interface Window {
-    showModal?: (title: string, message: string) => void;
-  }
-}
-
-function showModal(title: string, message: string): void {
-  const modal = document.getElementById('message-modal');
-  const modalTitle = document.getElementById('modal-title');
-  const modalMessage = document.getElementById('modal-message');
-  const okButton = document.getElementById('modal-ok');
-
-  if (modal && modalTitle && modalMessage && okButton) {
-    modalTitle.textContent = title;
-    modalMessage.textContent = message;
-    modal.classList.add('is-open');
-    modal.removeAttribute('inert');
-
-    // Close modal on OK button click
-    const closeModal = () => {
-      modal.classList.remove('is-open');
-      modal.setAttribute('inert', '');
-      okButton.removeEventListener('click', closeModal);
-    };
-
-    okButton.addEventListener('click', closeModal);
-  } else {
-    console.error('Modal elements not found in DOM:', {
-      modal: !!modal,
-      modalTitle: !!modalTitle,
-      modalMessage: !!modalMessage,
-      okButton: !!okButton
-    });
-    // Fallback to alert if modal not available
-    alert(`${title}\n\n${message}`);
-  }
-}
-
-// Export modal function for use in other modules
-window.showModal = showModal;
-console.log('showModal function registered globally');
-
 // Global instances
 const mapStateManager = MapStateManager.getInstance();
 const urlSyncManager = URLSyncManager.getInstance();
@@ -130,20 +88,21 @@ const mapNavigation = new MapNavigationCoordinator({
     showToast('Some map data could not load. Try your selection again.')
 });
 
-function showSubscriptionToast(message: string): void {
-  showToast(message);
-}
-
 // ─── Map provider ──────────────────────────────────────────────────────────────
 
-// Map provider instance — depends on IMapProvider, not Google Maps directly
-const mapProvider: IMapProvider = new GoogleMapProvider();
+const mapProvider = new GoogleMapProvider();
 
 // Store user/initial location for recenter functionality
 let userLocation: { lat: number; lng: number } | null = null;
 
 /** CMU Pittsburgh campus center — fallback when GPS is denied */
 const CMU_CAMPUS_DEFAULT = { lat: 40.4433, lng: -79.9436 };
+
+/** Downtown Pittsburgh, shown when the rider is outside the service area. */
+const DOWNTOWN_PITTSBURGH = { lat: 40.4406, lng: -80.0112 };
+
+/** Bounding box of the supported service area. */
+const SERVICE_AREA = { minLat: 40.1, maxLat: 40.7, minLng: -80.4, maxLng: -79.6 };
 
 /**
  * Get the best available location for map operations.
@@ -154,8 +113,6 @@ function getEffectiveLocation(): { lat: number; lng: number } {
   return state.plannedLocation ?? userLocation ?? CMU_CAMPUS_DEFAULT;
 }
 
-// Store user location marker reference
-import type { IMapMarker } from '../../common/map.interface';
 let userLocationMarker: IMapMarker | null = null;
 
 // Planned location marker (distinct from GPS blue dot)
@@ -164,9 +121,8 @@ let plannedLocationMarker: IMapMarker | null = null;
 // Fetch map config (API key, default center, zoom) from server
 async function getMapConfig(): Promise<IConfig | null> {
   try {
-    const token = localStorage.getItem('token');
-    const res: AxiosResponse = await axios.get('/config', {
-      headers: { Authorization: `Bearer ${token}` },
+    const res = await axios.get('/config', {
+      headers: authHeaders(),
       validateStatus: () => true
     });
     const response: IResponse = res.data;
@@ -190,7 +146,7 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
     return;
   }
 
-  const username = localStorage.getItem('username');
+  const username = getUsername();
   const userAccount = username
     ? await authService.getCurrentUserAccount(username)
     : null;
@@ -292,7 +248,6 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
       ) as IRouteSelectorElement;
       if (routeSelector && 'setRoutes' in routeSelector) {
         routeSelector.setRoutes(routes);
-        console.log(`Updated route selector with ${routes.length} routes`);
       }
     });
 
@@ -336,28 +291,20 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
     if (tutorial && userAccount && !userAccount.onboardingComplete) {
       // Mark onboarding complete on server when tutorial finishes
       tutorial.addEventListener('tutorial-complete', async () => {
-        const token = localStorage.getItem('token');
-        if (token) {
-          await axios.patch(
-            '/account/onboarding',
-            {},
-            {
-              headers: { Authorization: `Bearer ${token}` },
-              validateStatus: () => true
-            }
-          );
-        }
+        if (!getToken()) return;
+        await axios.patch(
+          '/account/onboarding',
+          {},
+          { headers: authHeaders(), validateStatus: () => true }
+        );
       });
 
       // Wait for the map to fully render before starting the tutorial
-      const provider =
-        mapProvider as import('./maps/google-map.provider').GoogleMapProvider;
-      if (typeof provider.getNativeMap === 'function') {
-        const nativeMap = provider.getNativeMap();
-        google.maps.event.addListenerOnce(nativeMap, 'tilesloaded', () => {
-          tutorial.start();
-        });
-      }
+      google.maps.event.addListenerOnce(
+        mapProvider.getNativeMap(),
+        'tilesloaded',
+        () => tutorial.start()
+      );
     }
   } else {
     console.error('Map could not be initialized: config unavailable');
@@ -366,8 +313,6 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
       'Map configuration is unavailable. Please check your internet connection and try again.'
     );
   }
-
-  console.log('Map page loaded');
 });
 
 // Initialize toggle panels with their configurations
@@ -375,10 +320,7 @@ async function initializeTogglePanels(): Promise<void> {
   // Wait for the custom element to be defined
   await customElements.whenDefined('toggle-panel');
 
-  // Direction Filter Panel Configuration
   const directionPanel = document.getElementById('direction-panel');
-  console.log('Direction panel element:', directionPanel);
-
   if (directionPanel && 'configure' in directionPanel) {
     const directionConfig: ITogglePanelConfig = {
       options: [
@@ -390,10 +332,8 @@ async function initializeTogglePanels(): Promise<void> {
     (directionPanel as ITogglePanelElement).configure(directionConfig);
   }
 
-  // System Filter Panel Configuration (Rule R2: PRT ON, CMU OFF by default)
+  // PRT is on and CMU off by default.
   const systemPanel = document.getElementById('system-panel');
-  console.log('System panel element:', systemPanel);
-
   if (systemPanel && 'configure' in systemPanel) {
     const systemConfig: ITogglePanelConfig = {
       options: [
@@ -408,8 +348,6 @@ async function initializeTogglePanels(): Promise<void> {
     };
     (systemPanel as ITogglePanelElement).configure(systemConfig);
   }
-
-  console.log('Toggle panels initialized');
 }
 
 // Helper function to get panel references
@@ -500,18 +438,10 @@ const closePanelsExcept = (
   });
 };
 
-const handlePanelToggle = (
-  panelName: PanelName,
-  clickMessage: string,
-  panelFoundMessage?: string
-): void => {
+const handlePanelToggle = (panelName: PanelName): void => {
   // Block filter interactions while in directions mode
   if (directionsController.isActive) return;
-  console.log(clickMessage);
   const panels = getPanels();
-  if (panelFoundMessage) {
-    console.log(panelFoundMessage, panels[panelName]);
-  }
   closePanelsExcept(panels, panelName);
   togglePanelIfSupported(panels[panelName]);
 };
@@ -520,8 +450,6 @@ const registerTransitSearchEvents = (): void => {
   document.addEventListener('search', (e: Event) => {
     const customEvent = e as CustomEvent<{ query?: string }>;
     const query = customEvent.detail?.query?.trim() ?? '';
-    console.log('Search query:', query);
-
     if (!query) {
       selectRoute(null);
     }
@@ -542,30 +470,16 @@ const registerTransitSearchEvents = (): void => {
 
   document.addEventListener('toggleLayers', () => {
     const mode = mapProvider.toggleLayers();
-    showSubscriptionToast(`Map layer: ${mode}`);
+    showToast(`Map layer: ${mode}`);
   });
 };
 
 const registerFilterPanelToggleEvents = (): void => {
-  document.addEventListener('filterRoute', () => {
-    handlePanelToggle(
-      'route',
-      'Route filter clicked',
-      'Route selector panel found:'
-    );
-  });
-
-  document.addEventListener('filterSystem', () => {
-    handlePanelToggle('system', 'System filter clicked', 'System panel found:');
-  });
-
-  document.addEventListener('filterDirection', () => {
-    handlePanelToggle(
-      'direction',
-      'Direction filter clicked',
-      'Direction panel found:'
-    );
-  });
+  document.addEventListener('filterRoute', () => handlePanelToggle('route'));
+  document.addEventListener('filterSystem', () => handlePanelToggle('system'));
+  document.addEventListener('filterDirection', () =>
+    handlePanelToggle('direction')
+  );
 
   document.addEventListener('clearFilters', () => {
     if (!directionsController.isActive) void mapNavigation.clear();
@@ -574,15 +488,11 @@ const registerFilterPanelToggleEvents = (): void => {
 
 const registerZoomAndMapEvents = (): void => {
   document.addEventListener('zoomIn', () => {
-    console.log('Zoom in clicked');
-    const currentZoom = mapProvider.getZoom();
-    mapProvider.setZoom(currentZoom + 1);
+    mapProvider.setZoom(mapProvider.getZoom() + 1);
   });
 
   document.addEventListener('zoomOut', () => {
-    console.log('Zoom out clicked');
-    const currentZoom = mapProvider.getZoom();
-    mapProvider.setZoom(currentZoom - 1);
+    mapProvider.setZoom(mapProvider.getZoom() - 1);
   });
 
   document.addEventListener('recenter', () => {
@@ -594,43 +504,20 @@ const registerZoomAndMapEvents = (): void => {
       retryUserLocation();
       return;
     }
-    const loc = getEffectiveLocation();
-    focusNearby(mapProvider, loc);
-    console.log('Recentered map on effective location');
-  });
-
-  document.addEventListener('locationShown', (e: Event) => {
-    const customEvent = e as CustomEvent;
-    console.log('Location shown:', customEvent.detail);
-  });
-
-  document.addEventListener('themeChanged', (e: Event) => {
-    const customEvent = e as CustomEvent;
-    const isDark = customEvent.detail.isDark;
-    console.log('Theme changed to:', isDark ? 'dark' : 'light');
-    // TODO: Update map theme if needed
+    focusNearby(mapProvider, getEffectiveLocation());
   });
 };
 
 const registerFilterApplicationEvents = (): void => {
   document.addEventListener('systemFilterApplied', (e: Event) => {
     if (directionsController.isActive) return;
-    const customEvent = e as CustomEvent;
-    const { prt, cmu } = customEvent.detail;
-    console.log('System filters applied - PRT:', prt, 'CMU:', cmu);
+    const { prt, cmu } = (e as CustomEvent).detail;
     void mapNavigation.commit({ selectedSystems: { prt, cmu } });
   });
 
   document.addEventListener('directionFilterApplied', (e: Event) => {
     if (directionsController.isActive) return;
-    const customEvent = e as CustomEvent;
-    const { inbound, outbound } = customEvent.detail;
-    console.log(
-      'Direction filters applied - Inbound:',
-      inbound,
-      'Outbound:',
-      outbound
-    );
+    const { inbound, outbound } = (e as CustomEvent).detail;
     void mapNavigation.commit({ selectedDirections: { inbound, outbound } });
   });
 };
@@ -647,29 +534,26 @@ function getRouteToastLabel(routeId: string): string {
 export const registerSubscriptionEvents = (): void => {
   document.addEventListener('bellSubscribe', async (e: Event) => {
     const { routeId } = (e as CustomEvent<{ routeId: string }>).detail;
-    const token = localStorage.getItem('token');
+    const token = getToken();
     try {
       const res = await axios.post(
         '/notifications/subscriptions',
         { routeId },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          validateStatus: () => true
-        }
+        { headers: authHeaders(), validateStatus: () => true }
       );
-      if (localStorage.getItem('token') !== token) return;
+      if (!isSameSession(token)) return;
       if (res.status === 201 && res.data.name === 'RouteSubscribed') {
         authService.addSubscription(routeId);
         document.dispatchEvent(
           new CustomEvent('notifRouteJoin', { detail: { routeId } })
         );
-        showSubscriptionToast(`Subscribed to ${getRouteToastLabel(routeId)}.`);
+        showToast(`Subscribed to ${getRouteToastLabel(routeId)}.`);
       } else if (
         res.status === 409 &&
         res.data.name === 'SubscriptionLimitReached'
       ) {
-        showSubscriptionToast(
-          'Subscription limit reached (10). Please remove a subscription first.'
+        showToast(
+          `Subscription limit reached (${MAX_SUBSCRIPTIONS_PER_USER}). Please remove a subscription first.`
         );
         updateBellState(routeId, false);
       } else if (
@@ -681,43 +565,38 @@ export const registerSubscriptionEvents = (): void => {
           new CustomEvent('notifRouteJoin', { detail: { routeId } })
         );
       } else {
-        showSubscriptionToast('Failed to subscribe. Please try again.');
+        showToast('Failed to subscribe. Please try again.');
         updateBellState(routeId, false);
       }
     } catch {
-      if (localStorage.getItem('token') !== token) return;
-      showSubscriptionToast('Failed to subscribe. Please try again.');
+      if (!isSameSession(token)) return;
+      showToast('Failed to subscribe. Please try again.');
       updateBellState(routeId, false);
     }
   });
 
   document.addEventListener('bellUnsubscribe', async (e: Event) => {
     const { routeId } = (e as CustomEvent<{ routeId: string }>).detail;
-    const token = localStorage.getItem('token');
+    const token = getToken();
     try {
       const res = await axios.delete(
-        `/notifications/subscriptions/${routeId}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          validateStatus: () => true
-        }
+        `/notifications/subscriptions/${encodeURIComponent(routeId)}`,
+        { headers: authHeaders(), validateStatus: () => true }
       );
-      if (localStorage.getItem('token') !== token) return;
+      if (!isSameSession(token)) return;
       if (res.status === 200 || res.status === 404) {
         authService.removeSubscription(routeId);
         document.dispatchEvent(
           new CustomEvent('notifRouteLeave', { detail: { routeId } })
         );
-        showSubscriptionToast(
-          `Unsubscribed from ${getRouteToastLabel(routeId)}.`
-        );
+        showToast(`Unsubscribed from ${getRouteToastLabel(routeId)}.`);
       } else {
-        showSubscriptionToast('Failed to unsubscribe. Please try again.');
+        showToast('Failed to unsubscribe. Please try again.');
         updateBellState(routeId, true);
       }
     } catch {
-      if (localStorage.getItem('token') !== token) return;
-      showSubscriptionToast('Failed to unsubscribe. Please try again.');
+      if (!isSameSession(token)) return;
+      showToast('Failed to unsubscribe. Please try again.');
       updateBellState(routeId, true);
     }
   });
@@ -754,31 +633,22 @@ const registerBusReportEvents = (): void => {
 
   document.addEventListener('busReportSubmitted', async (e: Event) => {
     const submission = (e as CustomEvent<IBusReportSubmission>).detail;
-    const token = localStorage.getItem('token');
     try {
-      const res = await axios.post(
-        '/notifications/reports',
-        submission.report,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          validateStatus: () => true,
-          timeout: 15000
-        }
-      );
+      const res = await axios.post('/notifications/reports', submission.report, {
+        headers: authHeaders(),
+        validateStatus: () => true,
+        timeout: 15000
+      });
       if (res.status === 201) {
         submission.onSuccess();
-        showSubscriptionToast(
-          res.data.message ?? 'Report submitted. Thank you!'
-        );
+        showToast(res.data.message ?? 'Report submitted. Thank you!');
       } else {
-        console.error('Report submission failed:', res.status, res.data);
         const serverMsg: string | undefined = res.data?.message;
         submission.onError(
           serverMsg ?? 'Failed to submit report. Please try again.'
         );
       }
-    } catch (err) {
-      console.error('Report submission error:', err);
+    } catch {
       submission.onError(
         'Failed to submit report. Your draft is saved here; please try again.'
       );
@@ -814,11 +684,7 @@ const registerLocationSearchEvents = (): void => {
 
   // Pass the native Google map to the location-search component for Places API
   if (locationSearch && 'setMap' in locationSearch) {
-    const provider =
-      mapProvider as import('./maps/google-map.provider').GoogleMapProvider;
-    if (typeof provider.getNativeMap === 'function') {
-      locationSearch.setMap(provider.getNativeMap());
-    }
+    locationSearch.setMap(mapProvider.getNativeMap());
   }
 
   // When search bar is focused with no query, open the location search dropdown
@@ -839,7 +705,6 @@ const registerLocationSearchEvents = (): void => {
     const { lat, lng, label } = (
       e as CustomEvent<{ lat: number; lng: number; label: string }>
     ).detail;
-    console.log('Planned location set:', label, lat, lng);
     const plannedLoc = { lat, lng };
     // Hide GPS blue dot, show planned marker
     hideUserLocationMarker();
@@ -848,7 +713,7 @@ const registerLocationSearchEvents = (): void => {
     void mapNavigation.restore();
     directionsController.updatePlannedLocation(plannedLoc);
     mapProvider.setCenter(plannedLoc);
-    showSubscriptionToast(`Location set: ${label}`);
+    showToast(`Location set: ${label}`);
   });
 
   // User reset to current GPS location
@@ -915,7 +780,7 @@ function handleUserPosition(position: GeolocationPosition): void {
           'Location Out of Bounds',
           'This transit app only supports the Pittsburgh bus system.'
         );
-        mapProvider.setCenter({ lat: 40.4406, lng: -80.0112 });
+        mapProvider.setCenter(DOWNTOWN_PITTSBURGH);
         mapProvider.setZoom(14);
       }
     }
@@ -974,7 +839,7 @@ async function useCurrentLocation(): Promise<void> {
   )
     return;
   focusNearby(mapProvider, latest.currentLocation);
-  showSubscriptionToast('Using current location');
+  showToast('Using current location');
 }
 
 function centerOnCmuCampus(): void {
@@ -1007,7 +872,6 @@ function addUserLocationMarker(lat: number, lng: number): void {
     zIndex: 2000,
     clickable: false
   });
-  console.log('User location marker added to map');
 }
 
 // ── Planned Location Marker ──────────────────────────────────────────
@@ -1030,7 +894,7 @@ function addPlannedLocationMarker(
 
   // Click on planned marker → show remove popup
   plannedLocationMarker.onClick(() => {
-    showPlannedLocationPopup(lat, lng, label);
+    showPlannedLocationPopup(label);
   });
 }
 
@@ -1045,16 +909,6 @@ function removePlannedLocationMarker(): void {
 function hideUserLocationMarker(): void {
   if (userLocationMarker) {
     userLocationMarker.setVisible(false);
-  }
-}
-
-function showUserLocationMarker(): void {
-  if (userLocationMarker) {
-    userLocationMarker.setVisible(true);
-  } else if (userLocation) {
-    // Marker was never created (e.g. page loaded with a mocked location active).
-    // Create it now that the mocked location has been cleared.
-    addUserLocationMarker(userLocation.lat, userLocation.lng);
   }
 }
 
@@ -1080,8 +934,6 @@ function restorePlannedLocationMarker(): void {
   directionsController.updatePlannedLocation({ lat, lng });
   mapProvider.setCenter({ lat, lng });
   mapProvider.setZoom(15);
-
-  console.log('Restored persisted planned location:', label);
 }
 
 // ── Planned Location Popup ───────────────────────────────────────────
@@ -1090,11 +942,7 @@ function dismissPlannedLocationPopup(): void {
   if (el) el.remove();
 }
 
-function showPlannedLocationPopup(
-  lat: number,
-  lng: number,
-  label: string
-): void {
+function showPlannedLocationPopup(label: string): void {
   dismissPlannedLocationPopup();
 
   const mapContainer = document.querySelector('.map-container');
@@ -1106,7 +954,7 @@ function showPlannedLocationPopup(
   popup.innerHTML = `
     <div class="planned-location-popup__header">
       <span class="material-icons-outlined planned-location-popup__icon">place</span>
-      <strong class="planned-location-popup__label">${label}</strong>
+      <strong class="planned-location-popup__label"></strong>
     </div>
     <p class="planned-location-popup__desc">Planned location</p>
     <button class="planned-location-popup__remove" id="planned-location-remove">
@@ -1114,6 +962,8 @@ function showPlannedLocationPopup(
       Remove &amp; use current location
     </button>
   `;
+  // Place names come from Google Places or browser storage: render as text.
+  popup.querySelector('.planned-location-popup__label')!.textContent = label;
 
   mapContainer.appendChild(popup);
 
@@ -1136,28 +986,7 @@ function showPlannedLocationPopup(
   setTimeout(() => document.addEventListener('click', onOutsideClick, true), 0);
 }
 
-// ── Toast Notification (TUC4 Step 11) ────────────────────────────────
-function showMapToast(message: string): void {
-  // Remove existing toast if any
-  const existing = document.getElementById('map-toast');
-  if (existing) existing.remove();
-
-  const toast = document.createElement('div');
-  toast.id = 'map-toast';
-  toast.className = 'map-toast';
-  toast.textContent = message;
-
-  const container = document.querySelector('.map-container');
-  if (container) container.appendChild(toast);
-
-  // Auto-dismiss after 4 seconds
-  setTimeout(() => {
-    toast.classList.add('map-toast--fade');
-    setTimeout(() => toast.remove(), 400);
-  }, 4000);
-}
-
-// ── Directions Info Panel (TUC4 Step 6) ──────────────────────────────
+// ── Directions Info Panel ────────────────────────────────────────────
 let directionsBusTickerInterval: number | null = null;
 
 function stopDirectionsBusTicker(): void {
@@ -1195,7 +1024,33 @@ function formatArrivalCountdown(predictedArrivalTime: number): string {
 
 function getRouteBadgeColor(routeId: string): string {
   const routes = mapStateManager.getState().availableRoutes;
-  return routes.find((r) => r.id === routeId)?.color || '#c41230';
+  const color = routes.find((r) => r.id === routeId)?.color ?? '';
+  return /^#[\da-f]{3}(?:[\da-f]{3})?$/i.test(color) ? color : '#c41230';
+}
+
+/** Feed-supplied route and vehicle IDs are rendered as text, never markup. */
+function createArrivalItem(prediction: IPrediction): HTMLLIElement {
+  const item = document.createElement('li');
+  item.className = 'directions-panel__bus';
+  item.dataset.arrival = String(prediction.predictedArrivalTime);
+
+  const badge = document.createElement('span');
+  badge.className = 'directions-panel__bus-badge';
+  badge.style.background = getRouteBadgeColor(prediction.routeId);
+  badge.textContent = prediction.routeId;
+
+  const time = document.createElement('span');
+  time.className = 'directions-panel__bus-time';
+  time.textContent = formatArrivalCountdown(prediction.predictedArrivalTime);
+
+  item.append(badge, time);
+  if (prediction.vid) {
+    const vehicle = document.createElement('span');
+    vehicle.className = 'directions-panel__bus-vid';
+    vehicle.textContent = `Bus ${prediction.vid}`;
+    item.append(vehicle);
+  }
+  return item;
 }
 
 function updateDirectionsPanel(
@@ -1225,27 +1080,6 @@ function updateDirectionsPanel(
 
   const stopName = directionsController.targetStop?.stopName ?? 'Selected Stop';
 
-  let predictionsHTML = '';
-  if (info.predictions.length > 0) {
-    const items = info.predictions
-      .map((p) => {
-        const minText = formatArrivalCountdown(p.predictedArrivalTime);
-        const color = getRouteBadgeColor(p.routeId);
-        return `<li class="directions-panel__bus" data-arrival="${p.predictedArrivalTime}">
-          <span class="directions-panel__bus-badge" style="background:${color}">${p.routeId}</span>
-          <span class="directions-panel__bus-time">${minText}</span>
-          ${p.vid ? `<span class="directions-panel__bus-vid">Bus ${p.vid}</span>` : ''}
-        </li>`;
-      })
-      .join('');
-    predictionsHTML = `
-      <div class="directions-panel__buses">
-        <span class="directions-panel__buses-label">Selected buses arriving:</span>
-        <ul class="directions-panel__bus-list">${items}</ul>
-      </div>
-    `;
-  }
-
   panel.innerHTML = `
     <div class="directions-panel__header">
       <span class="material-icons-outlined directions-panel__icon">directions_walk</span>
@@ -1257,14 +1091,27 @@ function updateDirectionsPanel(
         info.loading
           ? '<span role="status">Finding a walking route…</span>'
           : `<span class="directions-panel__duration">${info.durationMin} min walk</span>
-           <span class="directions-panel__eta">ETA ${info.eta}</span>`
+           <span class="directions-panel__eta"></span>`
       }
     </div>
-    ${predictionsHTML}
   `;
 
   panel.querySelector('.directions-panel__title')!.textContent =
     `Walking to ${stopName}`;
+  const eta = panel.querySelector('.directions-panel__eta');
+  if (eta) eta.textContent = `ETA ${info.eta}`;
+
+  if (info.predictions.length > 0) {
+    const buses = document.createElement('div');
+    buses.className = 'directions-panel__buses';
+    buses.innerHTML =
+      '<span class="directions-panel__buses-label">Selected buses arriving:</span>' +
+      '<ul class="directions-panel__bus-list"></ul>';
+    buses
+      .querySelector('ul')!
+      .append(...info.predictions.map(createArrivalItem));
+    panel.appendChild(buses);
+  }
   for (const warning of info.warnings ?? []) {
     const text = document.createElement('p');
     text.className = 'directions-panel__warning';
@@ -1382,12 +1229,11 @@ function enableFilterControls(): void {
   }
 }
 
-// Check if coordinates are within Pittsburgh area (Rule R5)
 function isInPittsburghArea(lat: number, lng: number): boolean {
-  const MIN_LAT = 40.1;
-  const MAX_LAT = 40.7;
-  const MIN_LNG = -80.4;
-  const MAX_LNG = -79.6;
-
-  return lat >= MIN_LAT && lat <= MAX_LAT && lng >= MIN_LNG && lng <= MAX_LNG;
+  return (
+    lat >= SERVICE_AREA.minLat &&
+    lat <= SERVICE_AREA.maxLat &&
+    lng >= SERVICE_AREA.minLng &&
+    lng <= SERVICE_AREA.maxLng
+  );
 }

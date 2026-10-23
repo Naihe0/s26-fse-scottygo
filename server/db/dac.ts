@@ -1,7 +1,5 @@
-// dao = Data Access Object
-// This is the access point to the database
-// It is used to decouple the database from the rest of the application
-// It is accessed by the models, which are used by the controllers
+// Data access boundary. Models reach the database only through DAC.db, so
+// the MongoDB implementation can be replaced with a test double.
 
 import {
   IUser,
@@ -35,19 +33,16 @@ export interface IMemorySampleRecord {
 export interface IDatabase {
   connect(): Promise<void>;
 
+  /** Drop all collections; refused unless explicitly allowed outside PROD. */
   init(): Promise<void>;
 
   close(): Promise<void>;
 
+  // Accounts
   saveUser(userData: IUser): Promise<IUser>;
-
-  findUserByUsername(username: string): Promise<IUser | null>;
-
-  findUserById(userId: string): Promise<IUser | null>;
 
   setUserAgreedToTrue(user: IUser): Promise<IUser | null>;
 
-  // Account management methods
   findUserAccountByUsername(username: string): Promise<IUserAccount | null>;
 
   findUserAccountById(userId: string): Promise<IUserAccount | null>;
@@ -77,18 +72,18 @@ export interface IDatabase {
     hashedPassword: string
   ): Promise<IUserAccount | null>;
 
+  /** Number of active administrators. */
   countAdministrators(): Promise<number>;
 
   markOnboardingComplete(userId: string): Promise<boolean>;
 
   getAllUsernames(): Promise<string[]>;
 
+  /** Create the initial administrator unless any administrator exists. */
   seedDefaultAdmin(): Promise<void>;
 
-  // Transit cache methods
+  // Transit cache and diagnostics
   getTransitCache(cacheKey: string): Promise<ITransitCache | null>;
-
-  getAllTransitCaches(): Promise<ITransitCache[]>;
 
   upsertTransitCache(entry: ITransitCache): Promise<void>;
 
@@ -96,44 +91,31 @@ export interface IDatabase {
 
   saveMemorySample(sample: IMemorySampleRecord): Promise<void>;
 
+  /** Most recent samples, newest first. */
   getRecentMemorySamples(limit: number): Promise<IMemorySampleRecord[]>;
 
-  // Notification (TUC3) methods
+  // Subscriptions, reports, and notifications
   getSubscriptionsByUserId(userId: string): Promise<ISubscription[]>;
 
-  findSubscription(
-    userId: string,
-    routeId: string
-  ): Promise<ISubscription | null>;
-
-  countSubscriptionsByUserId(userId: string): Promise<number>;
-
+  /** Throws DuplicateSubscription or SubscriptionLimitReached on conflict. */
   saveSubscription(sub: ISubscription): Promise<ISubscription>;
 
+  /** True when a subscription was removed. */
   deleteSubscription(userId: string, routeId: string): Promise<boolean>;
 
   saveBusReport(report: IBusReport): Promise<IBusReport>;
 
-  getLatestReportByVehicle(vid: string): Promise<IBusReport | null>;
-
   saveNotification(notification: INotification): Promise<INotification>;
 
+  /** Notifications from the retention window matching the filter, newest first. */
   getRecentNotifications(
     filter: Record<string, unknown>
   ): Promise<INotification[]>;
 }
 
-/* Data Access Class */
+/** Data Access Class: holds the active database implementation. */
 class DAC {
-  static _db: IDatabase;
-
-  static get db(): IDatabase {
-    return DAC._db;
-  }
-
-  static set db(db: IDatabase) {
-    DAC._db = db;
-  }
+  static db: IDatabase;
 }
 
 export default DAC;

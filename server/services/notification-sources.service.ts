@@ -1,3 +1,6 @@
+// Route and vehicle lookups across both transit systems, used by
+// subscriptions, report proximity checks, and notification autocomplete.
+
 import { TransitModel } from '../models/transit.model';
 import type { IRoute, IVehicle } from '../../common/transit.interface';
 import tripshotService from './tripshot.service';
@@ -6,17 +9,13 @@ import vehiclePositionsService from './vehicle-positions.service';
 class NotificationSourcesService {
   async getAllSubscribableRoutes(): Promise<IRoute[]> {
     const prtRoutes = await TransitModel.getRoutes();
-    if (!tripshotService.isConfigured()) return prtRoutes;
-
     const cmuRoutes = await tripshotService.getRoutes().catch(() => []);
     return prtRoutes.concat(cmuRoutes);
   }
 
   async getSubscribableRouteIds(): Promise<Set<string>> {
-    const routeIds = new Set<string>();
     const routes = await this.getAllSubscribableRoutes();
-    for (const route of routes) routeIds.add(route.id);
-    return routeIds;
+    return new Set(routes.map((route) => route.id));
   }
 
   async getVehiclesForRoute(routeId: string): Promise<IVehicle[]> {
@@ -26,18 +25,12 @@ class NotificationSourcesService {
     return vehiclePositionsService.getVehicles(routeId);
   }
 
-  async getAllLiveVehiclesForNotifications(): Promise<IVehicle[]> {
-    const prtVehicles = vehiclePositionsService.getAllVehicles();
-    if (!tripshotService.isConfigured()) return prtVehicles;
-
+  async getAllLiveVehicles(): Promise<IVehicle[]> {
     const cmuRoutes = await tripshotService.getRoutes().catch(() => []);
-    const cmuVehicles = (
-      await Promise.all(
-        cmuRoutes.map((route) => tripshotService.getVehicles(route.id))
-      )
-    ).flat();
-
-    return prtVehicles.concat(cmuVehicles);
+    const cmuVehicles = await Promise.all(
+      cmuRoutes.map((route) => this.getVehiclesForRoute(route.id))
+    );
+    return vehiclePositionsService.getAllVehicles().concat(cmuVehicles.flat());
   }
 }
 

@@ -7,16 +7,12 @@ import type {
 } from '../../common/server.responses';
 import { isSuccess } from '../../common/server.responses';
 import { authService } from './services/auth.service';
+import { getToken, storeSession } from './services/session';
 import { returnToMapView, sanitizeMapViewHash } from './utils/map-auth-return';
-
-export {};
 
 // A shared view can reach this page with an already valid session. Leave the
 // ordinary sign-in page unchanged and validate before following this handoff.
-if (
-  sanitizeMapViewHash(window.location.hash) &&
-  localStorage.getItem('token')
-) {
+if (sanitizeMapViewHash(window.location.hash) && getToken()) {
   void authService
     .isLoggedIn()
     .then((loggedIn) => {
@@ -28,11 +24,6 @@ if (
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-const storeAuth = (token: string, username: string): void => {
-  localStorage.setItem('token', token);
-  localStorage.setItem('username', username);
-};
 
 const hasSuccessStatus = (status: number): boolean =>
   status >= 200 && status < 300;
@@ -49,7 +40,7 @@ const getAuthenticatedPayload = (
 const storeAuthFromResponse = (data: IResponse | null): void => {
   const payload = getAuthenticatedPayload(data);
   if (payload?.token && payload?.user) {
-    storeAuth(payload.token, payload.user.credentials.username);
+    storeSession(payload.token, payload.user.credentials.username);
   }
 };
 
@@ -63,7 +54,6 @@ const getResponseMessage = (
     UserExists: 'Username exists, Log in or try another username',
     IncorrectPassword: 'Incorrect username or password',
     InvalidUsername: 'Username less than 4 characters or invalid',
-    InvalidPassword: 'Password should be at least 4 characters',
     InvalidEmail: 'You are ineligible, ScottyGo is CMU ONLY',
     MissingUsername: 'Missing Username',
     MissingPassword: 'Missing Password',

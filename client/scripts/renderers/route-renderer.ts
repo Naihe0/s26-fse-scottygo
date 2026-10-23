@@ -415,33 +415,6 @@ export class RouteRenderer {
     this.hiddenDirections.clear();
   }
 
-  updateVisibleRoutes(visibleRouteIds: string[]): void {
-    const visibleSet = new Set(visibleRouteIds);
-    for (const routeId of new Set([
-      ...this.routePolylines.keys(),
-      ...this.detourPolylines.keys()
-    ])) {
-      if (visibleSet.has(routeId)) this.showRoute(routeId);
-      else this.hideRoute(routeId);
-    }
-  }
-
-  getRenderedRouteIds(): string[] {
-    return [...this.routePolylines.keys()];
-  }
-
-  getRouteBounds(
-    routeId: string
-  ): { north: number; south: number; east: number; west: number } | null {
-    const points = (this.routePolylines.get(routeId) ?? []).flatMap(
-      ({ path }) => path
-    );
-    for (const stops of this.stopMarkers.values()) {
-      if (stops.routeId === routeId) points.push(...stops.positions);
-    }
-    return this.boundsOf(points);
-  }
-
   private boundsOf(
     points: ILatLng[]
   ): { north: number; south: number; east: number; west: number } | null {
@@ -480,8 +453,4 @@ export class RouteRenderer {
     if (bounds) this.mapProvider.fitBounds(bounds);
   }
 
-  zoomToPosition(lat: number, lng: number, zoom = 16): void {
-    this.mapProvider?.setCenter({ lat, lng });
-    this.mapProvider?.setZoom(zoom);
-  }
 }

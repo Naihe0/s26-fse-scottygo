@@ -109,34 +109,6 @@
   display: none;
 }
 
-body.dark .location-feedback {
-  border-color: #475569;
-  background: #1e293b;
-  color: #e2e8f0;
-}
-
-body.dark .location-feedback h2 {
-  color: #f8fafc;
-}
-
-body.dark .location-feedback__fallback,
-body.dark .location-feedback__dismiss,
-body.dark .location-feedback__help summary {
-  color: #cbd5e1;
-}
-
-body.dark .location-feedback__help {
-  border-color: #475569;
-}
-
-body.dark .location-feedback__dismiss:hover {
-  background: #334155;
-}
-
-body.dark .location-feedback :is(button, summary):focus-visible {
-  outline-color: #93c5fd;
-}
-
 @media (max-width: 480px) {
   .location-feedback {
     padding: 18px;

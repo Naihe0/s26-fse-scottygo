@@ -38,7 +38,7 @@ const response = () => {
   return res;
 };
 const socket = () => ({
-  handshake: { query: { token: token() }, auth: {} },
+  handshake: { query: {}, auth: { token: token() } },
   data: { account },
   user: { userId: account._id, username: 'oldname' },
   rooms: new Set([
@@ -108,7 +108,7 @@ describe('Current account and session authorization', () => {
       .mockResolvedValue({ ...account, status: 'Inactive' });
     const res = response();
     const next = jest.fn();
-    await MapController.getInstance('/').authorize(
+    await MapController.getInstance('/').authenticateToken(
       { headers: { authorization: `Bearer ${token()}` } } as Request,
       res as unknown as Response,
       next
@@ -154,6 +154,16 @@ describe('Socket identity, authorization and expiry', () => {
     const next = jest.fn();
     await authenticateSocket(socket() as unknown as Socket, next);
     expect(next).toHaveBeenCalledWith(expect.any(Error));
+  });
+  test('handshake refuses a token supplied in the URL query string', async () => {
+    const client = {
+      ...socket(),
+      handshake: { query: { token: token() }, auth: {} }
+    };
+    const next = jest.fn();
+    await authenticateSocket(client as unknown as Socket, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+    expect(User.getUserAccountById).not.toHaveBeenCalled();
   });
   test('renamed token only subscribes to current account; malformed events are ignored', () => {
     const client = socket();

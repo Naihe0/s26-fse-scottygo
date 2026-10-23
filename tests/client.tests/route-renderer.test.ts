@@ -220,7 +220,8 @@ describe('route and stop rendering', () => {
       },
       '#abcdef'
     );
-    expect(renderer.getRenderedRouteIds()).toEqual(['CMU_LOOP', 'geo']);
+    expect(renderer.hasRouteGeometry('CMU_LOOP')).toBe(true);
+    expect(renderer.hasRouteGeometry('geo')).toBe(true);
     expect(renderer.hasRouteGeometry('CMU_LOOP')).toBe(true);
     expect(map.lines).toHaveLength(4);
   });
@@ -248,18 +249,6 @@ describe('route and stop rendering', () => {
     map.lines.forEach(({ line }) =>
       expect(line.setVisible).toHaveBeenLastCalledWith(true)
     );
-  });
-
-  test('visible-route filtering compares route IDs and retains hidden direction filters', () => {
-    renderer.renderRouteGeometry('route_INBOUND', geometry('LOOP'), '#123456');
-    renderer.renderRouteGeometry('other', geometry(), '#abcdef');
-    renderer.updateVisibleRoutes(['route_INBOUND']);
-    expect(map.lines[0].line.setVisible).toHaveBeenLastCalledWith(true);
-    expect(map.lines[2].line.setVisible).toHaveBeenLastCalledWith(false);
-    renderer.hideDirectionPolylines('route_INBOUND', 'LOOP');
-    renderer.updateVisibleRoutes(['route_INBOUND', 'other']);
-    expect(map.lines[0].line.setVisible).toHaveBeenLastCalledWith(false);
-    expect(map.lines[2].line.setVisible).toHaveBeenLastCalledWith(true);
   });
 
   test('new detours inherit active visibility and render above ordinary routes', () => {
@@ -297,23 +286,14 @@ describe('route and stop rendering', () => {
       expect(line.remove).toHaveBeenCalledTimes(1)
     );
     expect(renderer.hasRouteGeometry('CMU_LOOP')).toBe(false);
-    expect(renderer.getRenderedRouteIds()).toEqual([]);
     expect(renderer.getRoutesAtPosition(path[0])).toEqual([]);
   });
 
-  test('replacing a route removes old overlays and bounds use its current geometry and stops', () => {
+  test('replacing a route removes its old overlays and adopts the new color', () => {
     renderer.renderRouteGeometry('61C', geometry(), '#123456');
     renderer.renderRouteGeometry('61C', geometry(), '#abcdef');
     expect(map.lines[0].line.remove).toHaveBeenCalledTimes(1);
     expect(map.lines[1].line.remove).toHaveBeenCalledTimes(1);
-    renderer.renderStopMarkers('61C', [stop('north', 40.45)], 'INBOUND');
-    expect(renderer.getRouteBounds('61C')).toEqual({
-      north: 40.45,
-      south: 40.44,
-      east: -79.93,
-      west: -79.95
-    });
-    expect(renderer.getRouteBounds('missing')).toBeNull();
     expect(renderer.getRouteColor('61C')).toBe('#abcdef');
   });
 

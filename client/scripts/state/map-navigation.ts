@@ -1,4 +1,5 @@
 import type { IMapState } from './map-state';
+import { getToken, isSameSession } from '../services/session';
 
 interface NavigationDependencies {
   getState(): Readonly<IMapState>;
@@ -51,13 +52,13 @@ export class MapNavigationCoordinator {
     if (!this.ready || this.disposed || this.dependencies.directionsActive())
       return;
     const session = this.dependencies.directionsSession();
-    const token = localStorage.getItem('token');
+    const token = getToken();
     const isCurrent = () =>
       !this.disposed &&
       revision === this.revision &&
       session === this.dependencies.directionsSession() &&
       !this.dependencies.directionsActive() &&
-      token === localStorage.getItem('token');
+      isSameSession(token);
     let finish!: () => void;
     const canceled = new Promise<boolean>((resolve) => {
       finish = () => resolve(false);

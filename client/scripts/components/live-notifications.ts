@@ -3,8 +3,8 @@
  * Connects to Socket.io, joins route rooms for active subscriptions, and shows
  * toast-style popup cards when a liveNotification event arrives.
  *
- * Mute state is stored in localStorage under MUTED_ROUTES_KEY. When a route is
- * muted the socket room is left and popups are suppressed; unmuting rejoins.
+ * Muted routes (utils/muted-routes) leave their socket room and show no
+ * popups; unmuting rejoins.
  *
  * Other scripts interact via custom DOM events:
  *   notifRouteJoin   { routeId } — subscribe + unmute
@@ -26,48 +26,10 @@ import {
   fetchRouteDisplayMap,
   formatNotificationMessage,
   getRouteTitle,
-  normalizeRouteId,
   type IRouteDisplayMeta
 } from '../utils/route-display';
-
-const MUTED_ROUTES_KEY = 'scottygo_muted_routes';
-
-// ── Mute helpers ──────────────────────────────────────────────────────────────
-
-function getMutedRoutes(): Set<string> {
-  try {
-    const arr = JSON.parse(localStorage.getItem(MUTED_ROUTES_KEY) ?? '[]');
-    return new Set(
-      Array.isArray(arr) ? arr.filter((value) => typeof value === 'string') : []
-    );
-  } catch {
-    return new Set();
-  }
-}
-
-function saveMutedRoutes(routes: Set<string>): void {
-  try {
-    localStorage.setItem(MUTED_ROUTES_KEY, JSON.stringify([...routes]));
-  } catch {
-    // Subscription room changes still work when browser storage is unavailable.
-  }
-}
-
-export function muteRoute(routeId: string): void {
-  const muted = getMutedRoutes();
-  muted.add(normalizeRouteId(routeId));
-  saveMutedRoutes(muted);
-}
-
-export function unmuteRoute(routeId: string): void {
-  const muted = getMutedRoutes();
-  muted.delete(normalizeRouteId(routeId));
-  saveMutedRoutes(muted);
-}
-
-export function isRouteMuted(routeId: string): boolean {
-  return getMutedRoutes().has(normalizeRouteId(routeId));
-}
+import { isRouteMuted, setRouteMuted } from '../utils/muted-routes';
+import { authHeaders, getToken } from '../services/session';
 
 // ── Socket management ─────────────────────────────────────────────────────────
 
@@ -90,10 +52,10 @@ function leaveRoute(routeId: string): void {
 }
 
 function connect(): void {
-  const token = localStorage.getItem('token');
+  const token = getToken();
   if (!token || socket) return;
 
-  socket = io({ query: { token } });
+  socket = io({ auth: { token } });
 
   socket.on('connect', () => {
     // Rejoin all tracked rooms on (re)connect
@@ -117,7 +79,7 @@ function connect(): void {
 
 document.addEventListener('notifRouteJoin', (e: Event) => {
   const { routeId } = (e as CustomEvent<{ routeId: string }>).detail;
-  unmuteRoute(routeId);
+  setRouteMuted(routeId, false);
   joinRoute(routeId);
 });
 
@@ -128,13 +90,13 @@ document.addEventListener('notifRouteLeave', (e: Event) => {
 
 document.addEventListener('notifRouteMute', (e: Event) => {
   const { routeId } = (e as CustomEvent<{ routeId: string }>).detail;
-  muteRoute(routeId);
+  setRouteMuted(routeId, true);
   leaveRoute(routeId);
 });
 
 document.addEventListener('notifRouteUnmute', (e: Event) => {
   const { routeId } = (e as CustomEvent<{ routeId: string }>).detail;
-  unmuteRoute(routeId);
+  setRouteMuted(routeId, false);
   joinRoute(routeId);
 });
 
@@ -171,19 +133,16 @@ async function init(): Promise<void> {
   const version = ++initializationVersion;
   connect();
 
-  const token = localStorage.getItem('token');
-  if (!token) return;
+  if (!getToken()) return;
 
   // Fetch active subscriptions and join their socket rooms (skipping muted ones)
   try {
-    const routes = await fetchRouteDisplayMap({
-      Authorization: `Bearer ${token}`
-    });
+    const routes = await fetchRouteDisplayMap(authHeaders());
     if (suspended || version !== initializationVersion) return;
     routeDisplayById = routes;
 
     const res = await fetch('/notifications/subscriptions', {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: authHeaders()
     });
     if (!res.ok) return;
     const data = await res.json();
