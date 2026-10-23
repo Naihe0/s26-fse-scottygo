@@ -8,7 +8,7 @@ ScottyGo is one TypeScript application, with an Express server and a Parcel-buil
 
 | Path | Responsibility |
 | --- | --- |
-| `client/pages/` | Five entry pages: map, authentication, account, subscriptions, notifications. |
+| `client/pages/` | Six entry pages: map, authentication, account, subscriptions, notifications, and memory dashboard. |
 | `client/scripts/components/` | Custom elements and focused UI: navigation, filters, search, location feedback, map key, tracking status, reports, notification popups. |
 | `client/scripts/controllers/` | Map filtering, stop predictions, and walking navigation. |
 | `client/scripts/state/` | Shared map state, filter controls, URL synchronization, navigation ownership/cancellation. |
@@ -22,7 +22,7 @@ ScottyGo is one TypeScript application, with an Express server and a Parcel-buil
 | `server/services/` | Provider adapters, feed polling, session validation, moderation/email, and diagnostics. |
 | `server/db/` | `IDatabase` / DAC boundary, MongoDB/Mongoose implementation, test alternatives. |
 | `server/search/` | Search strategies and shared text matching. |
-| `common/` | Transit, account, map-provider, response, and Socket.IO interfaces. |
+| `common/` | Transit, account, map-provider, response, and Socket.IO interfaces; shared geographic helpers and request limits. |
 | `assets/` | CMU route metadata and static CSV geometry/stops used by the app. These are runtime data, separate from documentation screenshots. |
 | `tests/`, `tools/` | Jest unit/integration/REST suites; build, Windows runtime, path validation, and opt-in transit E2E helpers. |
 | `.dist/` | Generated client and server build, ignored by Git. |
@@ -41,6 +41,14 @@ flowchart LR
 ```
 
 Controllers are singletons assembled by `serve.ts`. Search behavior uses strategies; Socket.IO rooms distribute account and route events. Browser map access is wrapped by `IMapProvider` / `IMapMarker`, enabling focused tests without a live Google Maps instance.
+
+### UI interaction ownership
+
+`TransitSearch` owns its debounce, abort controller, request version, and active result. It keeps DOM focus in the combobox for keyboard navigation and invalidates pending work on dismissal or disconnect. `RouteSelectorPanel` and `TogglePanel` maintain separate draft and committed selections, so Cancel and Escape have the same predictable behavior. Stable filter inputs preserve composition and selection during list updates. Their styles are isolated in `transit-search.css` and `route-controls.css`, loaded by the map page.
+
+The subscriptions page tracks loading and mutation state separately. Its add sheet updates a route row in place after saving, and leaves explicit removal to the saved-route cards. `utils/toast.ts` owns one short feedback message and its dismiss timer; `utils/modal.ts` owns the map message dialog's focus and background inert state. These helpers keep page controllers focused on their workflow.
+
+The shared session module centralizes token/account access, authorization headers, and sign-out. Server feed adapters reuse `polling-feed.ts`; `errors.ts`, `logger.ts`, and `transit-validation.ts` provide consistent boundaries for HTTP validation and diagnostics. The memory dashboard now uses a Parcel browser entry instead of server-embedded scripts and styles.
 
 ## Initialization and transit data
 

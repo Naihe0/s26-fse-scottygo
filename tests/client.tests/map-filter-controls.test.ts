@@ -89,6 +89,7 @@ test('clear resets text, draft controls, panel visibility, and late search respo
   )!;
   search.value = '61C';
   search.dispatchEvent(new Event('input'));
+  search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
   routes.setSelection('61B');
   system.show();
   direction.show();

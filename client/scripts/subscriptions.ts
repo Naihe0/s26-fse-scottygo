@@ -31,6 +31,10 @@ let subscriptions: Subscription[] = [];
 let allRoutes: IRouteDisplayMeta[] = [];
 let routeDisplayById = new Map<string, IRouteDisplayMeta>();
 let mutationPending = false;
+type LoadState = 'loading' | 'ready' | 'error';
+let subscriptionsState: LoadState = 'loading';
+let routesState: LoadState = 'loading';
+let pendingRouteId: string | null = null;
 /** Most recent notification createdAt per routeId (from last 30 min). */
 const latestNotifTime = new Map<string, string>();
 
@@ -40,10 +44,7 @@ async function fetchSubscriptions(): Promise<void> {
   const res = await fetch('/notifications/subscriptions', {
     headers: authHeaders()
   });
-  if (!res.ok)
-    throw new Error(
-      'Could not load subscriptions. Please reload to try again.'
-    );
+  if (!res.ok) throw new Error('Could not load saved routes.');
   const data = await res.json();
   subscriptions = data.payload ?? [];
 }
@@ -66,7 +67,7 @@ async function fetchRecentNotifications(): Promise<void> {
 
 async function fetchRoutes(): Promise<void> {
   const res = await fetch('/transit/routes', { headers: authHeaders() });
-  if (!res.ok) return;
+  if (!res.ok) throw new Error('Could not load routes.');
   const data = await res.json();
   // Payload is IRoute[] — extract id and name
   allRoutes = (data.payload ?? []).map(
@@ -81,14 +82,16 @@ async function fetchRoutes(): Promise<void> {
 
 async function apiSubscribe(
   routeId: string
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; subscription?: Subscription; error?: string }> {
   const res = await fetch('/notifications/subscriptions', {
     method: 'POST',
     headers: { ...authHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ routeId })
+  }).catch(() => {
+    throw new Error('Could not save this route. Please try again.');
   });
   const data = await res.json();
-  if (res.status === 201) return { ok: true };
+  if (res.status === 201) return { ok: true, subscription: data.payload };
   return { ok: false, error: data.message ?? 'Failed to subscribe.' };
 }
 
@@ -128,10 +131,9 @@ const chevronSVG = `
     <polyline points="9 18 15 12 9 6"></polyline>
   </svg>`;
 
-const xSVG = `
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-    <line x1="18" y1="6" x2="6" y2="18"></line>
-    <line x1="6" y1="6" x2="18" y2="18"></line>
+const removeSVG = `
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"></path>
   </svg>`;
 
 // ── Render ─────────────────────────────────────────────────────────────────────
@@ -143,11 +145,14 @@ function updateCount(): void {
   const dividerEl = btn.querySelector('.add-route-divider') as HTMLElement;
   const atLimit = subscriptions.length >= MAX_SUBSCRIPTIONS_PER_USER;
 
-  countEl.textContent = `${subscriptions.length}/${MAX_SUBSCRIPTIONS_PER_USER}`;
+  countEl.textContent =
+    subscriptionsState === 'ready'
+      ? `${subscriptions.length}/${MAX_SUBSCRIPTIONS_PER_USER}`
+      : '—';
   labelEl.textContent = atLimit ? 'Limit reached' : '+ Add route';
   dividerEl.style.display = atLimit ? 'none' : '';
-  btn.classList.toggle('is-disabled', atLimit);
-  btn.disabled = atLimit;
+  btn.disabled = atLimit || subscriptionsState !== 'ready';
+  btn.classList.toggle('is-disabled', btn.disabled);
 }
 
 function formatAgo(isoTimestamp: string): string {
@@ -183,10 +188,10 @@ function createCard(sub: Subscription): HTMLLIElement {
       ${updatedText ? `<div class="card-last-updated">${updatedText}</div>` : ''}
     </div>
     <div class="card-actions">
-      <button class="card-bell ${muted ? 'muted' : ''}" aria-label="${muted ? 'Unmute' : 'Mute'} notifications">
+      <button class="card-bell ${muted ? 'muted' : ''}" aria-label="${muted ? 'Unmute' : 'Mute'} notifications for ${escapeHtml(display.title)}" aria-pressed="${muted}">
         ${muted ? bellOffSVG : bellOnSVG}
       </button>
-      <button class="card-remove" aria-label="Remove subscription">${xSVG}</button>
+      <button class="card-remove" title="Remove saved route" aria-label="Remove ${escapeHtml(display.title)} from saved routes">${removeSVG}</button>
     </div>
   `;
 
@@ -197,28 +202,43 @@ function createCard(sub: Subscription): HTMLLIElement {
       if (mutationPending) return;
       mutationPending = true;
       const button = li.querySelector<HTMLButtonElement>('.card-remove')!;
-      button.disabled = true;
+      const cardIndex = subscriptions.findIndex((s) =>
+        routeIdsEqual(s.routeId, sub.routeId)
+      );
+      updateMutationControls();
+      let removed = false;
       try {
         const { ok } = await apiUnsubscribe(sub.routeId);
-        await fetchSubscriptions();
-        const stillSubscribed = subscriptions.some((s) =>
-          routeIdsEqual(s.routeId, sub.routeId)
+        if (!ok) throw new Error('Unsubscribe failed');
+        subscriptions = subscriptions.filter(
+          (s) => !routeIdsEqual(s.routeId, sub.routeId)
         );
-        if (!ok || stillSubscribed) throw new Error('Unsubscribe failed');
+        removed = true;
         document.dispatchEvent(
           new CustomEvent('notifRouteLeave', {
             detail: { routeId: sub.routeId }
           })
         );
+        showToast(`${display.title} removed.`);
       } catch {
         showToast('Failed to remove subscription. Please try again.');
       } finally {
         mutationPending = false;
-        renderList();
-        renderSheetResults(
-          (document.getElementById('route-search-input') as HTMLInputElement)
-            .value
-        );
+        const restoreFocus =
+          document.activeElement === button ||
+          document.activeElement === document.body;
+        if (removed) {
+          renderList();
+          if (restoreFocus) {
+            const buttons =
+              document.querySelectorAll<HTMLButtonElement>('.card-remove');
+            (
+              buttons[Math.min(cardIndex, buttons.length - 1)] ??
+              document.getElementById('add-route-btn')
+            )?.focus({ preventScroll: true });
+          }
+        }
+        updateMutationControls();
       }
     }
   );
@@ -237,8 +257,10 @@ function createCard(sub: Subscription): HTMLLIElement {
     bellBtn.innerHTML = nowMuted ? bellOffSVG : bellOnSVG;
     bellBtn.setAttribute(
       'aria-label',
-      `${nowMuted ? 'Unmute' : 'Mute'} notifications`
+      `${nowMuted ? 'Unmute' : 'Mute'} notifications for ${display.title}`
     );
+    bellBtn.setAttribute('aria-pressed', String(nowMuted));
+    showToast(`${display.title} alerts ${nowMuted ? 'muted' : 'unmuted'}.`);
   });
 
   return li;
@@ -247,13 +269,13 @@ function createCard(sub: Subscription): HTMLLIElement {
 function renderEmptyState(): void {
   const list = document.getElementById('subscription-list')!;
   let empty = document.getElementById('subscription-empty');
-  if (subscriptions.length === 0) {
+  if (subscriptionsState === 'ready' && subscriptions.length === 0) {
     if (!empty) {
       empty = document.createElement('p');
       empty.id = 'subscription-empty';
       empty.className = 'subscription-empty';
       empty.textContent =
-        'No subscriptions yet. Use the map to subscribe to routes, or tap + to add one.';
+        'Save your everyday routes to keep their alerts together. Tap Add route to get started.';
       list.insertAdjacentElement('afterend', empty);
     }
   } else {
@@ -263,10 +285,38 @@ function renderEmptyState(): void {
 
 function renderList(): void {
   const list = document.getElementById('subscription-list')!;
+  const active = document.activeElement as HTMLElement | null;
+  const focusedRoute = list.contains(active)
+    ? active?.closest<HTMLElement>('.subscription-card')?.dataset.routeId
+    : undefined;
+  const focusedClass = active?.classList.contains('card-remove')
+    ? 'card-remove'
+    : active?.classList.contains('card-bell')
+      ? 'card-bell'
+      : 'card-route-link';
+  const content = document.querySelector<HTMLElement>('main')!;
+  const scrollTop = content.scrollTop;
   list.innerHTML = '';
   subscriptions.forEach((sub) => list.appendChild(createCard(sub)));
   updateCount();
   renderEmptyState();
+  const status = document.getElementById('subscription-status')!;
+  status.textContent =
+    subscriptionsState === 'loading'
+      ? 'Loading your saved routes…'
+      : subscriptionsState === 'error'
+        ? 'Your saved routes could not be loaded.'
+        : '';
+  list.setAttribute('aria-busy', String(subscriptionsState === 'loading'));
+  document.getElementById('subscriptions-retry')!.hidden =
+    subscriptionsState !== 'error';
+  if (focusedRoute) {
+    Array.from(list.querySelectorAll<HTMLElement>('.subscription-card'))
+      .find((card) => card.dataset.routeId === focusedRoute)
+      ?.querySelector<HTMLElement>(`.${focusedClass}`)
+      ?.focus({ preventScroll: true });
+  }
+  content.scrollTop = scrollTop;
 }
 
 function getFilteredRoutes(query: string): IRouteDisplayMeta[] {
@@ -280,85 +330,160 @@ function getFilteredRoutes(query: string): IRouteDisplayMeta[] {
   );
 }
 
-async function toggleSubscriptionFromSheet(routeId: string): Promise<void> {
-  const alreadySubscribed = subscriptions.some((s) => s.routeId === routeId);
-  if (alreadySubscribed) {
-    const { ok } = await apiUnsubscribe(routeId);
-    if (ok) {
-      subscriptions = subscriptions.filter((s) => s.routeId !== routeId);
-      document.dispatchEvent(
-        new CustomEvent('notifRouteLeave', {
-          detail: { routeId }
-        })
-      );
-    } else {
-      showToast('Failed to remove subscription. Please try again.');
-    }
-    return;
-  }
-
-  if (subscriptions.length >= MAX_SUBSCRIPTIONS_PER_USER) return;
-
-  const { ok, error } = await apiSubscribe(routeId);
+async function saveRoute(routeId: string): Promise<void> {
+  const { ok, subscription, error } = await apiSubscribe(routeId);
   if (ok) {
-    await fetchSubscriptions();
+    subscriptions.push(
+      subscription ?? { routeId, createdAt: new Date().toISOString() }
+    );
     document.dispatchEvent(
       new CustomEvent('notifRouteJoin', { detail: { routeId } })
+    );
+    setSheetFeedback(
+      `${getRouteDisplay(routeId, routeDisplayById).title} saved.`
     );
     return;
   }
 
   if (error?.includes('already subscribed')) {
-    showToast(`You are already subscribed to Route ${routeId}.`);
     await fetchSubscriptions();
+    setSheetFeedback('This route is already saved.');
     return;
   }
 
-  showToast(error ?? 'Failed to subscribe.');
+  throw new Error(error ?? 'Could not save this route. Please try again.');
+}
+
+function setSheetFeedback(message: string, error = false): void {
+  const feedback = document.getElementById('sheet-feedback')!;
+  feedback.textContent = message;
+  feedback.classList.toggle('is-error', error);
+}
+
+/** Update controls in place so saving never resets the list or its focus. */
+function updateMutationControls(): void {
+  document
+    .querySelectorAll<HTMLButtonElement>('.card-remove')
+    .forEach((button) => {
+      button.disabled = mutationPending;
+    });
+  const atLimit = subscriptions.length >= MAX_SUBSCRIPTIONS_PER_USER;
+  document
+    .querySelectorAll<HTMLLIElement>('.sheet-result-item')
+    .forEach((item) => {
+      const routeId = item.dataset.routeId!;
+      const saved = subscriptions.some((s) =>
+        routeIdsEqual(s.routeId, routeId)
+      );
+      const pending = mutationPending && pendingRouteId === routeId;
+      const button = item.querySelector<HTMLButtonElement>('.result-add-btn')!;
+      button.classList.toggle('subscribed', saved);
+      button.textContent = pending ? 'Saving…' : saved ? '✓ Saved' : '+ Save';
+      // Native disabling blurs the active button in browsers. Keep the saving
+      // control in place and use aria-disabled plus the mutation guard.
+      button.disabled = mutationPending && !pending;
+      // Keep a newly saved control focusable; repeated activation is a no-op.
+      button.setAttribute(
+        'aria-disabled',
+        String(saved || atLimit || mutationPending)
+      );
+      button.setAttribute('aria-busy', String(pending));
+      const title = getRouteDisplay(routeId, routeDisplayById).title;
+      button.setAttribute(
+        'aria-label',
+        saved
+          ? `${title} saved`
+          : atLimit
+            ? `Save ${title}, limit reached`
+            : `Save ${title}`
+      );
+    });
+  updateCount();
+  updateSheetStatus();
+}
+
+function currentQuery(): string {
+  return (
+    document.getElementById('route-search-input') as HTMLInputElement
+  ).value.trim();
+}
+
+function updateSheetStatus(): void {
+  const status = document.getElementById('sheet-status')!;
+  const query = currentQuery();
+  const count = getFilteredRoutes(query).length;
+  status.textContent =
+    routesState === 'loading'
+      ? 'Loading routes…'
+      : routesState === 'error'
+        ? 'Routes could not be loaded. Try again.'
+        : count === 0
+          ? query
+            ? `No routes match “${query}”. Try a route number or name.`
+            : 'No routes are available yet. Try again shortly.'
+          : subscriptions.length >= MAX_SUBSCRIPTIONS_PER_USER
+            ? '10 routes saved. Remove a route from your saved list to add another.'
+            : `${count} ${count === 1 ? 'route' : 'routes'} · ${subscriptions.length} of ${MAX_SUBSCRIPTIONS_PER_USER} saved`;
+  document.getElementById('routes-retry')!.hidden =
+    routesState !== 'error' &&
+    !(routesState === 'ready' && allRoutes.length === 0);
+  document
+    .getElementById('sheet-results')!
+    .setAttribute('aria-busy', String(routesState === 'loading'));
 }
 
 function renderSheetResults(query: string): void {
   const results = document.getElementById('sheet-results')!;
-  const filteredRoutes = getFilteredRoutes(query);
+  const filteredRoutes =
+    routesState === 'ready' ? getFilteredRoutes(query) : [];
 
   results.innerHTML = '';
   filteredRoutes.forEach((route) => {
-    const isSubscribed = subscriptions.some((s) => s.routeId === route.id);
     const display = getRouteDisplay(route.id, routeDisplayById);
     const li = document.createElement('li');
     li.classList.add('sheet-result-item');
+    li.dataset.routeId = route.id;
     li.innerHTML = `
       <div class="result-icon-circle">${busIconSVG}</div>
       <div class="result-info">
         <div class="result-name">${escapeHtml(display.title)}</div>
         <div class="result-destination">${escapeHtml(display.subtitle)}</div>
       </div>
-      <button class="result-add-btn ${isSubscribed ? 'subscribed' : ''}" aria-label="${isSubscribed ? 'Remove' : 'Add'} Route ${escapeHtml(route.id)}">
-        +
-      </button>
+      <button class="result-add-btn" type="button"></button>
     `;
 
     const addBtn = li.querySelector<HTMLButtonElement>('.result-add-btn')!;
     addBtn.addEventListener('click', async () => {
-      if (mutationPending) return;
+      if (
+        mutationPending ||
+        subscriptionsState !== 'ready' ||
+        subscriptions.some((s) => routeIdsEqual(s.routeId, route.id)) ||
+        subscriptions.length >= MAX_SUBSCRIPTIONS_PER_USER
+      )
+        return;
       mutationPending = true;
-      addBtn.disabled = true;
+      pendingRouteId = route.id;
+      setSheetFeedback('');
+      updateMutationControls();
       try {
-        await toggleSubscriptionFromSheet(route.id);
-      } catch {
-        showToast('Could not update subscription. Please try again.');
+        await saveRoute(route.id);
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Could not save this route. Please try again.';
+        setSheetFeedback(message, true);
       } finally {
         mutationPending = false;
+        pendingRouteId = null;
         renderList();
-        renderSheetResults(
-          (document.getElementById('route-search-input') as HTMLInputElement)
-            .value
-        );
+        updateMutationControls();
       }
     });
 
     results.appendChild(li);
   });
+  updateMutationControls();
 }
 
 // ── Bottom sheet ───────────────────────────────────────────────────────────────
@@ -376,6 +501,7 @@ function initSheet(): void {
     sheet.classList.add('is-active');
     sheet.removeAttribute('inert');
     renderSheetResults('');
+    setSheetFeedback('');
     input.focus();
   }
 
@@ -384,7 +510,11 @@ function initSheet(): void {
     sheet.classList.remove('is-active');
     sheet.setAttribute('inert', '');
     input.value = '';
-    addBtn.focus();
+    // Reaching the limit while this dialog is open disables its opener.
+    const target = (addBtn as HTMLButtonElement).disabled
+      ? document.querySelector<HTMLElement>('.card-route-link')
+      : addBtn;
+    target?.focus();
   }
 
   addBtn.addEventListener('click', () => {
@@ -402,7 +532,7 @@ function initSheet(): void {
         sheet.querySelectorAll<HTMLElement>(
           'button:not([disabled]), input:not([disabled]), a[href]'
         )
-      );
+      ).filter((element) => !element.closest('[hidden], [inert]'));
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (event.shiftKey && document.activeElement === first) {
@@ -414,10 +544,63 @@ function initSheet(): void {
       }
     }
   });
-  input.addEventListener('input', () => renderSheetResults(input.value.trim()));
+  input.addEventListener('input', () => {
+    setSheetFeedback('');
+    renderSheetResults(input.value.trim());
+  });
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────────
+
+async function loadSubscriptions(): Promise<void> {
+  const retry = document.getElementById('subscriptions-retry')!;
+  const restoreFocus = document.activeElement === retry;
+  subscriptionsState = 'loading';
+  renderList();
+  try {
+    await fetchSubscriptions();
+    subscriptionsState = 'ready';
+  } catch {
+    subscriptionsState = 'error';
+  }
+  renderList();
+  if (
+    restoreFocus &&
+    (document.activeElement === retry ||
+      document.activeElement === document.body)
+  ) {
+    (subscriptionsState === 'ready'
+      ? (document.querySelector<HTMLElement>('.card-route-link') ??
+        document.getElementById('add-route-btn'))
+      : retry
+    )?.focus();
+  }
+}
+
+async function loadRoutes(): Promise<void> {
+  const retry = document.getElementById('routes-retry')!;
+  const restoreFocus = document.activeElement === retry;
+  routesState = 'loading';
+  renderSheetResults(currentQuery());
+  try {
+    await fetchRoutes();
+    routesState = 'ready';
+  } catch {
+    routesState = 'error';
+  }
+  renderList();
+  renderSheetResults(currentQuery());
+  if (
+    restoreFocus &&
+    (document.activeElement === retry ||
+      document.activeElement === document.body)
+  ) {
+    (routesState === 'ready'
+      ? document.getElementById('route-search-input')
+      : retry
+    )?.focus();
+  }
+}
 
 async function init(): Promise<void> {
   if (!getToken()) {
@@ -425,18 +608,20 @@ async function init(): Promise<void> {
     return;
   }
 
-  const results = await Promise.allSettled([
-    fetchSubscriptions(),
-    fetchRoutes(),
-    fetchRecentNotifications()
-  ]);
-  if (results.some((result) => result.status === 'rejected')) {
-    showToast(
-      'Some subscription data could not be loaded. Please reload to try again.'
-    );
-  }
-  renderList();
   initSheet();
+  document
+    .getElementById('subscriptions-retry')!
+    .addEventListener('click', () => {
+      void loadSubscriptions();
+    });
+  document.getElementById('routes-retry')!.addEventListener('click', () => {
+    void loadRoutes();
+  });
+  await Promise.allSettled([
+    loadSubscriptions(),
+    loadRoutes(),
+    fetchRecentNotifications().then(() => renderList())
+  ]);
 }
 
 init();

@@ -4,7 +4,12 @@
 import axios from 'axios';
 import type { IResponse } from '../../common/server.responses';
 import { authService } from './services/auth.service';
-import { authHeaders, getToken, getUsername, isSameSession } from './services/session';
+import {
+  authHeaders,
+  getToken,
+  getUsername,
+  isSameSession
+} from './services/session';
 import type { IConfig, IMapMarker } from '../../common/map.interface';
 import type { IStop, IPrediction } from '../../common/transit.interface';
 import { MAX_SUBSCRIPTIONS_PER_USER } from '../../common/limits';
@@ -102,7 +107,12 @@ const CMU_CAMPUS_DEFAULT = { lat: 40.4433, lng: -79.9436 };
 const DOWNTOWN_PITTSBURGH = { lat: 40.4406, lng: -80.0112 };
 
 /** Bounding box of the supported service area. */
-const SERVICE_AREA = { minLat: 40.1, maxLat: 40.7, minLng: -80.4, maxLng: -79.6 };
+const SERVICE_AREA = {
+  minLat: 40.1,
+  maxLat: 40.7,
+  minLng: -80.4,
+  maxLng: -79.6
+};
 
 /**
  * Get the best available location for map operations.
@@ -323,6 +333,8 @@ async function initializeTogglePanels(): Promise<void> {
   const directionPanel = document.getElementById('direction-panel');
   if (directionPanel && 'configure' in directionPanel) {
     const directionConfig: ITogglePanelConfig = {
+      title: 'Direction',
+      emptyMessage: 'Both directions hidden · Loop shuttles stay visible',
       options: [
         { id: 'inbound', label: 'Show Inbound', defaultChecked: true },
         { id: 'outbound', label: 'Show Outbound', defaultChecked: true }
@@ -336,6 +348,8 @@ async function initializeTogglePanels(): Promise<void> {
   const systemPanel = document.getElementById('system-panel');
   if (systemPanel && 'configure' in systemPanel) {
     const systemConfig: ITogglePanelConfig = {
+      title: 'Transit systems',
+      emptyMessage: 'Routes and buses will be hidden',
       options: [
         {
           id: 'prt',
@@ -634,11 +648,15 @@ const registerBusReportEvents = (): void => {
   document.addEventListener('busReportSubmitted', async (e: Event) => {
     const submission = (e as CustomEvent<IBusReportSubmission>).detail;
     try {
-      const res = await axios.post('/notifications/reports', submission.report, {
-        headers: authHeaders(),
-        validateStatus: () => true,
-        timeout: 15000
-      });
+      const res = await axios.post(
+        '/notifications/reports',
+        submission.report,
+        {
+          headers: authHeaders(),
+          validateStatus: () => true,
+          timeout: 15000
+        }
+      );
       if (res.status === 201) {
         submission.onSuccess();
         showToast(res.data.message ?? 'Report submitted. Thank you!');

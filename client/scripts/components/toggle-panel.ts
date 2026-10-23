@@ -1,9 +1,3 @@
-/**
- * Generic Toggle Panel Component
- * A reusable panel with toggle switches that can be configured for different use cases
- * Used for Direction Filter (Inbound/Outbound) and System Filter (PRT/CMU Shuttle)
- */
-
 import { escapeHtml } from '../utils/html';
 
 export interface IToggleOption {
@@ -15,6 +9,8 @@ export interface IToggleOption {
 export interface ITogglePanelConfig {
   options: IToggleOption[];
   eventName: string;
+  title?: string;
+  emptyMessage?: string;
 }
 
 export interface ITogglePanelElement extends HTMLElement {
@@ -27,182 +23,159 @@ export interface ITogglePanelElement extends HTMLElement {
   setState(state: Record<string, boolean>): void;
 }
 
+/** Accessible draft filters shared by transit systems and travel direction. */
 export class TogglePanel extends HTMLElement implements ITogglePanelElement {
   private isVisible = false;
   private config: ITogglePanelConfig | null = null;
   private state: Map<string, boolean> = new Map();
+  private opener: HTMLElement | null = null;
 
   connectedCallback(): void {
-    // Add stopPropagation at the component level to prevent any clicks from bubbling
-    this.addEventListener('click', (e) => {
-      e.stopPropagation();
-    });
-    // Component will be initialized when configure() is called
+    this.addEventListener('click', this.handleClick);
+    this.addEventListener('keydown', this.handleKeyDown);
+    this.addEventListener('change', this.updateSummary);
   }
 
-  /**
-   * Configure the panel with options
-   */
+  disconnectedCallback(): void {
+    this.removeEventListener('click', this.handleClick);
+    this.removeEventListener('keydown', this.handleKeyDown);
+    this.removeEventListener('change', this.updateSummary);
+    this.opener = null;
+  }
+
   configure(config: ITogglePanelConfig): void {
     this.config = config;
-
-    // Initialize state
-    config.options.forEach((option) => {
-      this.state.set(option.id, option.defaultChecked);
-    });
-
+    this.state = new Map(
+      config.options.map((option) => [option.id, option.defaultChecked])
+    );
     this.render();
-    this.attachEventListeners();
   }
 
-  /**
-   * Render the panel HTML
-   */
   private render(): void {
     if (!this.config) return;
-
-    const optionsHTML = this.config.options
-      .map(
-        (option) => `
-        <div class="filter-section">
-          <h3 class="filter-label">${option.label}</h3>
-          <label class="toggle-switch">
-            <input 
-              type="checkbox" 
-              id="${option.id}" 
-              aria-label="${escapeHtml(option.label)}"
-              ${option.defaultChecked ? 'checked' : ''} 
-            />
-            <span class="slider"></span>
-          </label>
-        </div>
-      `
-      )
-      .join('');
-
+    const title = this.config.title ?? 'Map filters';
     this.innerHTML = `
-      <div class="toggle-filter-panel panel" style="display: none;">
-        <div class="filter-content">
-          ${optionsHTML}
-          
-          <div class="filter-actions">
-            <button class="filter-btn cancel-btn" id="toggle-cancel">Cancel</button>
-            <button class="filter-btn ok-btn" id="toggle-ok">OK</button>
-          </div>
+      <section class="toggle-filter-panel panel" role="dialog" aria-label="${escapeHtml(title)}" tabindex="-1" style="display: ${this.isVisible ? 'flex' : 'none'};">
+        <div class="route-controls-heading">
+          <h2>${escapeHtml(title)}</h2>
+          <button type="button" class="route-controls-close" aria-label="Close ${escapeHtml(title.toLowerCase())}"><span aria-hidden="true">×</span></button>
         </div>
-      </div>
+        <div class="filter-content">
+          ${this.config.options
+            .map(
+              (option) => `
+            <label class="filter-section">
+              <span class="filter-label">${escapeHtml(option.label)}</span>
+              <span class="toggle-switch">
+                <input type="checkbox" role="switch" id="${escapeHtml(option.id)}" aria-label="${escapeHtml(option.label)}" ${this.state.get(option.id) ? 'checked' : ''} />
+                <span class="slider" aria-hidden="true"></span>
+              </span>
+            </label>
+          `
+            )
+            .join('')}
+        </div>
+        <p class="toggle-selection-summary" role="status" aria-live="polite"></p>
+        <div class="filter-actions">
+          <button type="button" class="filter-btn cancel-btn" id="toggle-cancel">Cancel</button>
+          <button type="button" class="filter-btn ok-btn" id="toggle-ok">Apply</button>
+        </div>
+      </section>
     `;
-  }
-
-  /**
-   * Attach event listeners to toggles and buttons
-   */
-  private attachEventListeners(): void {
-    if (!this.config) return;
-
-    // Cancel button — restore toggles to their last-confirmed (committed) state
-    const cancelBtn = this.querySelector('#toggle-cancel') as HTMLButtonElement;
-    cancelBtn?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.hide();
-      this.resetToggles();
-    });
-
-    // OK button — commit current toggle positions to state, then dispatch event
-    const okBtn = this.querySelector('#toggle-ok') as HTMLButtonElement;
-    okBtn?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      // Commit current toggle positions to state
-      this.config!.options.forEach((option) => {
-        const toggle = this.querySelector(`#${option.id}`) as HTMLInputElement;
-        if (toggle) {
-          this.state.set(option.id, toggle.checked);
-        }
-      });
-      this.applyFilters();
-      this.hide();
-    });
-  }
-
-  /**
-   * Show the panel
-   */
-  show(): void {
-    const panel = this.querySelector('.toggle-filter-panel') as HTMLElement;
-    if (panel) {
-      panel.style.display = 'block';
-      this.isVisible = true;
-      // Use requestAnimationFrame to ensure display change is applied before adding visible class
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          panel.classList.add('visible');
-        });
-      });
-    } else {
-      console.error('Panel element not found when trying to show');
+    if (this.isVisible) {
+      this.querySelector('.toggle-filter-panel')!.classList.add('visible');
     }
+    this.updateSummary();
   }
 
-  /**
-   * Hide the panel
-   */
+  show(): void {
+    const panel = this.querySelector<HTMLElement>('.toggle-filter-panel');
+    if (!panel || this.isVisible) return;
+    this.opener =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    panel.style.display = 'flex';
+    panel.classList.add('visible');
+    this.isVisible = true;
+    panel.focus({ preventScroll: true });
+  }
+
   hide(): void {
-    const panel = this.querySelector('.toggle-filter-panel') as HTMLElement;
+    const restoreFocus = this.contains(document.activeElement);
+    const panel = this.querySelector<HTMLElement>('.toggle-filter-panel');
     if (panel) {
       panel.classList.remove('visible');
       panel.style.display = 'none';
-      this.isVisible = false;
-      this.resetToggles();
     }
+    this.isVisible = false;
+    this.resetToggles();
+    if (restoreFocus && this.opener?.isConnected) {
+      this.opener.focus({ preventScroll: true });
+    }
+    this.opener = null;
   }
 
-  /**
-   * Toggle panel visibility
-   */
   toggle(): void {
-    if (this.isVisible) {
-      this.hide();
-    } else {
-      this.show();
-    }
+    if (this.isVisible) this.hide();
+    else this.show();
   }
 
-  /**
-   * Reset toggles to their previous state (on cancel)
-   */
   private resetToggles(): void {
-    if (!this.config) return;
-
-    this.config.options.forEach((option) => {
-      const toggle = this.querySelector(`#${option.id}`) as HTMLInputElement;
-      if (toggle) {
-        toggle.checked = this.state.get(option.id) || false;
+    this.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach(
+      (input) => {
+        input.checked = this.state.get(input.id) ?? false;
       }
-    });
-  }
-
-  /**
-   * Apply filters and dispatch event
-   */
-  private applyFilters(): void {
-    if (!this.config) return;
-
-    const filterState: Record<string, boolean> = {};
-    this.state.forEach((value, key) => {
-      filterState[key] = value;
-    });
-
-    this.dispatchEvent(
-      new CustomEvent(this.config.eventName, {
-        detail: filterState,
-        bubbles: true
-      })
     );
+    this.updateSummary();
   }
 
-  /**
-   * Get current filter state
-   */
+  private handleClick = (event: MouseEvent): void => {
+    event.stopPropagation();
+    const button = (event.target as Element).closest<HTMLButtonElement>(
+      'button'
+    );
+    if (!button || !this.config) return;
+    if (button.matches('#toggle-cancel, .route-controls-close')) {
+      this.hide();
+    } else if (button.matches('#toggle-ok')) {
+      this.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach(
+        (input) => {
+          this.state.set(input.id, input.checked);
+        }
+      );
+      this.dispatchEvent(
+        new CustomEvent(this.config.eventName, {
+          detail: Object.fromEntries(this.state),
+          bubbles: true
+        })
+      );
+      this.hide();
+    }
+  };
+
+  private updateSummary = (): void => {
+    const summary = this.querySelector<HTMLElement>(
+      '.toggle-selection-summary'
+    );
+    if (!summary) return;
+    const inputs = [
+      ...this.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
+    ];
+    const checked = inputs.filter((input) => input.checked).length;
+    summary.textContent = checked
+      ? `${checked} of ${inputs.length} selected`
+      : (this.config?.emptyMessage ?? 'No options selected');
+    summary.classList.toggle('is-empty', checked === 0);
+  };
+
+  private handleKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || event.isComposing || !this.isVisible) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.hide();
+  };
+
   getState(): Map<string, boolean> {
     return new Map(this.state);
   }
@@ -212,9 +185,6 @@ export class TogglePanel extends HTMLElement implements ITogglePanelElement {
     this.resetToggles();
   }
 
-  /**
-   * Check if panel is visible
-   */
   isOpen(): boolean {
     return this.isVisible;
   }

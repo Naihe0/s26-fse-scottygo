@@ -1,0 +1,109 @@
+/* Grouped results keep the search input stable while options change beneath it. */
+transit-search .search-dropdown {
+  max-height: min(360px, 55dvh);
+  overscroll-behavior: contain;
+  padding: 6px;
+}
+
+transit-search .search-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 10px 6px;
+  color: #626b7a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+transit-search .search-group-title span {
+  color: #7a8392;
+  font-weight: 500;
+}
+
+transit-search .search-result-item {
+  min-height: 48px;
+  padding: 10px;
+  border-radius: 10px;
+  gap: 10px;
+  touch-action: manipulation;
+}
+
+transit-search .search-result-item[aria-selected='true'] {
+  background: #fcecf0;
+  box-shadow: inset 3px 0 0 var(--primary, #c41230);
+}
+
+transit-search .search-result-content {
+  flex: 1;
+}
+
+transit-search .search-result-name {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+transit-search .search-result-meta {
+  color: #687184;
+  font-size: 12px;
+}
+
+transit-search .search-result-arrow {
+  flex-shrink: 0;
+  font-size: 18px;
+  color: #89919e;
+}
+
+transit-search .search-feedback {
+  padding: 16px 12px;
+  color: #273142;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+transit-search .search-feedback p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+transit-search .search-feedback .search-feedback-hint {
+  margin-top: 4px;
+  color: #687184;
+  font-size: 13px;
+}
+
+transit-search .search-retry-btn {
+  min-height: 44px;
+  margin-top: 10px;
+  padding: 8px 14px;
+  border: 1px solid #e8c7ce;
+  border-radius: 10px;
+  color: var(--primary, #c41230);
+  background: #fff5f7;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+transit-search .search-retry-btn:focus-visible {
+  outline: 2px solid var(--primary, #c41230);
+  outline-offset: 2px;
+}
+
+transit-search .search-announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 768px) {
+  transit-search #transit-search-input {
+    font-size: 16px;
+  }
+}

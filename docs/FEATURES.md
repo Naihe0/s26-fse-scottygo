@@ -6,6 +6,16 @@ ScottyGo combines Pittsburgh Regional Transit (PRT) buses and CMU shuttles in on
 
 After signing in, the map starts near your location when permission is available, or near CMU campus otherwise. Search by route number, route name, stop name, or stop ID. Selecting a result opens that route or stop without requiring you to find it manually on the map.
 
+### Finding and filtering with fewer interruptions
+
+- Search immediately shows a loading state while a short typing pause groups requests. New input cancels an older request; clearing or closing the list prevents late results from reopening it. Failed searches offer a **Try again** action, and empty results suggest another route number or stop name.
+- Results distinguish **Routes** and **Stops**. Use Up/Down and Enter to select while focus stays in the input, or tap a result to close the phone keyboard. Escape closes the results. Composing text with an input method does not submit partial characters.
+- The route picker keeps its search input stable as results change. The selection remains visible in a summary; choose **All routes** to remove the route filter, then apply the draft. A search with no matches includes a clear-search action.
+- System and direction panels have descriptive headings, full-row toggles, and explicit **Apply** and **Cancel** actions. Closing or pressing Escape cancels the draft and restores the opening control. An empty selection explains what will disappear; loop shuttles remain visible when both directional filters are off.
+- Filter inputs use phone-safe text sizes and controls have generous touch targets. Panels stay within the available viewport, with scrollable content and reachable actions.
+
+These interactions cover the main rider flows: find a route or stop, refine the map, revise a draft without losing the current view, and recover from a failed request in place.
+
 | Control or action | What it does |
 | --- | --- |
 | Route filter | Choose a route and inspect its operating days, first/last trips, directions, alerts, and available detours. |
@@ -79,6 +89,10 @@ These are notifications inside the open web app. Background push, lock-screen no
 
 The **Subscriptions** page saves up to **10 routes per account**. Add a PRT or CMU route, open its map, remove it, or mute its foreground popups. Saved routes persist on the server. Mute choices are stored in this browser and do not remove the saved route.
 
+The add-route sheet marks successful additions as **Saved**, preserving the current search, scroll position, and focus. Removal uses the explicit action on a saved-route card. Loading, no saved routes, no search matches, and request failure have distinct messages; failed loads can be retried in place. A failed save keeps the route available to try again.
+
+![Add-route sheet with a clear saved state and preserved search](wireframes/current/saved-routes.jpg)
+
 To report bus conditions, select a bus and open its report action. Choose any combination of crowdedness, priority-seat availability, vehicle condition, and an optional comment of up to 200 characters. At least one answer is required. The normal proximity limit is half a mile from the bus's reported location; the browser also requires usable GPS and a recent bus report. Delayed or predicted display coordinates never substitute for measured proximity. Administrators have a server-side proximity exemption, but still use the browser's location/freshness safeguards.
 
 Changed conditions create a live route update. An identical condition report does not create another notification. Comments pass moderation; a flagged comment can be omitted while valid condition answers are accepted. The submission result explains that outcome.
@@ -86,6 +100,8 @@ Changed conditions create a live route update. An identical condition report doe
 ## Accounts and navigation
 
 Registration requires a unique username, a CMU email address, a valid password, and the terms flow. Inline validation explains invalid fields. Sign in, sign out, page navigation, a first-use map tour, and account editing are available from the app shell.
+
+Short feedback uses one dismissible message at a time, with a timeout that pauses while hovered or focused. Map message dialogs move focus to their confirmation button, keep background controls inactive, and return focus when closed with OK or Escape.
 
 | Role / state | Available account actions |
 | --- | --- |

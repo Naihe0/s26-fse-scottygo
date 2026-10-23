@@ -1,237 +1,323 @@
-/**
- * Transit Search Component
- * Provides search input with dropdown results for routes and stops.
- * Delegates search to the backend via GET /map/search?q=... (TransitSearchStrategy).
- */
+/** Search routes and stops through GET /search without interrupting map navigation. */
 import { MapStateManager } from '../state/map-state';
 import type { IRoute, IStop } from '../../../common/transit.interface';
 import { escapeHtml } from '../utils/html';
 import { authHeaders } from '../services/session';
 
-/** Fallback color for route badges when the route has no assigned color. */
 const DEFAULT_BADGE_COLOR = '#888888';
+const SEARCH_DELAY_MS = 220;
+const SEARCH_TIMEOUT_MS = 10000;
 
 export class TransitSearch extends HTMLElement {
-  private routes: IRoute[] = [];
-  private routeMap: Map<string, IRoute> = new Map();
+  private routeMap = new Map<string, IRoute>();
   private unsubscribe: (() => void) | null = null;
-
   private searchInput: HTMLInputElement | null = null;
   private clearBtn: HTMLButtonElement | null = null;
   private dropdown: HTMLElement | null = null;
+  private results: HTMLElement | null = null;
+  private feedback: HTMLElement | null = null;
+  private announcement: HTMLElement | null = null;
   private requestVersion = 0;
+  private searchTimer: number | null = null;
+  private requestTimer: number | null = null;
+  private request: AbortController | null = null;
+  private activeIndex = -1;
+  private composing = false;
   private readonly handleOutsideClick = (event: MouseEvent): void => {
-    if (!this.contains(event.target as Node)) this.hideDropdown();
+    if (!event.composedPath().includes(this)) this.hideDropdown();
+  };
+  private readonly handleFocusOut = (event: FocusEvent): void => {
+    // A pointer press on a non-focusable result can briefly have no next focus.
+    // Its click owns selection; outside clicks are handled separately.
+    if (
+      event.relatedTarget instanceof Node &&
+      !this.contains(event.relatedTarget)
+    ) {
+      this.hideDropdown();
+    }
   };
 
   connectedCallback(): void {
+    this.composing = false;
     this.innerHTML = this.buildTemplate();
-
-    this.searchInput = this.querySelector(
-      '#transit-search-input'
-    ) as HTMLInputElement;
-    this.clearBtn = this.querySelector(
-      '#search-clear-btn'
-    ) as HTMLButtonElement;
-    this.dropdown = this.querySelector('#search-dropdown') as HTMLElement;
-
+    this.searchInput = this.querySelector('#transit-search-input');
+    this.clearBtn = this.querySelector('#search-clear-btn');
+    this.dropdown = this.querySelector('#search-dropdown');
+    this.results = this.querySelector('#search-results');
+    this.feedback = this.querySelector('.search-feedback');
+    this.announcement = this.querySelector('.search-announcement');
     this.attachSearchEvents();
+    this.addEventListener('focusout', this.handleFocusOut);
     this.subscribeToState();
   }
 
   disconnectedCallback(): void {
     this.unsubscribe?.();
-    this.requestVersion++;
+    this.cancelSearch();
     document.removeEventListener('click', this.handleOutsideClick);
+    this.removeEventListener('focusout', this.handleFocusOut);
   }
 
   private handleInput(): void {
     const query = this.searchInput?.value.trim() ?? '';
-
-    if (this.clearBtn) this.clearBtn.classList.toggle('is-visible', !!query);
-
-    if (!query) {
-      this.hideDropdown();
-      this.dispatchEvent(
-        new CustomEvent('search', { detail: { query: '' }, bubbles: true })
-      );
-      return;
-    }
-
+    this.clearBtn?.classList.toggle('is-visible', !!query);
+    if (this.composing) return;
     this.dispatchEvent(
       new CustomEvent('search', { detail: { query }, bubbles: true })
     );
-    void this.renderResults(query);
+    if (!query) {
+      this.hideDropdown();
+      return;
+    }
+    this.scheduleSearch(query);
   }
 
-  /**
-   * Calls GET /map/search?q=<query> on the backend (TransitSearchStrategy).
-   * The backend applies stop word filtering and returns matching routes and stops.
-   */
-  private async renderResults(query: string): Promise<void> {
-    if (!this.dropdown) return;
-    const requestVersion = ++this.requestVersion;
+  /** Invalidate immediately so neither old results nor pending requests can win. */
+  private cancelSearch(): void {
+    this.requestVersion++;
+    if (this.searchTimer !== null) window.clearTimeout(this.searchTimer);
+    if (this.requestTimer !== null) window.clearTimeout(this.requestTimer);
+    this.searchTimer = null;
+    this.requestTimer = null;
+    this.request?.abort();
+    this.request = null;
+  }
 
-    let matchedRoutes: IRoute[] = [];
-    let matchedStops: IStop[] = [];
+  private scheduleSearch(query: string, delay = SEARCH_DELAY_MS): void {
+    this.cancelSearch();
+    const version = this.requestVersion;
+    this.showFeedback('Searching…');
+    this.dropdown?.setAttribute('aria-busy', 'true');
+    if (delay === 0) {
+      void this.renderResults(query, version);
+    } else {
+      this.searchTimer = window.setTimeout(() => {
+        this.searchTimer = null;
+        void this.renderResults(query, version);
+      }, delay);
+    }
+  }
+
+  private async renderResults(query: string, version: number): Promise<void> {
+    if (!this.isConnected || version !== this.requestVersion) return;
+    const request = new AbortController();
+    this.request = request;
+    const isCurrent = () => this.isConnected && version === this.requestVersion;
+    this.requestTimer = window.setTimeout(() => {
+      if (!isCurrent()) return;
+      this.cancelSearch();
+      this.showSearchError();
+    }, SEARCH_TIMEOUT_MS);
 
     try {
       const res = await fetch(`/search?q=${encodeURIComponent(query)}`, {
-        headers: authHeaders()
+        headers: authHeaders(),
+        signal: request.signal
       });
-
       if (!res.ok) throw new Error(`Search failed (${res.status})`);
-      if (res.ok) {
-        const data = (await res.json()) as {
-          payload?: { routes: IRoute[]; stops: IStop[] };
-        };
-        matchedRoutes = data.payload?.routes ?? [];
-        matchedStops = data.payload?.stops ?? [];
+      const data = (await res.json()) as {
+        payload?: { routes: IRoute[]; stops: IStop[] };
+      };
+      if (!isCurrent()) return;
+      this.renderMatches(
+        data.payload?.routes ?? [],
+        data.payload?.stops ?? [],
+        query
+      );
+    } catch {
+      if (isCurrent()) this.showSearchError();
+    } finally {
+      if (isCurrent()) {
+        if (this.requestTimer !== null) window.clearTimeout(this.requestTimer);
+        this.requestTimer = null;
+        this.request = null;
+        this.dropdown?.setAttribute('aria-busy', 'false');
       }
-    } catch (err) {
-      if (requestVersion !== this.requestVersion || !this.isConnected) return;
-      console.warn('Transit search request failed:', err);
-      this.dropdown.textContent =
-        'Search is temporarily unavailable. Please try again.';
-      this.showDropdown();
-      return;
     }
-    if (requestVersion !== this.requestVersion || !this.isConnected) return;
+  }
 
-    if (matchedRoutes.length === 0 && matchedStops.length === 0) {
-      this.dropdown.innerHTML = `<div class="search-no-results">No results found</div>`;
-      this.showDropdown();
-      return;
+  private showSearchError(): void {
+    this.showFeedback(
+      'Search couldn’t load.',
+      'Check your connection and try again.'
+    );
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'search-retry-btn';
+    retry.textContent = 'Try again';
+    retry.addEventListener('click', () => {
+      const query = this.searchInput?.value.trim() ?? '';
+      // Returning focus starts the request through the normal focus handler.
+      if (query && document.activeElement !== this.searchInput) {
+        this.searchInput?.focus();
+      } else if (query) {
+        this.scheduleSearch(query, 0);
+      }
+    });
+    this.feedback?.append(retry);
+  }
+
+  private showFeedback(message: string, hint = ''): void {
+    this.resetActiveOption();
+    if (this.results) {
+      this.results.replaceChildren();
+      this.results.hidden = true;
     }
-
-    const routeItems = matchedRoutes
-      .map((r) => this.buildRouteItemHTML(r))
-      .join('');
-    const stopItems = matchedStops
-      .map((s) => this.buildStopItemHTML(s))
-      .join('');
-
-    this.dropdown.innerHTML = routeItems + stopItems;
+    if (this.announcement) this.announcement.textContent = '';
+    if (this.feedback) {
+      this.feedback.hidden = false;
+      this.feedback.innerHTML = `<p role="status">${escapeHtml(message)}</p>${
+        hint ? `<p class="search-feedback-hint">${escapeHtml(hint)}</p>` : ''
+      }`;
+    }
+    this.dropdown?.setAttribute('aria-busy', 'false');
     this.showDropdown();
-
-    this.attachResultListeners(matchedStops);
   }
 
-  private buildRouteItemHTML(r: IRoute): string {
-    // GTFS route_id is numeric (e.g. "2073") → display route.name (the short name).
-    // When route_id is alphanumeric (e.g. "61D") → it is the display name;
-    // route.name holds the long description (e.g. "Murray").
-    const isInternalId = /^\d+$/.test(r.id);
-    let label: string;
-    if (isInternalId) {
-      label = r.name;
-    } else if (r.id === r.name) {
-      label = r.id;
-    } else {
-      label = `${r.id}- ${r.name}`;
+  private renderMatches(routes: IRoute[], stops: IStop[], query: string): void {
+    if (!this.results) return;
+    if (!routes.length && !stops.length) {
+      this.showFeedback(
+        `No matches for “${query}”`,
+        'Try a route number or stop name.'
+      );
+      return;
     }
-    return `
-        <div class="search-result-item search-result-route" data-route-id="${escapeHtml(r.id)}" role="option" tabindex="0">
-          <span class="material-icons-outlined search-result-icon">directions_bus</span>
-          <span class="search-result-name">${escapeHtml(label)}</span>
-        </div>`;
+    this.resetActiveOption();
+    if (this.feedback) {
+      this.feedback.hidden = true;
+      this.feedback.replaceChildren();
+    }
+    const group = (label: string, count: number, content: string) =>
+      count
+        ? `<div role="group" aria-label="${label}"><div class="search-group-title" aria-hidden="true">${label}<span>${count}</span></div>${content}</div>`
+        : '';
+    this.results.innerHTML =
+      group(
+        'Routes',
+        routes.length,
+        routes.map((r, i) => this.buildRouteItemHTML(r, i)).join('')
+      ) +
+      group(
+        'Stops',
+        stops.length,
+        stops
+          .map((s, i) => this.buildStopItemHTML(s, routes.length + i))
+          .join('')
+      );
+    this.results.hidden = false;
+    if (this.announcement) {
+      const count = routes.length + stops.length;
+      this.announcement.textContent = `${count} ${count === 1 ? 'result' : 'results'}. Use the arrow keys to choose.`;
+    }
+    this.attachResultListeners(stops);
+    this.showDropdown();
   }
 
-  private buildStopItemHTML(s: IStop): string {
-    const badges = (s.routes ?? [])
-      .map((routeId: string) => {
+  private buildRouteItemHTML(route: IRoute, index: number): string {
+    const label = /^\d+$/.test(route.id)
+      ? route.name
+      : route.id === route.name
+        ? route.id
+        : `${route.id} · ${route.name}`;
+    const system =
+      route.system === 'CMU'
+        ? 'CMU Shuttle'
+        : route.system === 'PRT'
+          ? 'PRT'
+          : '';
+    return `<div id="search-option-${index}" class="search-result-item search-result-route" data-route-id="${escapeHtml(route.id)}" role="option" aria-selected="false">
+      <span class="material-icons-outlined search-result-icon" aria-hidden="true">directions_bus</span>
+      <span class="search-result-content"><span class="search-result-name">${escapeHtml(label)}</span>${system ? `<span class="search-result-meta">${system}</span>` : ''}</span>
+      <span class="material-icons-outlined search-result-arrow" aria-hidden="true">chevron_right</span>
+    </div>`;
+  }
+
+  private buildStopItemHTML(stop: IStop, index: number): string {
+    const badges = (stop.routes ?? [])
+      .map((routeId) => {
         const route = this.routeMap.get(routeId);
         const color = /^#[\da-f]{6}$/i.test(route?.color ?? '')
           ? route!.color
           : DEFAULT_BADGE_COLOR;
-        const textColor = this.getTextColor(color);
-        return `<span class="route-badge" style="background:${color};color:${textColor}">${escapeHtml(routeId)}</span>`;
+        return `<span class="route-badge" style="background:${color};color:${this.getTextColor(color)}">${escapeHtml(routeId)}</span>`;
       })
       .join('');
-
-    return `
-          <div class="search-result-item search-result-stop" data-stop-id="${escapeHtml(s.stopId)}" role="option" tabindex="0">
-            <span class="material-icons-outlined search-result-icon">place</span>
-            <div class="search-result-content">
-              <span class="search-result-name">${escapeHtml(s.stopName)}</span>
-              ${badges ? `<div class="search-result-badges">${badges}</div>` : ''}
-            </div>
-          </div>`;
+    return `<div id="search-option-${index}" class="search-result-item search-result-stop" data-stop-id="${escapeHtml(stop.stopId)}" role="option" aria-selected="false">
+      <span class="material-icons-outlined search-result-icon" aria-hidden="true">place</span>
+      <span class="search-result-content"><span class="search-result-name">${escapeHtml(stop.stopName)}</span>${badges ? `<span class="search-result-badges">${badges}</span>` : ''}</span>
+      <span class="material-icons-outlined search-result-arrow" aria-hidden="true">chevron_right</span>
+    </div>`;
   }
 
-  private attachResultListeners(matchedStops: IStop[]): void {
-    if (!this.dropdown) return;
-    this.attachRouteListeners(this.dropdown);
-    this.attachStopListeners(this.dropdown, matchedStops);
-    const options = Array.from(
-      this.dropdown.querySelectorAll<HTMLElement>('[role="option"]')
-    );
-    options.forEach((option, index) => {
-      option.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          this.searchInput?.focus();
-          option.click();
-        } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-          event.preventDefault();
-          const next =
-            (index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) %
-            options.length;
-          options[next].focus();
-        } else if (event.key === 'Escape') {
-          event.preventDefault();
-          this.searchInput?.focus();
-          this.hideDropdown();
+  private attachResultListeners(stops: IStop[]): void {
+    const stopById = new Map(stops.map((stop) => [stop.stopId, stop]));
+    this.getOptions().forEach((option) => {
+      option.addEventListener('click', (event) => {
+        const routeId = option.dataset.routeId;
+        const stopId = option.dataset.stopId;
+        // Pointer selections release the onscreen keyboard. Keyboard activation
+        // keeps the combobox focused without firing another search.
+        if (event.detail > 0) this.searchInput?.blur();
+        this.hideDropdown();
+        if (routeId) {
+          this.dispatchEvent(
+            new CustomEvent('searchSelectRoute', {
+              detail: { routeId },
+              bubbles: true
+            })
+          );
+        } else if (stopId) {
+          this.dispatchEvent(
+            new CustomEvent('searchSelectStop', {
+              detail: { stopId, stop: stopById.get(stopId) },
+              bubbles: true
+            })
+          );
         }
       });
     });
   }
 
-  private attachRouteListeners(container: HTMLElement): void {
-    container.querySelectorAll('.search-result-route').forEach((el) => {
-      el.addEventListener('click', () => {
-        const routeId = (el as HTMLElement).dataset.routeId!;
-        this.dispatchEvent(
-          new CustomEvent('searchSelectRoute', {
-            detail: { routeId },
-            bubbles: true
-          })
-        );
-        this.hideDropdown();
-      });
-    });
+  private getOptions(): HTMLElement[] {
+    return Array.from(
+      this.results?.querySelectorAll<HTMLElement>('[role="option"]') ?? []
+    );
   }
 
-  private attachStopListeners(
-    container: HTMLElement,
-    matchedStops: IStop[]
-  ): void {
-    const stopById = new Map(matchedStops.map((stop) => [stop.stopId, stop]));
-
-    container.querySelectorAll('.search-result-stop').forEach((el) => {
-      el.addEventListener('click', () => {
-        const stopId = (el as HTMLElement).dataset.stopId!;
-        const stop = stopById.get(stopId);
-        this.dispatchEvent(
-          new CustomEvent('searchSelectStop', {
-            detail: { stopId, stop },
-            bubbles: true
-          })
-        );
-        this.hideDropdown();
-      });
-    });
+  private resetActiveOption(): void {
+    this.activeIndex = -1;
+    this.searchInput?.removeAttribute('aria-activedescendant');
+    this.getOptions().forEach((option) =>
+      option.setAttribute('aria-selected', 'false')
+    );
   }
 
-  /** Returns black or white text color depending on background luminance. */
+  private moveActiveOption(direction: number): void {
+    const options = this.getOptions();
+    if (!options.length) return;
+    this.activeIndex =
+      this.activeIndex < 0
+        ? direction > 0
+          ? 0
+          : options.length - 1
+        : (this.activeIndex + direction + options.length) % options.length;
+    options.forEach((option, index) =>
+      option.setAttribute('aria-selected', String(index === this.activeIndex))
+    );
+    const active = options[this.activeIndex];
+    this.searchInput?.setAttribute('aria-activedescendant', active.id);
+    active.scrollIntoView?.({ block: 'nearest' });
+  }
+
   private getTextColor(hex: string): string {
     const clean = hex.replace('#', '');
     const r = parseInt(clean.substring(0, 2), 16);
     const g = parseInt(clean.substring(2, 4), 16);
     const b = parseInt(clean.substring(4, 6), 16);
-    // Relative luminance (WCAG formula, simplified)
-    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    return luminance > 0.55 ? '#1f2937' : '#ffffff';
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.55
+      ? '#1f2937'
+      : '#ffffff';
   }
 
   private clearSearch(): void {
@@ -247,98 +333,87 @@ export class TransitSearch extends HTMLElement {
     if (this.searchInput) this.searchInput.value = routeId ?? '';
     this.clearBtn?.classList.toggle('is-visible', !!routeId);
     this.hideDropdown();
-    if (this.dropdown) this.dropdown.replaceChildren();
+    this.results?.replaceChildren();
   }
 
   private buildTemplate(): string {
-    return `
-      <div class="search-bar">
-        <div class="search-wrapper">
-          <div class="search-box">
-            <span class="material-icons-outlined search-icon">search</span>
-            <input
-              type="text"
-              id="transit-search-input"
-              placeholder="Search routes or stops"
-              autocomplete="off"
-              aria-label="Search routes or stops"
-              role="combobox"
-              aria-expanded="false"
-              aria-autocomplete="list"
-              aria-controls="search-dropdown"
-            />
-            <button
-              class="search-clear-btn"
-              id="search-clear-btn"
-              aria-label="Clear search"
-            >
-              <span class="material-icons-outlined">close</span>
-            </button>
-          </div>
-          <div
-            class="search-dropdown"
-            id="search-dropdown"
-            role="listbox"
-            hidden
-          ></div>
+    return `<div class="search-bar">
+      <div class="search-wrapper">
+        <div class="search-box">
+          <span class="material-icons-outlined search-icon" aria-hidden="true">search</span>
+          <input type="text" id="transit-search-input" placeholder="Search routes or stops" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search routes or stops" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="search-results" />
+          <button type="button" class="search-clear-btn" id="search-clear-btn" aria-label="Clear search"><span class="material-icons-outlined" aria-hidden="true">close</span></button>
         </div>
-        <button class="layers-btn" id="layers-btn" title="Toggle Layers" aria-label="Toggle map layers">
-          <span class="material-icons-outlined">layers</span>
-        </button>
+        <div class="search-dropdown" id="search-dropdown" hidden>
+          <div class="search-feedback" hidden></div>
+          <div id="search-results" role="listbox" aria-label="Routes and stops" hidden></div>
+          <p class="search-announcement" aria-live="polite" aria-atomic="true"></p>
+        </div>
       </div>
-    `;
+      <button type="button" class="layers-btn" id="layers-btn" title="Toggle Layers" aria-label="Toggle map layers"><span class="material-icons-outlined" aria-hidden="true">layers</span></button>
+    </div>`;
   }
 
   private attachSearchEvents(): void {
-    const layersBtn = this.querySelector('#layers-btn') as HTMLButtonElement;
-
     this.searchInput?.addEventListener('input', () => this.handleInput());
-    this.searchInput?.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+    this.searchInput?.addEventListener('compositionstart', () => {
+      this.composing = true;
+      this.hideDropdown();
+    });
+    this.searchInput?.addEventListener('compositionend', () => {
+      this.composing = false;
+      this.handleInput();
+    });
+    this.searchInput?.addEventListener('keydown', (event) => {
+      if (this.composing || event.isComposing) return;
+      if (
+        event.key === 'Escape' ||
+        (event.key === 'Tab' &&
+          !this.feedback?.querySelector('.search-retry-btn'))
+      ) {
         this.hideDropdown();
         return;
       }
-      if (e.key === 'ArrowDown' && !this.dropdown?.hidden) {
-        e.preventDefault();
-        this.dropdown?.querySelector<HTMLElement>('[role="option"]')?.focus();
-        return;
-      }
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
       const query = this.searchInput?.value.trim() ?? '';
-      if (!query) return;
-      void this.renderResults(query);
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (this.dropdown?.hidden && query) this.scheduleSearch(query, 0);
+        else this.moveActiveOption(event.key === 'ArrowDown' ? 1 : -1);
+      } else if (event.key === 'Enter' && query) {
+        event.preventDefault();
+        const option =
+          !this.dropdown?.hidden &&
+          this.getOptions()[Math.max(0, this.activeIndex)];
+        if (option) option.click();
+        else this.scheduleSearch(query, 0);
+      }
     });
     this.searchInput?.addEventListener('focus', () => {
       const query = this.searchInput?.value.trim() ?? '';
-      if (query) {
-        void this.renderResults(query);
-      } else {
+      if (query) this.scheduleSearch(query, 0);
+      else
         this.dispatchEvent(
           new CustomEvent('searchFocusEmpty', { bubbles: true })
         );
-      }
     });
-
     this.clearBtn?.addEventListener('click', () => this.clearSearch());
-
-    layersBtn?.addEventListener('click', () => {
+    this.querySelector('#layers-btn')?.addEventListener('click', () => {
+      this.hideDropdown();
       this.dispatchEvent(new CustomEvent('toggleLayers', { bubbles: true }));
     });
-
     document.addEventListener('click', this.handleOutsideClick);
   }
 
   private subscribeToState(): void {
     const stateManager = MapStateManager.getInstance();
     this.unsubscribe = stateManager.subscribe((state) => {
-      this.routes = state.availableRoutes;
-      this.routeMap = new Map(this.routes.map((r) => [r.id, r]));
+      this.routeMap = new Map(
+        state.availableRoutes.map((route) => [route.id, route])
+      );
     });
-
-    const initialState = stateManager.getState();
-    this.routes = initialState.availableRoutes;
-    this.routeMap = new Map(this.routes.map((r) => [r.id, r]));
+    this.routeMap = new Map(
+      stateManager.getState().availableRoutes.map((route) => [route.id, route])
+    );
   }
 
   private showDropdown(): void {
@@ -347,8 +422,12 @@ export class TransitSearch extends HTMLElement {
   }
 
   private hideDropdown(): void {
-    this.requestVersion++;
-    if (this.dropdown) this.dropdown.hidden = true;
+    this.cancelSearch();
+    this.resetActiveOption();
+    if (this.dropdown) {
+      this.dropdown.hidden = true;
+      this.dropdown.setAttribute('aria-busy', 'false');
+    }
     this.searchInput?.setAttribute('aria-expanded', 'false');
   }
 }

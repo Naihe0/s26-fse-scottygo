@@ -7,19 +7,27 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <meta name="theme-color" content="#86142b" />
-    <title>ScottyGo - Subscriptions</title>
+    <title>ScottyGo - Saved routes</title>
     <link rel="stylesheet" href="../styles/shared.css" />
     <link rel="stylesheet" href="../styles/subscriptions.css" />
   </head>
   <body>
     <app-header back></app-header>
     <main class="content">
-      <h1 class="page-title" id="page-title">Subscriptions</h1>
+      <h1 class="page-title" id="page-title">Saved routes</h1>
       <p class="page-intro"
         >Your everyday routes, together. Choose which ones send live alerts.</p
       >
+      <div class="subscription-state">
+        <p id="subscription-status" role="status" aria-live="polite"
+          >Loading your saved routes…</p
+        >
+        <button id="subscriptions-retry" class="state-retry" hidden
+          >Try again</button
+        >
+      </div>
       <ul class="subscription-list" id="subscription-list"></ul>
-      <button class="add-route-btn" id="add-route-btn">
+      <button class="add-route-btn" id="add-route-btn" disabled>
         <span>+ Add route</span>
         <span class="add-route-divider">|</span>
         <span id="route-count"></span>
@@ -66,7 +74,10 @@
           autocomplete="off"
         />
       </div>
+      <p id="sheet-status" class="sheet-status" role="status"></p>
+      <button id="routes-retry" class="state-retry" hidden>Try again</button>
       <ul class="sheet-results" id="sheet-results"></ul>
+      <p id="sheet-feedback" class="sheet-feedback" role="status"></p>
     </div>
 
     <script type="module" src="../scripts/subscriptions.ts"></script>

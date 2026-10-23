@@ -296,9 +296,10 @@
 }
 
 .result-add-btn {
-  width: 44px;
+  min-width: 78px;
   height: 44px;
-  border-radius: 50%;
+  padding: 0 12px;
+  border-radius: 12px;
   border: 1px solid var(--app-border);
   background: none;
   cursor: pointer;
@@ -306,7 +307,8 @@
   align-items: center;
   justify-content: center;
   color: var(--app-muted);
-  font-size: 18px;
+  font-size: 13px;
+  font-weight: 600;
   line-height: 1;
   flex-shrink: 0;
   transition:
@@ -316,9 +318,67 @@
 }
 
 .result-add-btn.subscribed {
-  background: var(--app-brand);
-  border-color: var(--app-brand);
-  color: white;
+  background: var(--app-brand-soft);
+  border-color: transparent;
+  color: var(--app-brand-strong);
+  cursor: default;
+}
+
+.result-add-btn[aria-disabled='true']:not(.subscribed) {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.subscription-state {
+  width: 100%;
+  max-width: 520px;
+  text-align: center;
+  color: var(--app-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.subscription-state:has(#subscription-status:not(:empty)) {
+  padding: 16px 0;
+}
+
+.state-retry {
+  align-self: center;
+  min-height: 44px;
+  padding: 8px 16px;
+  margin: 8px 0;
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  background: var(--app-surface);
+  color: var(--app-brand-strong);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sheet-status,
+.sheet-feedback {
+  flex-shrink: 0;
+  color: var(--app-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.sheet-status:not(:empty) {
+  margin: 0 0 10px;
+}
+
+.sheet-feedback:not(:empty) {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--app-brand-soft);
+  color: var(--app-brand-strong);
+}
+
+.sheet-feedback.is-error {
+  background: #fff0ec;
+  color: #9b321d;
 }
 .sheet-close {
   position: absolute;
