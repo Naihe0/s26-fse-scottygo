@@ -17,7 +17,6 @@ import TransitController from '../../../server/controllers/transit.controller';
 import DAC from '../../../server/db/dac';
 import * as responses from '../../../common/server.responses';
 import {
-  IRoute,
   IStop,
   INearbyStop,
   INearbyStopsPayload
@@ -26,27 +25,6 @@ import {
 // ---------------------------------------------------------------------------
 // Sample data
 // ---------------------------------------------------------------------------
-
-const sampleRoutes: IRoute[] = [
-  {
-    id: '61C',
-    name: 'McKeesport - Homestead',
-    system: 'PRT',
-    color: '#FF6600',
-    directions: ['INBOUND', 'OUTBOUND'],
-    activeStatus: true,
-    operatingDays: [0, 1, 2, 3, 4, 5, 6]
-  },
-  {
-    id: 'P1',
-    name: 'East Busway All-Stops',
-    system: 'PRT',
-    color: '#00518B',
-    directions: ['INBOUND', 'OUTBOUND'],
-    activeStatus: true,
-    operatingDays: [1, 2, 3, 4, 5]
-  }
-];
 
 // Stops near CMU campus (40.4433, -79.9436)
 const nearbyStops: IStop[] = [
@@ -204,7 +182,6 @@ if (!TEST_DB_URL) {
 
 let app: App;
 let server: HttpServer;
-let memberToken: string;
 
 const testUser = {
   credentials: { username: 'discoveruser', password: 'Discover123!' },
@@ -275,7 +252,7 @@ beforeAll(async () => {
   server = await app.listen();
   await new Promise((resolve) => setTimeout(resolve, 1000));
 
-  memberToken = await setupUser(testUser);
+  await setupUser(testUser);
 }, 30000);
 
 afterAll(async () => {

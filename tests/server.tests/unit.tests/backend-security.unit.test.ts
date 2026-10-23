@@ -226,7 +226,10 @@ describe('Untrusted input', () => {
     const lookup = jest.spyOn(User, 'getUserAccount');
     const res = response();
     await AuthController.getInstance('/auth').login(
-      { params: { username: 'member' }, body: { password: {} } } as Request,
+      {
+        params: { username: 'member' },
+        body: { password: {} }
+      } as unknown as Request,
       res as unknown as Response
     );
     expect(res.status).toHaveBeenCalledWith(400);

@@ -29,6 +29,8 @@ describe('prediction refresh contents', () => {
   const stop: IStop = {
     stopId: 'refresh',
     stopName: 'Refresh',
+    dtradd: [],
+    dtrrem: [],
     lat: 40,
     lon: -79
   };
@@ -109,6 +111,8 @@ describe('stop prediction request ownership', () => {
   const first: IStop = {
     stopId: 'first',
     stopName: 'First',
+    dtradd: [],
+    dtrrem: [],
     lat: 40,
     lon: -79
   };

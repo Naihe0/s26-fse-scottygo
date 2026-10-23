@@ -714,7 +714,7 @@ describe('GET /transit/stops/:routeId', () => {
   test('returns 404 when route has no stops in either source', async () => {
     mockTransitModel.getStops.mockResolvedValue([]);
     mockGtfs.isLoaded.mockReturnValue(true);
-    mockGtfs.getStops.mockReturnValue([]);
+    mockGtfs.getStopsByDirection.mockReturnValue([]);
 
     const res = await request('GET', '/transit/stops/INVALID?dir=INBOUND');
 
@@ -963,7 +963,7 @@ describe('A2 Fallback: TrueTime down → GTFS static data', () => {
     const res = await request('GET', '/transit/stops/P1?dir=INBOUND');
 
     expect(res.status).toBe(500);
-    expect(mockGtfs.getStops).not.toHaveBeenCalled();
+    expect(mockGtfs.getStopsByDirection).not.toHaveBeenCalled();
   });
 
   test('GTFS fallback not used when GTFS is not loaded', async () => {

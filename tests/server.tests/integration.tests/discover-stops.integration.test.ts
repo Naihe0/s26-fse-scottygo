@@ -283,7 +283,6 @@ const testUser = {
 
 let app: App;
 let server: HttpServer;
-let memberToken: string;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -369,7 +368,7 @@ beforeAll(async () => {
   server = await app.listen();
   await app.initComplete;
 
-  memberToken = await setupUser(testUser);
+  await setupUser(testUser);
 
   // Populate the in-memory bulk cache (routes + patterns + stops) so that
   // TransitModel.getNearbyStops and all related endpoints have data to serve.

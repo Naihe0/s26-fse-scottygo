@@ -101,8 +101,6 @@ function createMockDb(overrides: Partial<IDatabase> = {}): IDatabase {
     init: jest.fn(),
     close: jest.fn(),
     saveUser: jest.fn(),
-    findUserByUsername: jest.fn(),
-    findUserById: jest.fn(),
     setUserAgreedToTrue: jest.fn(),
     findUserAccountByUsername: jest.fn(),
     findUserAccountById: jest.fn(),
@@ -114,11 +112,18 @@ function createMockDb(overrides: Partial<IDatabase> = {}): IDatabase {
     countAdministrators: jest.fn(),
     getAllUsernames: jest.fn(),
     seedDefaultAdmin: jest.fn(),
+    markOnboardingComplete: jest.fn(),
     getTransitCache: jest.fn(),
     upsertTransitCache: jest.fn(),
     clearTransitCache: jest.fn(),
     saveMemorySample: jest.fn(),
     getRecentMemorySamples: jest.fn(),
+    getSubscriptionsByUserId: jest.fn(),
+    saveSubscription: jest.fn(),
+    deleteSubscription: jest.fn(),
+    saveBusReport: jest.fn(),
+    saveNotification: jest.fn(),
+    getRecentNotifications: jest.fn(),
     ...overrides
   };
 }
@@ -436,14 +441,7 @@ describe('Initial-Administrator Rule (R2)', () => {
     // R2 states: Username=Admin, Password=admin, Email=undefined,
     //            PrivilegeLevel=Administrator, Status=Active
 
-    // Verify via the real MongoDB.seedDefaultAdmin by importing and calling it
-    // with a mock that captures the saved user
-    const { MongoDB } = await import('../../../server/db/mongo.db');
-
-    // Create a test MongoDB instance (won't actually connect)
-    const testDb = new MongoDB('mongodb://fake:27017/test');
-
-    // We can't call seedDefaultAdmin without a real connection, so we test
+    // Test
     // the User model's contract instead: the default admin account shape
     // matches R2 specification
     const defaultAdminSpec: IUserAccount = {

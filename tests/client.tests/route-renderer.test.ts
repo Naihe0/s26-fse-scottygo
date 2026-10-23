@@ -4,7 +4,6 @@ import {
 } from '../../client/scripts/renderers/route-renderer';
 import { createStopIcon } from '../../client/scripts/utils/stop-icon';
 import type {
-  ILatLng,
   IMapMarker,
   IMapMarkerOptions,
   IMapPolyline,

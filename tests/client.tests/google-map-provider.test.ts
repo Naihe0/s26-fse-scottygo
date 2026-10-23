@@ -335,7 +335,9 @@ describe('Google Maps marker movement ownership', () => {
     // Street, neighborhood, park and medical labels are never disabled.
     expect(
       styles.filter((style) =>
-        style.stylers.some((styler) => styler.visibility === 'off')
+        style.stylers.some(
+          (styler) => 'visibility' in styler && styler.visibility === 'off'
+        )
       )
     ).toHaveLength(2);
     expect(mapOptions[0].mapId).toBeUndefined();

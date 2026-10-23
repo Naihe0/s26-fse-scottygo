@@ -203,7 +203,7 @@ describe('Register Integration Tests', () => {
     expect(error.name).toBe('UserExists');
 
     // Verify state: the original user is unchanged in the database
-    const dbUser = await DAC.db.findUserByUsername('dupuser');
+    const dbUser = await DAC.db.findUserAccountByUsername('dupuser');
     expect(dbUser).not.toBeNull();
     expect(dbUser!.email).toBe('dupuser@cmu.edu');
     expect(dbUser!.agreed).toBe(true);
@@ -226,7 +226,7 @@ describe('Register Integration Tests', () => {
     expect(error.message).toBeDefined();
 
     // Verify no user was created
-    const dbUser = await DAC.db.findUserByUsername('noemail');
+    const dbUser = await DAC.db.findUserAccountByUsername('noemail');
     expect(dbUser).toBeNull();
   });
 
@@ -249,7 +249,7 @@ describe('Register Integration Tests', () => {
     expect(error.message).toContain('CMU');
 
     // Verify no user was created
-    const dbUser = await DAC.db.findUserByUsername('badmail');
+    const dbUser = await DAC.db.findUserAccountByUsername('badmail');
     expect(dbUser).toBeNull();
   });
 });

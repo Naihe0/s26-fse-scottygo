@@ -261,7 +261,7 @@ describe('ManageAcct Integration Tests', () => {
     expect(patchSuccess.name).toBe('PrivilegeUpdated');
     const patchAccount = patchSuccess.payload as IUserAccount;
     expect(patchAccount.privilegeLevel).toBe('Coordinator');
-    expect(patchAccount.credentials.password).toBe('*******');
+    expect(patchAccount.credentials.password).toBe('obfuscated');
 
     // Verify: follow-up READ confirms persisted state
     const account = await getAccount(

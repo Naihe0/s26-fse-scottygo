@@ -341,7 +341,7 @@ describe('GET /account/users/:username', () => {
     expect(success.name).toBe('AccountRetrieved');
     const account = success.payload as IUserAccount;
     expect(account.credentials.username).toBe(memberUser.credentials.username);
-    expect(account.credentials.password).toBe('*******'); // Obfuscated
+    expect(account.credentials.password).toBe('obfuscated'); // Obfuscated
   });
 
   test('Member can retrieve own account', async () => {
@@ -1032,7 +1032,7 @@ describe('Socket.io Events', () => {
         expect(account.credentials.username).toBe(
           member2User.credentials.username
         );
-        expect(account.credentials.password).toBe('*******');
+        expect(account.credentials.password).toBe('obfuscated');
         adminSocket.off('accountUpdated', handler);
         done();
       }

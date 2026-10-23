@@ -14,7 +14,6 @@
 import { Request, Response } from 'express';
 import TransitController from '../../../server/controllers/transit.controller';
 import { IRoute, IPattern, IStop } from '../../../common/transit.interface';
-import { IAppError } from '../../../common/server.responses';
 import {
   timeToMinutes,
   toGtfsDate
@@ -195,7 +194,10 @@ describe('TUC1 – Visualize Routes unit tests', () => {
     test('applies calendar exception additions', () => {
       const monday = new Date(2026, 2, 23);
       const exceptions = new Map([
-        ['20260323', { added: new Set(['HOLIDAY']), removed: new Set() }]
+        [
+          '20260323',
+          { added: new Set(['HOLIDAY']), removed: new Set<string>() }
+        ]
       ]);
 
       const result = getActiveServiceIds(monday, calendar, exceptions);
@@ -207,7 +209,10 @@ describe('TUC1 – Visualize Routes unit tests', () => {
     test('applies calendar exception removals', () => {
       const monday = new Date(2026, 2, 23);
       const exceptions = new Map([
-        ['20260323', { added: new Set(), removed: new Set(['WEEKDAY']) }]
+        [
+          '20260323',
+          { added: new Set<string>(), removed: new Set(['WEEKDAY']) }
+        ]
       ]);
 
       const result = getActiveServiceIds(monday, calendar, exceptions);

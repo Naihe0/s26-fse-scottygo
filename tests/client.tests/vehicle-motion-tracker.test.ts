@@ -81,7 +81,6 @@ describe('route motion through the real vehicle tracker', () => {
     };
     jest.mocked(transitApiService.getHealth).mockResolvedValue(healthy);
     jest.mocked(transitApiService.getVehicles).mockResolvedValue({
-      source: 'live',
       vehicles: [bus]
     });
     addMarker = jest.fn(() => ({
@@ -172,7 +171,6 @@ describe('route motion through the real vehicle tracker', () => {
       lastUpdate: new Date(Date.parse(bus.lastUpdate) + 20_000).toISOString()
     };
     jest.mocked(transitApiService.getVehicles).mockResolvedValue({
-      source: 'live',
       vehicles: [updated]
     });
     await jest.advanceTimersByTimeAsync(4000);
@@ -201,7 +199,6 @@ describe('route motion through the real vehicle tracker', () => {
       lastUpdate: new Date(Date.parse(bus.lastUpdate) + 40_000).toISOString()
     };
     jest.mocked(transitApiService.getVehicles).mockResolvedValue({
-      source: 'live',
       vehicles: [updated]
     });
     await jest.advanceTimersByTimeAsync(15_000);

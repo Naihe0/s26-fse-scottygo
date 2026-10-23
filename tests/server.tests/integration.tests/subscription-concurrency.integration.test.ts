@@ -63,7 +63,7 @@ test('concurrent duplicate adds persist one subscription and return consistent c
   rejected.forEach((result) =>
     expect(result.reason).toMatchObject({ name: 'DuplicateSubscription' })
   );
-  expect(await db.countSubscriptionsByUserId(userId)).toBe(1);
+  expect(await db.getSubscriptionsByUserId(userId)).toHaveLength(1);
 });
 
 test('deletion frees exactly one slot for competing adds', async () => {
@@ -82,7 +82,7 @@ test('deletion frees exactly one slot for competing adds', async () => {
   expect(
     results.filter((result) => result.status === 'fulfilled')
   ).toHaveLength(1);
-  expect(await db.countSubscriptionsByUserId(userId)).toBe(10);
+  expect(await db.getSubscriptionsByUserId(userId)).toHaveLength(10);
 });
 
 test('concurrent first reads preserve legacy subscriptions; removal never reimports them', async () => {
@@ -96,8 +96,12 @@ test('concurrent first reads preserve legacy subscriptions; removal never reimpo
     expect(snapshot.map((item) => item.routeId).sort()).toEqual(['61C', 'P1'])
   );
   expect(await db.deleteSubscription(userId, '61C')).toBe(true);
-  expect(await db.findSubscription(userId, '61C')).toBeNull();
-  expect(await db.countSubscriptionsByUserId(userId)).toBe(1);
+  expect(
+    (await db.getSubscriptionsByUserId(userId)).find(
+      (item) => item.routeId === '61C'
+    )
+  ).toBeUndefined();
+  expect(await db.getSubscriptionsByUserId(userId)).toHaveLength(1);
   expect(await mongoose.model('Subscription').countDocuments({ userId })).toBe(
     2
   );

@@ -27,8 +27,6 @@ function createMockDb(overrides: Partial<IDatabase> = {}): IDatabase {
     init: jest.fn(),
     close: jest.fn(),
     saveUser: jest.fn(),
-    findUserByUsername: jest.fn(),
-    findUserById: jest.fn(),
     setUserAgreedToTrue: jest.fn(),
     findUserAccountByUsername: jest.fn(),
     findUserAccountById: jest.fn(),
@@ -39,21 +37,17 @@ function createMockDb(overrides: Partial<IDatabase> = {}): IDatabase {
     updateUserPassword: jest.fn(),
     countAdministrators: jest.fn(),
     getAllUsernames: jest.fn(),
-    getAllUserAccounts: jest.fn(),
     seedDefaultAdmin: jest.fn(),
+    markOnboardingComplete: jest.fn(),
     getTransitCache: jest.fn(),
-    getAllTransitCaches: jest.fn(),
     upsertTransitCache: jest.fn(),
     clearTransitCache: jest.fn(),
     saveMemorySample: jest.fn(),
     getRecentMemorySamples: jest.fn(),
     getSubscriptionsByUserId: jest.fn(),
-    findSubscription: jest.fn(),
-    countSubscriptionsByUserId: jest.fn(),
     saveSubscription: jest.fn(),
     deleteSubscription: jest.fn(),
     saveBusReport: jest.fn(),
-    getLatestReportByVehicle: jest.fn(),
     saveNotification: jest.fn(),
     getRecentNotifications: jest.fn(),
     ...overrides
@@ -119,8 +113,6 @@ describe('Subscription rules', () => {
     };
 
     DAC.db = createMockDb({
-      findSubscription: jest.fn().mockResolvedValue(null),
-      countSubscriptionsByUserId: jest.fn().mockResolvedValue(0),
       saveSubscription: jest.fn().mockResolvedValue(savedSub)
     });
 
