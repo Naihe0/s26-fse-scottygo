@@ -17,10 +17,23 @@ import {
 } from './utils/notification-search';
 import {
   createLiveUpdateCard,
-  createServiceAlertCard
+  createServiceAlertCard,
+  type NotificationCardActions
 } from './utils/notification-card';
 import { formatNotificationTime } from './utils/alert-content';
-import { authHeaders, getToken } from './services/session';
+import { authHeaders, getToken, isSameSession } from './services/session';
+import { showToast } from './utils/toast';
+import {
+  NotificationReadStore,
+  buildInboxShare,
+  groupInbox,
+  inboxKey,
+  inboxRoutes,
+  shareInboxSummary,
+  sortInbox,
+  type InboxEntry,
+  type InboxSort
+} from './utils/notification-inbox';
 
 type View = 'all' | 'service' | 'live';
 type Snapshot<T> = { items: T[]; loaded: boolean; failed: boolean };
@@ -39,6 +52,25 @@ const refreshBtn = document.getElementById(
 const filters = [
   ...document.querySelectorAll<HTMLButtonElement>('[data-notif-view]')
 ];
+const savedOnlyBtn = document.getElementById('notif-saved-only');
+const unreadOnlyBtn = document.getElementById('notif-unread-only');
+const sortSelect = document.getElementById(
+  'notif-sort'
+) as HTMLSelectElement | null;
+const groupSelect = document.getElementById(
+  'notif-group'
+) as HTMLSelectElement | null;
+const scopeStatus = document.getElementById('notif-scope-status');
+const inboxAnnouncement = document.getElementById('notif-inbox-announcement');
+const readStore = new NotificationReadStore();
+let savedOnly = false;
+let unreadOnly = false;
+let sort: InboxSort = 'priority';
+let grouped = false;
+let savedRoutes: Snapshot<string> = { items: [], loaded: false, failed: false };
+let savedRequest: AbortController | null = null;
+let savedRequestVersion = 0;
+let savedLoading = false;
 
 let view: View = 'all';
 let prefillContext: { route?: string; bus?: string } | null = null;
@@ -66,14 +98,14 @@ const resolveRouteDisplay = (id: string) =>
 const formatMessage = (message: string) =>
   formatNotificationMessage(message, routeDisplayById);
 
-function renderCards(
-  visibleAlerts: IServiceAlert[],
-  visibleNotifications: INotification[]
-): void {
+function renderCards(entries: InboxEntry[]): void {
   const signature = JSON.stringify([
-    visibleAlerts,
-    visibleNotifications,
-    [...routeDisplayById]
+    entries,
+    [...routeDisplayById],
+    entries.map((entry) => readStore.isRead(entry)),
+    grouped,
+    savedOnly,
+    savedRoutes.items
   ]);
   if (signature === renderSignature) {
     list.querySelectorAll<HTMLTimeElement>('time[datetime]').forEach((time) => {
@@ -94,15 +126,71 @@ function renderCards(
     ? focused?.closest<HTMLElement>('[data-key]')?.dataset.key
     : undefined;
   const focusedAction = focusedKey ? focused?.dataset.action : undefined;
-  const cards = [
-    ...visibleAlerts.map((alert) =>
-      createServiceAlertCard(alert, resolveRouteDisplay)
-    ),
-    ...visibleNotifications.map((notification) =>
-      createLiveUpdateCard(notification, resolveRouteDisplay, formatMessage)
-    )
-  ];
-  list.replaceChildren(...cards);
+  const oldCards = [...list.querySelectorAll<HTMLElement>('.notif-card')];
+  const focusedIndex = oldCards.findIndex(
+    (card) => card.dataset.key === focusedKey
+  );
+  const cards = entries.map((entry) => {
+    const actions: NotificationCardActions = {
+      read: readStore.isRead(entry),
+      onReadChange: (read) => {
+        readStore.setRead(entry, read);
+        render();
+        if (inboxAnnouncement)
+          inboxAnnouncement.textContent = read
+            ? 'Marked as read.'
+            : 'Marked unread.';
+      },
+      onShare: (trigger) =>
+        void shareInboxSummary(
+          buildInboxShare(entry, (id) => resolveRouteDisplay(id).title),
+          trigger,
+          showToast
+        )
+    };
+    return entry.kind === 'service'
+      ? createServiceAlertCard(entry.value, resolveRouteDisplay, actions)
+      : createLiveUpdateCard(
+          entry.value,
+          resolveRouteDisplay,
+          formatMessage,
+          actions
+        );
+  });
+  if (grouped) {
+    const byKey = new Map(cards.map((card) => [card.dataset.key, card]));
+    const savedIds = new Set(savedRoutes.items.map((id) => id.toLowerCase()));
+    const sections = groupInbox(entries).map((group) => {
+      const section = document.createElement('li');
+      section.className = 'notif-route-group';
+      const header = document.createElement('h2');
+      header.className = 'notif-group-heading';
+      const headerRoutes = [...group.routeIds];
+      if (savedOnly) {
+        headerRoutes.sort(
+          (a, b) =>
+            Number(savedIds.has(b.toLowerCase())) -
+            Number(savedIds.has(a.toLowerCase()))
+        );
+      }
+      const titles = headerRoutes.map((id) => resolveRouteDisplay(id).title);
+      const title = titles.length
+        ? titles.slice(0, 2).join(' + ') +
+          (titles.length > 2 ? ` + ${titles.length - 2} more` : '')
+        : 'Network updates';
+      header.textContent = `${title} · ${group.entries.length}`;
+      const nested = document.createElement('ul');
+      nested.className = 'notif-group-list';
+      nested.setAttribute('aria-label', title);
+      group.entries.forEach((entry) => {
+        const card = byKey.get(inboxKey(entry));
+        if (card) nested.append(card);
+      });
+      section.append(header, nested);
+      return section;
+    });
+    list.replaceChildren(...sections);
+  } else list.replaceChildren(...cards);
   for (const card of cards) {
     for (const details of card.querySelectorAll('details')) {
       const action =
@@ -114,6 +202,14 @@ function renderCards(
         .find((item) => item.dataset.action === focusedAction)
         ?.focus({ preventScroll: true });
     }
+  }
+  if (focusedKey && !cards.some((card) => card.dataset.key === focusedKey)) {
+    const next = cards[Math.max(0, Math.min(focusedIndex, cards.length - 1))];
+    (
+      next?.querySelector<HTMLButtonElement>('[data-action="read"]') ??
+      unreadOnlyBtn ??
+      searchInput
+    )?.focus({ preventScroll: true });
   }
 }
 
@@ -152,10 +248,39 @@ function render(): void {
             );
           })
           .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  renderCards(visibleAlerts, visibleNotifications);
+  const saved = new Set(savedRoutes.items.map((id) => id.toLowerCase()));
+  const unique = new Map<string, InboxEntry>();
+  const candidates: InboxEntry[] = [
+    ...visibleAlerts.map((value): InboxEntry => ({ kind: 'service', value })),
+    ...visibleNotifications.map(
+      (value): InboxEntry => ({ kind: 'live', value })
+    )
+  ];
+  for (const entry of candidates) {
+    if (
+      savedOnly &&
+      !inboxRoutes(entry).some((route) => saved.has(route.toLowerCase()))
+    )
+      continue;
+    if (unreadOnly && readStore.isRead(entry)) continue;
+    unique.set(inboxKey(entry), entry);
+  }
+  const entries = sortInbox([...unique.values()], sort);
+  renderCards(entries);
 
-  const count = visibleAlerts.length + visibleNotifications.length;
-  countEl.textContent = `${count} ${count === 1 ? 'update' : 'updates'}${query ? ' found' : ''}`;
+  const count = entries.length;
+  const unread = entries.filter((entry) => !readStore.isRead(entry)).length;
+  countEl.textContent = `${count} ${count === 1 ? 'update' : 'updates'}${query ? ' found' : ''} · ${unread} unread`;
+  savedOnlyBtn?.setAttribute('aria-pressed', String(savedOnly));
+  unreadOnlyBtn?.setAttribute('aria-pressed', String(unreadOnly));
+  if (scopeStatus) {
+    scopeStatus.hidden = !savedOnly;
+    scopeStatus.textContent = savedLoading
+      ? 'Loading saved routes…'
+      : savedRoutes.failed
+        ? `Saved routes could not refresh.${savedRoutes.loaded ? ' Using the last available list.' : ''} Try Refresh.`
+        : `${savedRoutes.items.length} saved ${savedRoutes.items.length === 1 ? 'route' : 'routes'}.`;
+  }
   const relevant =
     view === 'service'
       ? [alerts]
@@ -173,6 +298,28 @@ function render(): void {
     emptyEl.textContent = query
       ? `No updates match “${query}” in the available results. Some updates could not load. Try Refresh to check all sources.`
       : 'No updates in the available results. Some updates could not load. Try Refresh to check all sources.';
+  } else if (savedOnly && savedLoading && !savedRoutes.loaded) {
+    emptyEl.textContent = 'Loading your saved routes…';
+  } else if (savedOnly && savedRoutes.failed && !savedRoutes.loaded) {
+    emptyEl.textContent =
+      'Your saved routes could not load. Try Refresh or turn off Saved routes.';
+  } else if (
+    savedOnly &&
+    savedRoutes.loaded &&
+    savedRoutes.items.length === 0
+  ) {
+    emptyEl.textContent = 'Save a route to see its updates here. ';
+    const link = document.createElement('a');
+    link.href = '/subscriptions';
+    link.textContent = 'Choose routes';
+    emptyEl.append(link);
+  } else if (unreadOnly) {
+    emptyEl.textContent =
+      'No unread updates match these filters. Turn off Unread to see updates you have read.';
+  } else if (savedOnly) {
+    emptyEl.textContent = query
+      ? `No updates for saved routes match “${query}”.`
+      : 'No updates for your saved routes in this view.';
   } else if (query) {
     emptyEl.textContent = `No updates match “${query}”. Try a route, bus number, or another keyword.`;
   } else if (view === 'live') {
@@ -224,8 +371,51 @@ async function fetchSnapshot<T>(
   return data.payload;
 }
 
+async function loadSavedRoutes(): Promise<void> {
+  if (disposed) return;
+  const token = getToken();
+  const version = ++savedRequestVersion;
+  savedRequest?.abort();
+  const request = new AbortController();
+  savedRequest = request;
+  savedLoading = true;
+  render();
+  const timeout = setTimeout(() => request.abort(), 15_000);
+  try {
+    const rows = await fetchSnapshot<{ routeId: string }>(
+      '/notifications/subscriptions',
+      request.signal
+    );
+    if (disposed || version !== savedRequestVersion || !isSameSession(token))
+      return;
+    savedRoutes = {
+      items: [
+        ...new Set(
+          rows.flatMap((row) =>
+            typeof row?.routeId === 'string' ? [row.routeId] : []
+          )
+        )
+      ],
+      loaded: true,
+      failed: false
+    };
+  } catch {
+    if (disposed || version !== savedRequestVersion || !isSameSession(token))
+      return;
+    savedRoutes = { ...savedRoutes, failed: true };
+  } finally {
+    clearTimeout(timeout);
+    if (!disposed && version === savedRequestVersion && isSameSession(token)) {
+      savedLoading = false;
+      savedRequest = null;
+      render();
+    }
+  }
+}
+
 async function refresh(): Promise<void> {
   if (disposed) return;
+  const token = getToken();
   const version = ++requestVersion;
   controller?.abort();
   controller = new AbortController();
@@ -241,7 +431,7 @@ async function refresh(): Promise<void> {
     )
   ]);
   clearTimeout(timeout);
-  if (disposed || version !== requestVersion) return;
+  if (disposed || version !== requestVersion || !isSameSession(token)) return;
   const [alertResult, notificationResult] = results;
   alerts =
     alertResult.status === 'fulfilled'
@@ -302,13 +492,46 @@ function init(): void {
       render();
     })
   );
-  refreshBtn.addEventListener('click', () => void refresh());
+  refreshBtn.addEventListener('click', () => {
+    void refresh();
+    void loadSavedRoutes();
+  });
+  savedOnlyBtn?.addEventListener('click', () => {
+    savedOnly = !savedOnly;
+    render();
+    if (savedOnly) void loadSavedRoutes();
+  });
+  unreadOnlyBtn?.addEventListener('click', () => {
+    unreadOnly = !unreadOnly;
+    render();
+  });
+  sortSelect?.addEventListener('change', () => {
+    sort = sortSelect.value === 'newest' ? 'newest' : 'priority';
+    render();
+  });
+  groupSelect?.addEventListener('change', () => {
+    grouped = groupSelect.value === 'route';
+    render();
+  });
+  const storageChanged = (event: StorageEvent) => {
+    if ((event.key === 'token' || event.key === null) && reloadChangedSession())
+      return;
+    if (
+      event.key?.startsWith('scottygo:notification-inbox:') ||
+      event.key === null
+    ) {
+      readStore.reload();
+      render();
+    }
+  };
+  window.addEventListener('storage', storageChanged);
   void fetchRouteDisplayMap(authHeaders()).then((routes) => {
     if (disposed) return;
     routeDisplayById = routes;
     render();
   });
   void refresh();
+  void loadSavedRoutes();
 
   const socket = io({ auth: { token } });
   socket.on('alertUpdate', scheduleRefresh);
@@ -320,26 +543,43 @@ function init(): void {
   const timer = setInterval(() => {
     if (!document.hidden && !loading) void refresh();
   }, 60_000);
-  window.addEventListener('pageshow', (event) => {
+  const restorePage = (event: PageTransitionEvent) => {
     if (event.persisted && !disposed) {
+      if (reloadChangedSession()) return;
       socket.connect();
       scheduleRefresh();
+      void loadSavedRoutes();
     }
-  });
-  window.addEventListener('pagehide', (event) => {
+  };
+  const hidePage = (event: PageTransitionEvent) => cleanup(!event.persisted);
+  function reloadChangedSession(): boolean {
+    if (isSameSession(token)) return false;
+    cleanup(true);
+    window.location.reload();
+    return true;
+  }
+  function cleanup(permanent: boolean): void {
     socket.disconnect();
     controller?.abort();
+    savedRequest?.abort();
+    savedRequestVersion++;
+    savedLoading = false;
     requestVersion++;
     loading = false;
     if (socketRefreshTimer) clearTimeout(socketRefreshTimer);
     socketRefreshTimer = null;
     // BFCache freezes timers; retain one set of listeners for restoration.
-    if (event.persisted) return;
+    if (!permanent) return;
     disposed = true;
     clearInterval(timer);
     document.removeEventListener('scottygo:notification', scheduleRefresh);
     document.removeEventListener('visibilitychange', visibilityRefresh);
-  });
+    window.removeEventListener('storage', storageChanged);
+    window.removeEventListener('pageshow', restorePage);
+    window.removeEventListener('pagehide', hidePage);
+  }
+  window.addEventListener('pageshow', restorePage);
+  window.addEventListener('pagehide', hidePage);
 }
 
 init();

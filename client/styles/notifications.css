@@ -183,6 +183,213 @@
   margin-top: 10px;
 }
 
+.notif-inbox-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #edf0f4;
+}
+.notif-inbox-controls > button,
+.notif-more-options > summary {
+  min-height: 44px;
+  padding: 11px 13px;
+  border: 1px solid #dfe5eb;
+  border-radius: 10px;
+  background: #fff;
+  color: #4f6172;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.notif-inbox-controls > button[aria-pressed='true'] {
+  border-color: #6391a0;
+  background: #eaf4f6;
+  color: #235a6c;
+  font-weight: 650;
+}
+.notif-more-options {
+  flex: 1 1 140px;
+}
+.notif-more-options > summary {
+  width: fit-content;
+}
+.notif-more-options[open] {
+  flex-basis: 100%;
+}
+.notif-option-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  padding-top: 14px;
+}
+.notif-option-fields label {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+  color: #526575;
+}
+.notif-option-fields select {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 9px;
+  border: 1px solid #dbe2e8;
+  border-radius: 9px;
+  background: #f8fafb;
+  color: #263d4c;
+  font: inherit;
+  font-size: 16px;
+}
+.notif-more-options p {
+  margin-top: 12px;
+  color: #657582;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.notif-scope-status {
+  margin-top: 12px;
+  color: #536b78;
+  font-size: 12px;
+}
+.notif-inbox-announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.notif-read-state {
+  color: #245d70;
+  background: #eaf5f7;
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 11px;
+  font-weight: 650;
+}
+.notif-card--read {
+  box-shadow: none;
+  border-color: #e4e8ed;
+}
+.notif-card--read .notif-read-state {
+  background: #f1f3f6;
+  color: #637180;
+  font-weight: 500;
+}
+.notif-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #edf0f4;
+}
+.notif-card-actions button {
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid #dee5eb;
+  border-radius: 9px;
+  background: #fff;
+  color: #445e6d;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.notif-card-actions button:hover {
+  background: #f2f7f9;
+  border-color: #96b1bc;
+}
+.notif-card-actions button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.notif-route-group {
+  min-width: 0;
+}
+.notif-group-heading {
+  margin: 10px 0 12px;
+  color: #304c5c;
+  font-size: 15px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.notif-group-list {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.notif-share-dialog {
+  width: min(480px, calc(100vw - 36px));
+  max-height: calc(100dvh - 36px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 24px;
+  border: 1px solid #dbe3e9;
+  border-radius: 20px;
+  color: #243a49;
+  box-shadow: 0 18px 60px #0f263a38;
+}
+.notif-share-dialog::backdrop {
+  background: #182a3d5c;
+}
+.notif-share-dialog h2 {
+  margin: 0 0 10px;
+  font-size: 22px;
+}
+.notif-share-dialog p {
+  margin: 0 0 16px;
+  color: #627481;
+  line-height: 1.5;
+}
+.notif-share-dialog label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.notif-share-dialog textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 150px;
+  border: 1px solid #cddbe3;
+  border-radius: 10px;
+  padding: 12px;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #344d5e;
+  resize: vertical;
+}
+.notif-share-dialog button {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  margin-top: 16px;
+  border: 0;
+  border-radius: 10px;
+  color: #fff;
+  background: #245b70;
+  font: inherit;
+  cursor: pointer;
+}
+.notif-share-dialog :is(button, textarea):focus-visible,
+.notif-option-fields select:focus-visible {
+  outline: 3px solid #376ab0;
+  outline-offset: 3px;
+}
+@media (max-width: 420px) {
+  .notif-option-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
 .notif-results-meta {
   display: flex;
   align-items: baseline;

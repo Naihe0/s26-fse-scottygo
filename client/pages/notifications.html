@@ -84,8 +84,54 @@
             >Refresh</button
           >
         </div>
+        <div
+          class="notif-inbox-controls"
+          role="group"
+          aria-label="Personal inbox filters"
+        >
+          <button type="button" id="notif-saved-only" aria-pressed="false"
+            >Saved routes</button
+          >
+          <button type="button" id="notif-unread-only" aria-pressed="false"
+            >Unread</button
+          >
+          <details class="notif-more-options" id="notif-more-options">
+            <summary>More options</summary>
+            <div class="notif-option-fields">
+              <label
+                >Order<select id="notif-sort"
+                  ><option value="priority">Priority first</option
+                  ><option value="newest">Newest first</option></select
+                ></label
+              >
+              <label
+                >Layout<select id="notif-group"
+                  ><option value="flat">All updates together</option
+                  ><option value="route">Group by route</option></select
+                ></label
+              >
+            </div>
+            <p
+              >Agency dates use alert-window starts. Shared notices appear once
+              under their route group.</p
+            >
+          </details>
+        </div>
+        <p
+          id="notif-scope-status"
+          class="notif-scope-status"
+          role="status"
+          hidden
+        ></p>
+        <p
+          id="notif-inbox-announcement"
+          class="notif-inbox-announcement"
+          role="status"
+          aria-live="polite"
+        ></p>
         <p class="notif-context"
-          >Agency alerts from PRT · Rider reports from the last 30 minutes</p
+          >Agency alerts from PRT · Rider reports from the last 30 minutes. Read
+          status is saved in this browser.</p
         >
       </div>
       <div class="notif-results-meta">

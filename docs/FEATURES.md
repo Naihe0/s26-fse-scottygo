@@ -4,15 +4,15 @@ ScottyGo combines Pittsburgh Regional Transit (PRT) buses and CMU shuttles in on
 
 ## Five-iteration rider experience release
 
-This release is developed and accepted in five rounds. Each row contains five independently usable additions. Acceptance includes behavior tests and browser checks at phone and desktop sizes; release evidence is recorded below as rounds ship.
+All 25 additions below are implemented and accepted through automated behavior tests and local browser checks. Each round contains five independently usable features. Release commits are recorded below; production deployment is verified separately.
 
-| Round | Rider goal and features | Acceptance target |
-| --- | --- | --- |
-| 1 — Read and select the map | Unified bus/stop/route overlap chooser; shared-stop deduplication; zoom-aware stop density; route emphasis; selected-stop halo | Every overlapping object can be selected; hidden objects are excluded; the same stop is drawn once; selected context stays visible. |
-| 2 — Find a place to board | Nearby stop list; search the map area; 5/10/15-minute walking range; current-route filter; next-arrival comparison | Distance-sorted stops respect range and route; area search preserves GPS; independent prediction failures remain recoverable. |
-| 3 — Explore a route | Route stop browser; current-bus list; nearest boarding stop; explicit bus follow mode; full-route overview | Direction and search work together; lists open the right map object; dragging pauses follow; overview respects visible geometry. |
-| 4 — Repeat a journey | Saved stops; named planning places; recently viewed routes/stops; named filter presets; share a stop | Browser-local items survive reload, are account-scoped, and reopen current data; shared stop links survive sign-in. |
-| 5 — Read relevant updates | Saved-route alert scope; read/unread tracking; priority/newest sorting; route grouping; share update summaries | Filters compose without losing updates; changed notices become unread again; shared text contains safe public links only. |
+| Round | Rider goal and features | Acceptance target | Local acceptance |
+| --- | --- | --- | --- |
+| 1 — Read and select the map | Unified bus/stop/route overlap chooser; shared-stop deduplication; zoom-aware stop density; route emphasis; selected-stop halo | Every overlapping object can be selected; hidden objects are excluded; the same stop is drawn once; selected context stays visible. | Accepted, 5/5 |
+| 2 — Find a place to board | Nearby stop list; search the map area; 5/10/15-minute walking range; current-route filter; next-arrival comparison | Distance-sorted stops respect range and route; area search preserves GPS; independent prediction failures remain recoverable. | Accepted, 5/5 |
+| 3 — Explore a route | Route stop browser; current-bus list; nearest boarding stop; explicit bus follow mode; full-route overview | Direction and search work together; lists open the right map object; dragging pauses follow; overview respects visible geometry. | Accepted, 5/5 |
+| 4 — Repeat a journey | Saved stops; named planning places; recently viewed routes/stops; named filter presets; share a stop | Browser-local items survive reload, are account-scoped, and reopen current data; shared stop links survive sign-in. | Accepted, 5/5 |
+| 5 — Read relevant updates | Saved-route alert scope; read/unread tracking; priority/newest sorting; route grouping; share update summaries | Filters compose without losing updates; changed notices become unread again; shared text contains safe public links only. | Accepted, 5/5 |
 
 ### Round 1 — accepted
 
@@ -55,6 +55,28 @@ Shortcuts stay in this browser and are separated by immutable account ID. Changi
 Phone browser acceptance verified saving and applying a named CMU campus place, saving a **61C commute** view, reloading, clearing the route filter, and restoring that view. Stop **4407** was saved and shared; the local preview copied exactly `http://127.0.0.1:8180/#/map?stop=4407`, with no rider location or account data. Reload reopened that stop at zoom 16 and retained its map center despite an older saved planning origin. Recent reopening passed for stop 4407 and routes 61A/61C; the selected route and current stop card were restored correctly. Automated checks cover account isolation, bounded storage, draft preservation, cancelled/stale stop lookups, retry, and minimized-card restoration.
 
 ![My places with saved commute shortcuts at phone width](wireframes/current/my-places-mobile.jpg)
+
+### Round 5 — accepted
+
+**Saved routes** narrows updates to followed routes; **Unread** shows items still to read. Each card has an explicit **Mark read / Mark unread** action. Read state survives reload in the same browser and account, and an edited notice becomes unread again. These controls combine with search and All updates / Service alerts / Live updates.
+
+**More options** contains **Priority first / Newest first** ordering and route grouping. Priority uses the agency's supplied severity. Newest uses a rider report's creation time or an agency alert's latest supplied active-period start. A notice affecting several routes appears once, under its route combination; in Saved routes mode, followed routes lead the group heading. **Share** opens the device share sheet or copies a brief public summary, with visible confirmation and a manual-copy fallback.
+
+Local browser acceptance used 14 real agency notices. Searching **Forbes** returned one; marking it read and enabling Unread returned zero. Reloading the full list showed **14 updates · 13 unread**. After following 61C, Saved routes showed one matching notice; grouping placed 61C first in its heading and kept a single card. Share copied its public title, routes, description and agency URL, then displayed **Update summary copied.** At 390 × 760 and 320 × 568, the page had no horizontal overflow. The short-screen map key also moves clear of the left toolbar. Automated tests additionally cover changed-content fingerprints, account separation, corrupt/expired storage, combined filters, sorting, deduplication, refresh focus, safe links, share cancellation and clipboard fallback.
+
+![Personal transit inbox at phone width](wireframes/current/alerts-mobile.jpg)
+
+### Release commits
+
+| Round | Pushed commit |
+| --- | --- |
+| 1 — Map clarity and selection | `53998fd` |
+| 2 — Nearby boarding | `52355a3` |
+| 3 — Route exploration and follow | `19d8f84` |
+| 4 — Journey shortcuts | `c9f20c9` |
+| 5 — Personal alert inbox | [rider-ux-2026-10-24](https://github.com/Naihe0/s26-fse-scottygo/tree/rider-ux-2026-10-24) |
+
+Final local verification: **1,289 tests passed across 90 suites**, with 20 opt-in tests skipped. ESLint, all three TypeScript configurations, the production build, Windows path validation, and the production dependency audit passed; the audit reported zero vulnerabilities. Browser acceptance covered 320 × 568, 390 × 760 and 1440 × 900 viewports. Each of the first four production rounds passed 15 post-deployment checks covering pages/assets, transit feeds, route catalogs, Atlas persistence, authentication and Maps configuration.
 
 ## Map and route discovery
 
@@ -134,6 +156,8 @@ The **Notifications** page offers **All updates**, **Service alerts**, and **Liv
 - Agency cards identify affected routes and show supplied effect, cause, severity, and notice dates when available. Missing metadata is not invented. Long descriptions and large route lists expand on demand.
 - Explicit HTTP(S) links in agency text and rider comments are clickable. Unsafe link schemes and embedded markup are not executed. Agency-source links open separately; route chips open the affected route on the map.
 - Rider cards identify the bus, route, reported changes, and age. They remain distinct from agency alerts. Relative time is accompanied by an accessible absolute timestamp.
+- Saved routes and Unread filters combine with the update type and search. Mark read or unread explicitly; read state is local to this browser and account. Changed notices become unread again.
+- More options controls priority/newest ordering and route grouping. Multi-route notices keep one card and one count. Share provides a short public summary through the device share sheet, clipboard, or manual copy.
 - Refresh, foreground polling, and live events update results without clearing the search or expanded details. If one source fails, successful data remains visible with a source-specific message.
 - Foreground popups link to the route and update history. They are bounded and deduplicated, pause dismissal while being read or focused, and can be dismissed directly.
 

@@ -14,6 +14,43 @@ import {
 
 type RouteResolver = (routeId: string) => IRouteDisplay;
 
+export interface NotificationCardActions {
+  read: boolean;
+  onReadChange(read: boolean): void;
+  onShare(trigger: HTMLButtonElement): void;
+}
+
+function appendInboxActions(
+  card: HTMLElement,
+  actions?: NotificationCardActions
+): void {
+  if (!actions) return;
+  card.classList.toggle('notif-card--read', actions.read);
+  card.dataset.read = String(actions.read);
+  const state = element(
+    'span',
+    'notif-read-state',
+    actions.read ? 'Read' : 'Unread'
+  );
+  card.querySelector('.notif-card-meta')?.append(state);
+  const footer = element('div', 'notif-card-actions');
+  const read = element(
+    'button',
+    'notif-read-action',
+    actions.read ? 'Mark unread' : 'Mark as read'
+  );
+  read.type = 'button';
+  read.dataset.action = 'read';
+  read.setAttribute('aria-pressed', String(actions.read));
+  read.addEventListener('click', () => actions.onReadChange(!actions.read));
+  const share = element('button', 'notif-share-action', 'Share update');
+  share.type = 'button';
+  share.dataset.action = 'share';
+  share.addEventListener('click', () => actions.onShare(share));
+  footer.append(read, share);
+  card.append(footer);
+}
+
 function element<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className: string,
@@ -127,7 +164,8 @@ function appendWindows(
 
 export function createServiceAlertCard(
   alert: IServiceAlert,
-  resolve: RouteResolver
+  resolve: RouteResolver,
+  actions?: NotificationCardActions
 ): HTMLLIElement {
   const card = element('li', 'notif-card notif-card--service');
   card.dataset.key = `alert:${alert.id ?? alert.headerText}`;
@@ -161,6 +199,7 @@ export function createServiceAlertCard(
     source.setAttribute('aria-label', 'Agency details (opens in a new tab)');
     card.append(source);
   }
+  appendInboxActions(card, actions);
   return card;
 }
 
@@ -174,7 +213,8 @@ export function notificationKey(notif: INotification): string {
 export function createLiveUpdateCard(
   notif: INotification,
   resolve: RouteResolver,
-  formatMessage: (text: string) => string
+  formatMessage: (text: string) => string,
+  actions?: NotificationCardActions
 ): HTMLLIElement {
   const card = element('li', 'notif-card notif-card--live');
   card.dataset.key = `notification:${notificationKey(notif)}`;
@@ -199,5 +239,6 @@ export function createLiveUpdateCard(
     card.append(element('p', 'notif-topics', topics.join(' · ')));
   appendDescription(card, formatMessage(notif.message), 'update');
   appendRoutes(card, [notif.routeId], resolve);
+  appendInboxActions(card, actions);
   return card;
 }

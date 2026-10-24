@@ -48,7 +48,7 @@ Controllers are singletons assembled by `serve.ts`. Search behavior uses strateg
 
 The subscriptions page tracks loading and mutation state separately. Its add sheet updates a route row in place after saving, and leaves explicit removal to the saved-route cards. `utils/toast.ts` owns one short feedback message and its dismiss timer; `utils/modal.ts` owns the map message dialog's focus and background inert state. These helpers keep page controllers focused on their workflow.
 
-The first four rider-experience rounds add the following boundaries:
+The five rider-experience rounds add the following boundaries:
 
 | Module | Responsibility |
 | --- | --- |
@@ -60,10 +60,22 @@ The first four rider-experience rounds add the following boundaries:
 | `trackers/vehicle-tracker.ts` | Reuse the same bus-selection path for markers and lists; own explicit follow/pause/resume state, rate-limited centering and follow cleanup. |
 | `components/rider-shortcuts.ts`, `utils/rider-shortcuts.ts` | Render My places and validate its bounded browser-local store. Keep naming drafts stable during background changes; separate items by immutable account identity. |
 | `utils/stop-link.ts`, `utils/stop-link-navigation.ts` | Build/parse public stop links, reuse clipboard fallback, and resolve the exact current stop through authenticated search with a 15-second deadline and cancellation/session guards. |
+| `notification.ts`, `utils/notification-card.ts` | Compose update-type, text, saved-route and unread filters; render explicit read/share actions; preserve expanded details and restore focused card actions across snapshot refreshes. |
+| `utils/notification-inbox.ts` | Own bounded account-scoped read receipts, content fingerprints, priority/time sorting, unique route-combination groups, and public share summaries with clipboard/manual fallback. |
 
 `PredictionController` owns Save/Share actions on the stop card and records a recent stop only after mounting its card. Its explicit-selection callback and `VehicleTracker`'s callback let the map entry point cancel an older shared-stop lookup before a marker, list item, or minimized tab becomes the new target. Prediction refreshes and vehicle polling do not emit those selection callbacks. Cached popup HTML is rebound on restore, and pending clipboard state is reset for the restored button.
 
 The shared session module centralizes token/account access, authorization headers, and sign-out. Server feed adapters reuse `polling-feed.ts`; `errors.ts`, `logger.ts`, and `transit-validation.ts` provide consistent boundaries for HTTP validation and diagnostics. The memory dashboard now uses a Parcel browser entry instead of server-embedded scripts and styles.
+
+### Notification inbox state and rendering
+
+`NotificationReadStore` persists at most **500 receipts for 45 days** under `scottygo:notification-inbox:v1:<encoded account scope>`. The scope uses the JWT's immutable `userId`; changing a username or renewing a session preserves the same account's read state. Missing or undecodable account identity keeps receipts in memory only, and changing an opaque session clears that temporary state. Invalid records are discarded; blocked storage leaves the current session usable. A receipt contains only the notice key, content fingerprint and read time. It stores no notice body or location.
+
+The fingerprint includes service-alert text, normalized route membership and active periods, URL, effect, cause and severity; rider-update fingerprints include route, bus, message, changed fields and creation time. Changed content under the same notice ID becomes unread. Expiry is checked when reading, and writes prune expired receipts and enforce the cap. Cross-tab storage events reload the active account's receipts.
+
+`notification.ts` intersects saved-route membership with the existing type/search context and unread state, deduplicates by notice key, then sorts. Priority uses only supplied `SEVERE`, `WARNING` and `INFO` values; missing severity remains unranked. Date order uses report creation or the latest supplied alert-window start, with stable ties. Grouping uses the complete affected-route combination, so multi-route notices retain one card and one total count. Saved-route mode promotes followed routes within a group heading.
+
+Polling and socket-triggered refresh retain successful source snapshots on independent failure. Render signatures avoid replacing unchanged cards; changed renders restore expanded disclosures and focus by card/action identity, or move focus to a nearby card/filter when the previous item disappears. Sorting and grouping controls live in the More options disclosure. Sharing occurs only from a direct card action: native share, clipboard with a visible toast, then a focus-managed manual-copy dialog. Summaries contain a public title, routes, a bounded description and a validated HTTP(S) agency URL or public notification-page fallback. Cancelling native share ends the action. BFCache restoration refreshes both feed snapshots and followed routes. Account changes cancel outstanding work, disconnect the old socket and reload the page.
 
 ## Initialization and transit data
 
@@ -119,7 +131,7 @@ Never refresh measurement age from receipt time, use a predicted coordinate to a
 
 JWTs carry immutable `userId` and `tokenVersion`; server authorization reloads the active account. Password changes and deactivation invalidate old sessions. Passwords use bcrypt and are obfuscated in responses. Login and password-backed terms acceptance share an IP failure limit. Socket sessions authenticate on connect and inbound events, expire on time, and lose account rooms when privileges change.
 
-My places uses the `scottygo:rider-shortcuts:v2:` browser-storage namespace keyed by the JWT's immutable `userId`. Reading that claim chooses a local namespace; it does not authorize a server request. Earlier username-scoped prototype keys are neither read nor migrated, preventing a later account from inheriting a former username's places. Opaque or malformed sessions receive separate memory-only stores. Payload validation strips unknown fields, deduplicates entries and enforces limits of 20 stops, 8 places, 8 views and 8 recent selections. Filter presets omit credentials, GPS and schedule dates/times. Storage failures fall back to memory, and a cross-tab account change closes an open shortcut dialog. These shortcuts are separate from MongoDB route subscriptions.
+My places uses the `scottygo:rider-shortcuts:v2:` browser-storage namespace keyed by the JWT's immutable `userId`. Reading that claim chooses a local namespace; it does not authorize a server request. Earlier username-scoped prototype keys are neither read nor migrated, preventing a later account from inheriting a former username's places. Opaque or malformed sessions receive separate memory-only stores. Payload validation strips unknown fields, deduplicates entries and enforces limits of 20 stops, 8 places, 8 views and 8 recent selections. Filter presets omit credentials, GPS and schedule dates/times. Storage failures fall back to memory, and a cross-tab account change closes an open shortcut dialog. These shortcuts are separate from MongoDB route subscriptions. The active planned origin also uses an immutable-account namespace (`scottygo:planned-location:v2:`); legacy global location records are ignored. Map tabs reload when another tab changes accounts, clearing the previous account's private marker and dialogs.
 
 | MongoDB model | Purpose and retention |
 | --- | --- |
@@ -234,7 +246,7 @@ After pushing application changes, verify Render's deployed commit and Live stat
 - Review the deployed browser at desktop and phone width. Do not submit production reports or alter user subscriptions merely for a smoke test.
 - Stop temporary local app/test database processes after verification and reset browser viewport overrides.
 
-Record release identity in Git commits and the deployment platform. These three guides describe the current system rather than accumulating per-cycle logs. If replacing screenshots, capture the implemented UI and avoid credentials, personal location, or fabricated production reports.
+Record the current release's commits and acceptance in [FEATURES.md](FEATURES.md), and verify deployed identity in Render. Keep older release history in Git. If replacing screenshots, capture the implemented UI and avoid credentials, personal location, or fabricated production reports.
 
 ## Diagnostics and constraints
 

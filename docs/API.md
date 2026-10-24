@@ -188,6 +188,14 @@ All `/notifications/...` APIs require a session. `/subscriptions` is an HTML pag
 
 Saved routes accept PRT and CMU IDs. Each user has at most ten distinct routes, enforced atomically. Duplicate or over-limit additions return 409 `DuplicateSubscription` / `SubscriptionLimitReached`; invalid routes return 404, and removing an unsaved route returns 404 `SubscriptionNotFound`. A subscription contains `_id`, `userId`, `routeId`, `createdAt`. Browser mute state is not a server subscription field.
 
+### Client inbox behavior
+
+The notification page combines the existing alert and recent-report snapshots with `GET /notifications/subscriptions` for its Saved routes scope. Update type, search, saved-route membership and unread state compose in the browser. Priority/newest sorting and route grouping operate on unique notice keys; a multi-route alert remains one card and one count.
+
+Read/unread receipts are browser-local, scoped by immutable account `userId`, capped at 500 entries and expired after 45 days. They record a content fingerprint so a changed notice becomes unread. **Mark read / Mark unread adds no server write endpoint**, acknowledgement, or cross-device synchronization. It does not modify agency alerts, reports, or subscriptions.
+
+Share constructs a public text summary in the browser and invokes native sharing or clipboard/manual copy. A validated HTTP(S) agency URL is used when supplied; otherwise the link points to `/notifications?route=<routeId>&type=service|live`, or `/notifications` when no route is known. Only a public route/type context is included. No outbound-message or share-record API is called. Agency newest ordering uses supplied active-period start dates; the payload has no guaranteed publication or edit timestamp.
+
 ### Report body
 
 ```json
