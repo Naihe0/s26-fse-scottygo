@@ -243,7 +243,7 @@ describe('Transit readiness recovery', () => {
     );
     expect(mockRenderer.renderStopMarkers).toHaveBeenCalledWith(
       route.id,
-      [stop],
+      [{ ...stop, routes: [route.id] }],
       'NEARBY',
       expect.any(Function)
     );
