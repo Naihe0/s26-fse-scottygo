@@ -67,6 +67,7 @@ import {
 import { TransitModel } from '../../../server/models/transit.model';
 import { User } from '../../../server/models/user.model';
 import gtfsService from '../../../server/services/gtfs.service';
+import tripshotService from '../../../server/services/tripshot.service';
 
 const mockTransitModel = TransitModel as jest.Mocked<typeof TransitModel>;
 const mockUser = User as jest.Mocked<typeof User>;
@@ -247,6 +248,59 @@ describe('SearchInfo unit tests (R1 + R2)', () => {
       const result = await strategy.search('5005');
 
       expect(result.stops.map((s) => s.stopId)).toContain('5005');
+    });
+
+    test('TransitSearchStrategy keeps an exact stop ID ahead of five substring matches', async () => {
+      const partial = Array.from({ length: 8 }, (_, index) => ({
+        ...sampleStops[0],
+        stopId: `5005${index}`,
+        stopName: `Nearby stop ${index}`
+      }));
+      mockGtfs.getAllStops.mockReturnValue([...partial, sampleStops[2]]);
+      const result = await new TransitSearchStrategy().search('5005');
+      expect(result.stops).toHaveLength(5);
+      expect(result.stops[0].stopId).toBe('5005');
+      expect(result.stops.slice(1).map((stop) => stop.stopId)).toEqual(
+        partial.slice(0, 4).map((stop) => stop.stopId)
+      );
+    });
+
+    test('TransitSearchStrategy prioritizes a CMU exact ID and deduplicates shared stops', async () => {
+      const cmuStop = {
+        ...sampleStops[0],
+        stopId: 'CMU-ABC',
+        stopName: 'Campus stop'
+      };
+      mockGtfs.getAllStops.mockReturnValue(
+        Array.from({ length: 8 }, (_, index) => ({
+          ...sampleStops[0],
+          stopId: `CMU-ABC-${index}`
+        }))
+      );
+      jest.mocked(tripshotService.getRoutes).mockResolvedValueOnce([
+        { ...sampleRoutes[0], id: 'CMU-1', system: 'CMU' },
+        { ...sampleRoutes[0], id: 'CMU-2', system: 'CMU' }
+      ]);
+      jest
+        .mocked(tripshotService.getStops)
+        .mockResolvedValueOnce([cmuStop])
+        .mockResolvedValueOnce([cmuStop]);
+      const result = await new TransitSearchStrategy().search('cmu-abc');
+      expect(result.stops[0]).toEqual(cmuStop);
+      expect(
+        result.stops.filter((stop) => stop.stopId === 'CMU-ABC')
+      ).toHaveLength(1);
+    });
+
+    test('TransitSearchStrategy can resolve an exact ID even when it is a natural-language stop word', async () => {
+      mockGtfs.getAllStops.mockReturnValue([
+        { ...sampleStops[0], stopId: 'A' }
+      ]);
+      const result = await new TransitSearchStrategy().search('A');
+      expect(result.stops[0].stopId).toBe('A');
+      expect((await new TransitSearchStrategy().search('   ')).stops).toEqual(
+        []
+      );
     });
   });
 });

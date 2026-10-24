@@ -54,6 +54,101 @@ test('replacing a dialog keeps its original focus destination and renders text s
   expect(document.querySelector('main')!.hasAttribute('inert')).toBe(false);
 });
 
+test('optional retry follows OK in the focus loop and closes the modal before running its action', () => {
+  const trigger = document.activeElement;
+  const action = jest.fn(() => {
+    expect(
+      document.getElementById('message-modal')!.classList.contains('is-open')
+    ).toBe(false);
+    expect(document.querySelector('main')!.hasAttribute('inert')).toBe(false);
+    expect(document.activeElement).toBe(trigger);
+  });
+  showModal('Stop unavailable', 'Check your connection.', {
+    label: 'Try again',
+    action
+  });
+  const ok = document.getElementById('modal-ok')!;
+  const retry = ok.nextElementSibling as HTMLButtonElement;
+  expect(retry.textContent).toBe('Try again');
+  expect(document.activeElement).toBe(ok);
+  const tab = (target: HTMLElement, shiftKey = false) =>
+    target.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Tab',
+        shiftKey,
+        bubbles: true,
+        cancelable: true
+      })
+    );
+  tab(ok);
+  expect(document.activeElement).toBe(retry);
+  tab(retry);
+  expect(document.activeElement).toBe(ok);
+  tab(ok, true);
+  expect(document.activeElement).toBe(retry);
+  retry.click();
+  expect(action).toHaveBeenCalledTimes(1);
+  expect(retry.isConnected).toBe(false);
+  retry.click();
+  expect(action).toHaveBeenCalledTimes(1);
+});
+
+test('Escape and OK dismiss retry dialogs without invoking the optional action', () => {
+  const action = jest.fn();
+  const trigger = document.activeElement;
+  showModal('Unavailable', 'Try later.', { label: 'Try again', action });
+  const retry = document.querySelector<HTMLButtonElement>(
+    '.modal-btn--secondary'
+  )!;
+  retry.focus();
+  retry.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+  );
+  expect(document.activeElement).toBe(trigger);
+  expect(action).not.toHaveBeenCalled();
+  showModal('Unavailable', 'Try later.', { label: 'Try again', action });
+  document.getElementById('modal-ok')!.click();
+  expect(action).not.toHaveBeenCalled();
+  expect(document.querySelector('.modal-btn--secondary')).toBeNull();
+});
+
+test('replacement dialogs discard prior retry handlers and render action labels as inert text', () => {
+  const staleAction = jest.fn();
+  showModal('First', 'Failed.', {
+    label: '<img src=x onerror=alert(1)>',
+    action: staleAction
+  });
+  const staleButton = document.querySelector<HTMLButtonElement>(
+    '.modal-btn--secondary'
+  )!;
+  expect(staleButton.querySelector('img')).toBeNull();
+  showModal('Second', 'Standard message.');
+  expect(document.querySelectorAll('#message-modal button')).toHaveLength(1);
+  staleButton.click();
+  expect(staleAction).not.toHaveBeenCalled();
+});
+
+test('a retry action can open its own dialog without the previous cleanup making it inert', () => {
+  const trigger = document.activeElement;
+  showModal('First', 'Failed.', {
+    label: 'Retry',
+    action: () => showModal('Retry result', 'Still unavailable.')
+  });
+  document.querySelector<HTMLButtonElement>('.modal-btn--secondary')!.click();
+  expect(
+    document.getElementById('message-modal')!.classList.contains('is-open')
+  ).toBe(true);
+  expect(document.getElementById('message-modal')!.hasAttribute('inert')).toBe(
+    false
+  );
+  expect(document.getElementById('modal-title')!.textContent).toBe(
+    'Retry result'
+  );
+  expect(document.activeElement).toBe(document.getElementById('modal-ok'));
+  document.getElementById('modal-ok')!.click();
+  expect(document.activeElement).toBe(trigger);
+});
+
 test('new feedback replaces the old toast with its own full timeout', () => {
   showToast('First');
   jest.advanceTimersByTime(4000);

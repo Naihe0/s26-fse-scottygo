@@ -48,6 +48,21 @@ Controllers are singletons assembled by `serve.ts`. Search behavior uses strateg
 
 The subscriptions page tracks loading and mutation state separately. Its add sheet updates a route row in place after saving, and leaves explicit removal to the saved-route cards. `utils/toast.ts` owns one short feedback message and its dismiss timer; `utils/modal.ts` owns the map message dialog's focus and background inert state. These helpers keep page controllers focused on their workflow.
 
+The first four rider-experience rounds add the following boundaries:
+
+| Module | Responsibility |
+| --- | --- |
+| `maps/google-map.provider.ts`, `utils/map-hit-test.ts` | Track selectable visible overlays, read a moving marker's current coordinate at tap time, and resolve nearby objects in a 24 CSS-pixel Mercator radius. Shared selection IDs deduplicate route casings and segments. |
+| `components/map-selection.ts` | Group ambiguous choices by bus, stop and route; own the responsive chooser, keyboard focus, dismissal and guarded selection callback. |
+| `renderers/route-renderer.ts` | Deduplicate physical stop markers across route owners, adapt density and stroke emphasis to zoom, retain the selected-stop halo, and fit visible route geometry. A selected stop outside the rendered route layers receives a temporary owner without a second marker. |
+| `components/nearby-stops-panel.ts` | Own the nearby list's origin/area, walking-range and route filters, cancellation, bounded next-arrival requests and visible-panel refresh. |
+| `components/route-explorer.ts` | Browse route stops by direction/search, identify the nearest boarding stop, list visible buses and request full-route overview. Stops are alphabetical because the stop API supplies no verified trip sequence. |
+| `trackers/vehicle-tracker.ts` | Reuse the same bus-selection path for markers and lists; own explicit follow/pause/resume state, rate-limited centering and follow cleanup. |
+| `components/rider-shortcuts.ts`, `utils/rider-shortcuts.ts` | Render My places and validate its bounded browser-local store. Keep naming drafts stable during background changes; separate items by immutable account identity. |
+| `utils/stop-link.ts`, `utils/stop-link-navigation.ts` | Build/parse public stop links, reuse clipboard fallback, and resolve the exact current stop through authenticated search with a 15-second deadline and cancellation/session guards. |
+
+`PredictionController` owns Save/Share actions on the stop card and records a recent stop only after mounting its card. Its explicit-selection callback and `VehicleTracker`'s callback let the map entry point cancel an older shared-stop lookup before a marker, list item, or minimized tab becomes the new target. Prediction refreshes and vehicle polling do not emit those selection callbacks. Cached popup HTML is rebound on restore, and pending clipboard state is reset for the restored button.
+
 The shared session module centralizes token/account access, authorization headers, and sign-out. Server feed adapters reuse `polling-feed.ts`; `errors.ts`, `logger.ts`, and `transit-validation.ts` provide consistent boundaries for HTTP validation and diagnostics. The memory dashboard now uses a Parcel browser entry instead of server-embedded scripts and styles.
 
 ## Initialization and transit data
@@ -64,7 +79,9 @@ GTFS service dates use Pittsburgh's timezone and handle schedule times extending
 
 ## Browser state and live movement
 
-`MapStateManager` stores filters, measured vehicles, selected stops, GPS, and an optional planned origin. `URLSyncManager` serializes only public route/date/time/system/direction filters into `#/map?...`. `MapNavigationCoordinator` gives each navigation ownership of its requests; cancelled or older responses cannot replace a newer view. Directions temporarily own map graphics, then restore current filters on exit.
+`MapStateManager` stores filters, measured vehicles, GPS, and an optional planned origin. `URLSyncManager` serializes public route/date/time/system/direction filters and keeps an optional selected stop ID in `#/map?...`. `RouteRenderer` owns selected-stop graphics. Passive URL normalization preserves a shared stop; deliberate filter navigation clears it. Copy-view links contain only filters, while Copy-stop links contain only the public stop ID. `MapNavigationCoordinator` gives each navigation ownership of its requests; cancelled or older responses cannot replace a newer view. Directions temporarily own map graphics, then restore current filters on exit.
+
+`SharedStopNavigation` resolves an ID with `GET /search`, accepts only a matching stop with a valid name and finite coordinates, and supplies safe optional arrays. Generation and session-token checks reject older responses. Cancellation aborts transport; the deadline also bounds a stalled response body. Errors expose an explicit retry callback. Startup and history restoration preserve stop IDs through URL normalization and the sign-in handoff.
 
 `FilterController` loads bulk routes/patterns/stops and registers geometry with `VehicleTracker`. Per-route fallbacks fill caches when bulk data is unavailable. `PredictionController` owns stop-card arrivals; `DirectionsController` owns walking navigation and cancellable Google Routes requests. `GeolocationController` owns exactly one watch, distinguishes permission denial from timeout/unavailability, and ignores late callbacks after retry/teardown. A planned point never counts as measured GPS.
 
@@ -101,6 +118,8 @@ Never refresh measurement age from receipt time, use a predicted coordinate to a
 ## Accounts, persistence, and events
 
 JWTs carry immutable `userId` and `tokenVersion`; server authorization reloads the active account. Password changes and deactivation invalidate old sessions. Passwords use bcrypt and are obfuscated in responses. Login and password-backed terms acceptance share an IP failure limit. Socket sessions authenticate on connect and inbound events, expire on time, and lose account rooms when privileges change.
+
+My places uses the `scottygo:rider-shortcuts:v2:` browser-storage namespace keyed by the JWT's immutable `userId`. Reading that claim chooses a local namespace; it does not authorize a server request. Earlier username-scoped prototype keys are neither read nor migrated, preventing a later account from inheriting a former username's places. Opaque or malformed sessions receive separate memory-only stores. Payload validation strips unknown fields, deduplicates entries and enforces limits of 20 stops, 8 places, 8 views and 8 recent selections. Filter presets omit credentials, GPS and schedule dates/times. Storage failures fall back to memory, and a cross-tab account change closes an open shortcut dialog. These shortcuts are separate from MongoDB route subscriptions.
 
 | MongoDB model | Purpose and retention |
 | --- | --- |

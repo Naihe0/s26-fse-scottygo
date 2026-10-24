@@ -8,7 +8,10 @@ import {
 } from '../../client/scripts/services/transit-api.service';
 import type { IMapMarker, IMapProvider } from '../../common/map.interface';
 import type { IVehicle } from '../../common/transit.interface';
-import { dismissPopup } from '../../client/scripts/utils/map-popup';
+import {
+  dismissPopup,
+  restorePopup
+} from '../../client/scripts/utils/map-popup';
 import { showToast } from '../../client/scripts/utils/toast';
 import { focusNearby } from '../../client/scripts/utils/map-focus';
 import type { VehicleMotionEstimate } from '../../client/scripts/services/vehicle-motion';
@@ -179,6 +182,7 @@ describe('live vehicle freshness and polling lifecycle', () => {
       remove: jest.fn()
     }));
     tracker = VehicleTracker.getInstance();
+    tracker.setSelectionCallback(() => undefined);
     tracker.setAdminProximityBypass(false);
     tracker.updateUserLocation(null);
     tracker.initialize({
@@ -213,6 +217,30 @@ describe('live vehicle freshness and polling lifecycle', () => {
     mockDirections.inbound = false;
     tracker.refreshDirectionVisibility();
     expect(tracker.selectVehicle('list-bus')).toBe(false);
+  });
+
+  test('valid explicit bus choices and restored tabs notify navigation, while polling and rejected choices do not', async () => {
+    const bus = { ...vehicle('selection-bus'), direction: 'INBOUND' };
+    const selected = jest.fn();
+    tracker.setSelectionCallback(selected);
+    getVehicles.mockResolvedValue({ vehicles: [bus] });
+    tracker.startPolling('61C');
+    await tick();
+    expect(selected).not.toHaveBeenCalled();
+    const marker = addMarker.mock.results[0].value;
+    jest.mocked(marker.onClick).mock.calls[0][0]();
+    expect(selected).toHaveBeenCalledTimes(1);
+    expect(selected).toHaveBeenCalledWith(bus.vid);
+    await tick(10_000);
+    expect(selected).toHaveBeenCalledTimes(1);
+    document.querySelector<HTMLButtonElement>('.map-popup__minimize')!.click();
+    restorePopup('bus');
+    expect(selected).toHaveBeenCalledTimes(2);
+    expect(tracker.selectVehicle('missing')).toBe(false);
+    mockDirections.inbound = false;
+    tracker.refreshDirectionVisibility();
+    expect(tracker.selectVehicle(bus.vid)).toBe(false);
+    expect(selected).toHaveBeenCalledTimes(2);
   });
 
   test('explicit bus following centers displayed movement at most once each second', async () => {

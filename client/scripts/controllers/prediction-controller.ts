@@ -33,6 +33,14 @@ import { RouteRenderer } from '../renderers/route-renderer';
 import { VehicleTracker } from '../trackers/vehicle-tracker';
 import { DirectionsController } from './directions-controller';
 import { transitApiService } from '../services/transit-api.service';
+import { copyStopLink } from '../utils/stop-link';
+import {
+  isStopSaved,
+  recordRecentStop,
+  subscribeRiderShortcuts,
+  toggleSavedStop
+} from '../utils/rider-shortcuts';
+import { showToast } from '../utils/toast';
 import {
   MAP_POPUP_ID,
   createMapPopup,
@@ -76,6 +84,9 @@ export class PredictionController {
   private predictionTickerInterval: number | null = null;
   private requestVersion = 0;
   private stopSelectionPending = false;
+  private stopShortcutUnsubscribe: (() => void) | null = null;
+  private shortcutBindings = new WeakSet<Element>();
+  private onSelection: (stop: IStop) => void = () => undefined;
 
   /** Avoid background map recovery while a stop is being selected or viewed. */
   get hasActiveSelection(): boolean {
@@ -110,6 +121,11 @@ export class PredictionController {
     this.getWalkMinutes = fn;
   }
 
+  /** Notify map navigation when an explicit stop choice replaces earlier intent. */
+  setSelectionCallback(callback: (stop: IStop) => void): void {
+    this.onSelection = callback;
+  }
+
   // -------------------------------------------------------------------------
   // Public API
   // -------------------------------------------------------------------------
@@ -121,6 +137,7 @@ export class PredictionController {
    */
   async handleStopClick(stop: IStop): Promise<void> {
     if (this.directionsController.isActive) return;
+    this.onSelection(stop);
     this.routeRenderer.setSelectedStop?.(stop, (selected) => {
       void this.handleStopClick(selected);
     });
@@ -161,6 +178,8 @@ export class PredictionController {
   stopPolling(): void {
     this.requestVersion++;
     this.stopSelectionPending = false;
+    this.stopShortcutUnsubscribe?.();
+    this.stopShortcutUnsubscribe = null;
     if (this.predictionPollInterval !== null) {
       clearInterval(this.predictionPollInterval);
       this.predictionPollInterval = null;
@@ -222,9 +241,13 @@ export class PredictionController {
       popup.appendChild(el)
     );
     popup.appendChild(directionsBtn);
+    popup.appendChild(this.buildStopShortcutActions());
 
     const container = document.querySelector('.map-container');
-    if (container) container.appendChild(popup);
+    if (container) {
+      container.appendChild(popup);
+      recordRecentStop(stop);
+    }
 
     this.bindMinimizeButton(popup, ctx);
 
@@ -243,6 +266,62 @@ export class PredictionController {
     });
 
     this.startPredictionPolling(ctx);
+    this.bindStopShortcutActions(popup, stop);
+  }
+
+  private buildStopShortcutActions(): HTMLElement {
+    const actions = document.createElement('div');
+    actions.className = 'map-popup__actions map-popup__shortcut-actions';
+    actions.innerHTML =
+      '<button type="button" class="map-popup__action-btn map-popup__save-stop"><span class="material-icons-outlined" aria-hidden="true">bookmark_border</span><span>Save stop</span></button><button type="button" class="map-popup__action-btn map-popup__share-stop"><span class="material-icons-outlined" aria-hidden="true">share</span><span>Share stop</span></button>';
+    return actions;
+  }
+
+  private bindStopShortcutActions(popup: Element, stop: IStop): void {
+    const save = popup.querySelector<HTMLButtonElement>(
+      '.map-popup__save-stop'
+    );
+    const share = popup.querySelector<HTMLButtonElement>(
+      '.map-popup__share-stop'
+    );
+    if (!save || !share) return;
+    // A cached popup may have been minimized during a pending clipboard write.
+    share.disabled = false;
+    const isCurrent = () =>
+      popup.isConnected && document.getElementById(MAP_POPUP_ID) === popup;
+    const refresh = () => {
+      if (!isCurrent()) return;
+      const saved = isStopSaved(stop.stopId);
+      save.setAttribute('aria-pressed', String(saved));
+      save.querySelector('.material-icons-outlined')!.textContent = saved
+        ? 'bookmark'
+        : 'bookmark_border';
+      save.querySelector('span:last-child')!.textContent = saved
+        ? 'Saved'
+        : 'Save stop';
+      save.setAttribute(
+        'aria-label',
+        saved
+          ? `Remove saved stop ${stop.stopName}`
+          : `Save stop ${stop.stopName}`
+      );
+    };
+    // Restored popup HTML has no listeners; avoid rebinding a live node twice.
+    if (!this.shortcutBindings.has(popup)) {
+      this.shortcutBindings.add(popup);
+      save.addEventListener('click', () => {
+        if (!isCurrent()) return;
+        const result = toggleSavedStop(stop);
+        refresh();
+        showToast(result.message);
+      });
+      share.addEventListener('click', () => {
+        if (isCurrent()) void copyStopLink(stop.stopId, share, showToast);
+      });
+    }
+    this.stopShortcutUnsubscribe?.();
+    this.stopShortcutUnsubscribe = subscribeRiderShortcuts(refresh);
+    refresh();
   }
 
   private buildWalkTimeRow(walkMin: number): HTMLElement {
@@ -521,6 +600,11 @@ export class PredictionController {
     const { stop, displayPredictions, selectedIndices } = ctx;
     const popup = document.getElementById(MAP_POPUP_ID);
     if (!popup) return;
+    this.minimisedStop = null;
+    this.onSelection(stop);
+    this.routeRenderer.setSelectedStop?.(stop, (selected) => {
+      void this.handleStopClick(selected);
+    });
 
     this.bindMinimizeButton(popup, ctx);
 
@@ -569,6 +653,7 @@ export class PredictionController {
     }
 
     this.startPredictionPolling(ctx);
+    this.bindStopShortcutActions(popup, stop);
   }
 
   // -------------------------------------------------------------------------

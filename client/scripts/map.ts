@@ -7,6 +7,7 @@ import { authService } from './services/auth.service';
 import {
   authHeaders,
   getToken,
+  getSessionUserId,
   getUsername,
   isSameSession
 } from './services/session';
@@ -33,6 +34,11 @@ import type { IRouteBellElement } from './components/route-bell';
 import './components/map-key';
 import './components/nearby-stops-panel';
 import './components/route-explorer';
+import './components/rider-shortcuts';
+import type { RiderShortcuts } from './components/rider-shortcuts';
+import { recordRecentRoute } from './utils/rider-shortcuts';
+import { parseStopLink } from './utils/stop-link';
+import { SharedStopNavigation } from './utils/stop-link-navigation';
 import type { RouteExplorer } from './components/route-explorer';
 import type { NearbyStopsPanel } from './components/nearby-stops-panel';
 import { dismissMapSelection } from './components/map-selection';
@@ -59,6 +65,7 @@ import { MapNavigationCoordinator } from './state/map-navigation';
 import { synchronizeMapFilterControls } from './state/map-filter-controls';
 import { mapSignInPath } from './utils/map-auth-return';
 import { FilterController } from './controllers/filter-controller';
+import { PredictionController } from './controllers/prediction-controller';
 import { DirectionsController } from './controllers/directions-controller';
 import { RouteRenderer } from './renderers/route-renderer';
 import { VehicleTracker } from './trackers/vehicle-tracker';
@@ -84,8 +91,10 @@ const mapNavigation = new MapNavigationCoordinator({
   getState: () => mapStateManager.getState(),
   updateFilters: (filters) => mapStateManager.updateFilters(filters),
   resetFilters: () => mapStateManager.resetFilters(),
-  writeURL: (mode) =>
-    urlSyncManager.updateURL(mapStateManager.getState(), mode),
+  writeURL: (mode) => {
+    if (mode === 'push') cancelSharedStop();
+    urlSyncManager.updateURL(mapStateManager.getState(), mode);
+  },
   synchronizeControls: () => synchronizeFilterControls(),
   invalidateRendering: () => filterController.invalidateView(),
   directionsActive: () => directionsController.isActive,
@@ -101,6 +110,13 @@ const mapNavigation = new MapNavigationCoordinator({
 // ─── Map provider ──────────────────────────────────────────────────────────────
 
 const mapProvider = new GoogleMapProvider();
+let sharedStopNavigation: SharedStopNavigation | null = null;
+let sharedStopRevision = 0;
+function cancelSharedStop(): void {
+  sharedStopRevision++;
+  sharedStopNavigation?.cancel();
+  recenterOnNextFix = false;
+}
 
 // Store user/initial location for recenter functionality
 let userLocation: { lat: number; lng: number } | null = null;
@@ -162,6 +178,15 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
   }
 
   const username = getUsername();
+  const pageAccountId = getSessionUserId(getToken());
+  window.addEventListener('storage', (event) => {
+    if ((event.key === 'token' || event.key === null) &&
+        getSessionUserId(getToken()) !== pageAccountId) {
+      cancelSharedStop();
+      removePlannedLocationMarker();
+      window.location.reload();
+    }
+  });
   const userAccount = username
     ? await authService.getCurrentUserAccount(username)
     : null;
@@ -194,8 +219,10 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
 
     const openStop = (stop: IStop) => {
       if (directionsController.isActive) return;
+      cancelSharedStop();
       vehicleTracker.cancelFollow();
       mapNavigation.cancel();
+      urlSyncManager.setSelectedStop(stop.stopId);
       mapProvider.setCenter({ lat: stop.lat, lng: stop.lon });
       mapProvider.setZoom(Math.max(16, mapProvider.getZoom()));
       return filterController.showStopDetailsFromSearch(stop);
@@ -213,6 +240,45 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
       getOrigin: () => getEffectiveLocation(),
       onSelectStop: openStop
     });
+    sharedStopNavigation = new SharedStopNavigation({
+      openStop,
+      onError: (message, retry) => showModal('Stop unavailable', message, {
+        label: 'Try again', action: () => void retry()
+      })
+    });
+    document.querySelector<RiderShortcuts>('rider-shortcuts')?.configure({
+      getOrigin: () => ({
+        ...getEffectiveLocation(),
+        label: mapStateManager.getState().plannedLocationLabel ||
+          (userLocation ? 'Your location' : 'CMU Campus')
+      }),
+      getFilters: () => {
+        const state = mapStateManager.getState();
+        return {
+          selectedRouteId: state.selectedRouteId,
+          selectedSystems: { ...state.selectedSystems },
+          selectedDirections: { ...state.selectedDirections }
+        };
+      },
+      onSelectStop: (stop) => {
+        if (!directionsController.isActive) void sharedStopNavigation?.open(stop.stopId);
+      },
+      onSelectRoute: (routeId) => selectRoute(routeId, true),
+      onSelectPlace: (place) => {
+        if (directionsController.isActive) return;
+        mapStateManager.setPlannedLocation({ lat: place.lat, lng: place.lng }, place.name);
+        document.dispatchEvent(new CustomEvent('locationSelected', {
+          detail: { lat: place.lat, lng: place.lng, label: place.name }
+        }));
+      },
+      onApplyFilters: (filters) => {
+        if (directionsController.isActive) return;
+        vehicleTracker.cancelFollow();
+        if (filters.selectedRouteId)
+          recordRecentRoute(filters.selectedRouteId, getRouteToastLabel(filters.selectedRouteId));
+        void mapNavigation.commit(filters, Boolean(filters.selectedRouteId));
+      }
+    });
     document.addEventListener('click', (event) => {
       if (directionsController.isActive) return;
       if (event.target instanceof Element && event.target.closest('[data-explore-route]'))
@@ -220,12 +286,16 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
     });
     document.addEventListener('selectBus', (event) => {
       if (directionsController.isActive) return;
+      cancelSharedStop();
+      urlSyncManager.setSelectedStop(null);
       const { vid } = (event as CustomEvent<{vid: string}>).detail;
       if (!vehicleTracker.selectVehicle(vid))
         showToast('This bus is no longer visible. Refresh the route to try again.');
     });
     document.addEventListener('routeOverview', (event) => {
       if (directionsController.isActive) return;
+      cancelSharedStop();
+      urlSyncManager.setSelectedStop(null);
       vehicleTracker.cancelFollow();
       const { routeId } = (event as CustomEvent<{routeId: string}>).detail;
       if (!routeRenderer.fitToVisibleRoute(routeId))
@@ -233,6 +303,17 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
     });
 
     vehicleTracker.initialize(mapProvider);
+    vehicleTracker.setSelectionCallback(() => {
+      cancelSharedStop();
+      urlSyncManager.setSelectedStop(null);
+      mapNavigation.cancel();
+    });
+    PredictionController.getInstance().setSelectionCallback((stop) => {
+      cancelSharedStop();
+      urlSyncManager.setSelectedStop(stop.stopId);
+      mapNavigation.cancel();
+      vehicleTracker.cancelFollow();
+    });
     vehicleTracker.setAdminProximityBypass(isAdminUser);
     directionsController.initialize(mapProvider);
 
@@ -265,9 +346,18 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
     // Initialize URL sync and restore state from URL
     urlSyncManager.initialize();
     urlSyncManager.onRestore(() => {
-      void mapNavigation.restore();
+      const stopId = parseStopLink();
+      cancelSharedStop();
+      const revision = sharedStopRevision;
+      void mapNavigation.restore().then(() => {
+        if (revision === sharedStopRevision && stopId)
+          void sharedStopNavigation?.open(stopId);
+      });
     });
-    window.addEventListener('pagehide', () => mapNavigation.stop());
+    window.addEventListener('pagehide', () => {
+      cancelSharedStop();
+      mapNavigation.stop();
+    });
     window.addEventListener('pageshow', (event) => {
       if (event.persisted) mapNavigation.resume();
     });
@@ -309,7 +399,11 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
       }
     });
 
+    const sharedStopId = parseStopLink();
+    const initialStopRevision = sharedStopRevision;
     await mapNavigation.start();
+    if (sharedStopId && initialStopRevision === sharedStopRevision)
+      await sharedStopNavigation.open(sharedStopId);
 
     // Request user location for centering map
     requestUserLocation();
@@ -417,6 +511,7 @@ function selectRoute(routeId: string | null, showInfo = false): void {
   if (directionsController.isActive) return;
   const systems = { ...mapStateManager.getState().selectedSystems };
   if (routeId) systems[routeId.startsWith('CMU-') ? 'cmu' : 'prt'] = true;
+  if (routeId) recordRecentRoute(routeId, getRouteToastLabel(routeId));
   void mapNavigation.commit(
     { selectedRouteId: routeId, selectedSystems: systems },
     showInfo
@@ -500,6 +595,8 @@ const registerTransitSearchEvents = (): void => {
   document.addEventListener('searchSelectStop', (e: Event) => {
     const { stop } = (e as CustomEvent).detail as { stop: IStop | undefined };
     if (!stop || directionsController.isActive) return;
+    cancelSharedStop();
+    urlSyncManager.setSelectedStop(stop.stopId);
     vehicleTracker.cancelFollow();
     mapNavigation.cancel();
     mapProvider.setCenter({ lat: stop.lat, lng: stop.lon });
@@ -534,6 +631,8 @@ const registerZoomAndMapEvents = (): void => {
   });
 
   document.addEventListener('recenter', () => {
+    cancelSharedStop();
+    urlSyncManager.setSelectedStop(null);
     vehicleTracker.cancelFollow();
     const state = mapStateManager.getState();
     if (
@@ -745,6 +844,9 @@ const registerLocationSearchEvents = (): void => {
 
   // User selected a custom planned location
   document.addEventListener('locationSelected', (e: Event) => {
+    cancelSharedStop();
+    urlSyncManager.setSelectedStop(null);
+    vehicleTracker.cancelFollow();
     const { lat, lng, label } = (
       e as CustomEvent<{ lat: number; lng: number; label: string }>
     ).detail;
@@ -753,7 +855,11 @@ const registerLocationSearchEvents = (): void => {
     hideUserLocationMarker();
     addPlannedLocationMarker(lat, lng, label);
     filterController.setUserLocation(plannedLoc);
-    void mapNavigation.restore();
+    const revision = sharedStopRevision;
+    void mapNavigation.restore().then(() => {
+      if (revision === sharedStopRevision && !directionsController.isActive)
+        focusNearby(mapProvider, plannedLoc);
+    });
     directionsController.updatePlannedLocation(plannedLoc);
     mapProvider.setCenter(plannedLoc);
     showToast(`Location set: ${label}`);
@@ -790,6 +896,9 @@ export function requestUserLocation(retry = false): void {
 }
 
 function retryUserLocation(): void {
+  cancelSharedStop();
+  urlSyncManager.setSelectedStop(null);
+  vehicleTracker.cancelFollow();
   clearLocationFeedback();
   recenterOnNextFix = true;
   showToast('Finding your location…');
@@ -808,13 +917,14 @@ function handleUserPosition(position: GeolocationPosition): void {
   const customLocation = mapStateManager.hasCustomPlannedLocation();
 
   if (!initialLocationSet || recenterOnNextFix) {
+    const mayRecenter = recenterOnNextFix || filterController.canRefreshLocation();
     initialLocationSet = true;
     recenterOnNextFix = false;
     if (!customLocation) {
       removePlannedLocationMarker();
       directionsController.updatePlannedLocation(null);
       if (isInPittsburghArea(location.lat, location.lng)) {
-        focusNearby(mapProvider, location);
+        if (mayRecenter) focusNearby(mapProvider, location);
         addUserLocationMarker(location.lat, location.lng);
         filterController.setUserLocation(location);
         refreshNearbyLocationView();
@@ -823,8 +933,10 @@ function handleUserPosition(position: GeolocationPosition): void {
           'Location Out of Bounds',
           'This transit app only supports the Pittsburgh bus system.'
         );
-        mapProvider.setCenter(DOWNTOWN_PITTSBURGH);
-        mapProvider.setZoom(14);
+        if (mayRecenter) {
+          mapProvider.setCenter(DOWNTOWN_PITTSBURGH);
+          mapProvider.setZoom(14);
+        }
       }
     }
   } else if (!customLocation) {
@@ -855,7 +967,8 @@ function handleLocationFailure(kind: LocationFailure): void {
     if (
       !hadLocation &&
       !mapStateManager.hasCustomPlannedLocation() &&
-      !directionsController.isActive
+      !directionsController.isActive &&
+      filterController.canRefreshLocation()
     ) {
       centerOnCmuCampus();
     }
@@ -864,6 +977,9 @@ function handleLocationFailure(kind: LocationFailure): void {
 }
 
 async function useCurrentLocation(): Promise<void> {
+  cancelSharedStop();
+  urlSyncManager.setSelectedStop(null);
+  vehicleTracker.cancelFollow();
   removePlannedLocationMarker();
   directionsController.updatePlannedLocation(null);
   const state = mapStateManager.getState();
@@ -975,8 +1091,10 @@ function restorePlannedLocationMarker(): void {
   filterController.setUserLocation({ lat, lng });
   refreshNearbyLocationView();
   directionsController.updatePlannedLocation({ lat, lng });
-  mapProvider.setCenter({ lat, lng });
-  mapProvider.setZoom(15);
+  if (filterController.canRefreshLocation()) {
+    mapProvider.setCenter({ lat, lng });
+    mapProvider.setZoom(15);
+  }
 }
 
 // ── Planned Location Popup ───────────────────────────────────────────
@@ -1188,6 +1306,8 @@ function disableFilterControls(): void {
   closeAllPanels();
   document.querySelector<NearbyStopsPanel>('nearby-stops-panel')?.close(false);
   document.querySelector<RouteExplorer>('route-explorer')?.close(false);
+  document.querySelector<RiderShortcuts>('rider-shortcuts')?.close();
+  cancelSharedStop();
   document.querySelector('.rider-tools')?.setAttribute('inert', '');
   vehicleTracker.cancelFollow();
   const controls = document.querySelector('map-controls');

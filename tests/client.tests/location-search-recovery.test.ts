@@ -4,10 +4,14 @@ import '../../client/scripts/components/location-search';
 import type { ILocationSearchElement } from '../../client/scripts/components/location-search';
 import { MapStateManager } from '../../client/scripts/state/map-state';
 
-const key = 'scottygo_planned_location';
+const key = 'scottygo:planned-location:v2:user%3Alocation-search-rider';
 
 beforeEach(() => {
   localStorage.clear();
+  localStorage.setItem(
+    'token',
+    `header.${btoa(JSON.stringify({ userId: 'location-search-rider' }))}.signature`
+  );
   const state = MapStateManager.getInstance();
   state.resetPlannedLocationToCurrent();
   state.setGpsUnavailable();

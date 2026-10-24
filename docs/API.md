@@ -36,7 +36,7 @@ Exceptions to the success/error envelope:
 - `GET /transit/health` returns a raw health object.
 - Production non-HTTPS rejection returns 403 `{ "error": "HTTPS Required", "message": "..." }`. Hosted clients must use HTTPS.
 
-HTML shells are public at `/`, `/auth`, `/account`, `/subscriptions`, and `/notifications`; their protected browser flows require sign-in. Map filters after `#` are browser state, not API query parameters. There is no REST logout endpoint: the client clears its session and disconnects sockets. Password change/deactivation revoke prior server sessions.
+HTML shells are public at `/`, `/auth`, `/account`, `/subscriptions`, and `/notifications`; their protected browser flows require sign-in. Map filters and stop IDs after `#` are browser state, not API query parameters. There is no REST logout endpoint: the client clears its session and disconnects sockets. Password change/deactivation revoke prior server sessions.
 
 ## Authentication
 
@@ -84,7 +84,15 @@ These endpoints require a session.
 | `GET /routes/search?q=...` | Nonempty query | `SearchTransitCompleted`: up to five PRT `IRoute` matches. |
 | `GET /search?q=...` | Nonempty query | `SearchTransitCompleted`: `{routes, stops}`, up to five each, combining PRT and CMU; optional `metadata.totalItems`. |
 
-Search matches route IDs/names and stop IDs/names case-insensitively. Natural-language search filters stop words. The combined search includes stop route membership. Use `/search` when both systems are required; `/routes/search` remains the narrower PRT route search.
+Search matches route IDs/names and stop IDs/names case-insensitively. Natural-language search filters stop words. The combined search includes stop route membership and deduplicates shared stop IDs. An exact stop-ID match ranks ahead of substring matches **before** the five-stop limit, including CMU stops and IDs that coincide with a natural-language stop word. This lets shared links resolve the intended stop through the existing endpoint. Use `/search` when both systems are required; `/routes/search` remains the narrower PRT route search.
+
+### Public map and stop links
+
+Filter links use `/#/map?r=61C&s=PRT&dir=IB`; supported optional fields are route `r`, systems `s`, directions `dir`, date `d` (`YYYYMMDD`) and time `t` (`HHMM`). A stop link uses `/#/map?stop=4407`. The `stop` value must occur exactly once, start with an ASCII letter or digit, contain only letters, digits, `_`, `.`, `:`, or `-`, and be at most 120 characters. Encode it when constructing the hash. The sign-in handoff retains recognized public fields and removes coordinates, credentials and redirect parameters.
+
+Copy-stop links contain only `stop`; Copy-view links contain only filters. On load/history restoration, the browser resolves the stop through authenticated `GET /search?q=<stopId>`, validates an exact returned ID and its coordinates, then opens the current arrival card. Resolution has a 15-second browser deadline, cancellation, session ownership and a retry path. No new stop-detail REST endpoint is introduced.
+
+Saved stops, named planning places, recent selections and filter presets are browser-local records, separate from `/notifications/subscriptions`. They have no synchronization or CRUD API. Route exploration reuses the existing route, stop, vehicle and prediction endpoints; bus follow and overlap selection are client-side map behavior.
 
 ## Transit
 

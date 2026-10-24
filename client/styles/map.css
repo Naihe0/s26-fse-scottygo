@@ -2382,8 +2382,38 @@ location-search {
   pointer-events: none;
 }
 .rider-tools > * { pointer-events: auto; }
-.map-container:has(#map-popup) .rider-tools,
+.rider-tools-button {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid #d9e0e8;
+  border-radius: 14px;
+  background: #fff;
+  color: #18303b;
+  font: 600 12px 'Inter', sans-serif;
+  box-shadow: 0 2px 8px #0f172a14;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.rider-tools-button:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
+.map-container:has(#map-popup) .rider-tools:not(:has(dialog[open])),
 .map-container:has(#directions-panel) .rider-tools { display: none; }
 @media (min-width: 769px) {
   .rider-tools { bottom: 36px; left: 150px; right: 100px; }
+}
+@media (max-width: 768px) {
+  .rider-tools { bottom: calc(32px + env(safe-area-inset-bottom, 0px)); left: 14px; right: 84px; }
+  .rider-tools > * { flex: 1; min-width: 0; }
+  .rider-tools > * > button {
+    width: 100%;
+    min-height: 52px;
+    padding: 6px 3px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .map-container:not(:has(#map-popup, #directions-panel)) map-key {
+    bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+  }
 }

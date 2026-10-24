@@ -5,6 +5,7 @@
 
 import type { IRoute, IVehicle } from '../../../common/transit.interface';
 import type { ILatLng } from '../../../common/map.interface';
+import { getSessionUserId, getToken } from '../services/session';
 
 export interface ISelectedTime {
   hour: number;
@@ -36,6 +37,7 @@ export interface IMapState {
 }
 
 type StateChangeListener = (state: IMapState) => void;
+type PlannedLocationScope = { identity: string; key: string | null };
 
 export class MapStateManager {
   private static instance: MapStateManager;
@@ -44,9 +46,16 @@ export class MapStateManager {
   // rider's explicitly selected campus can share the same label/coordinates.
   private hasExplicitPlannedLocation: boolean;
   private listeners: Set<StateChangeListener> = new Set();
+  private plannedLocationScope: PlannedLocationScope;
+  private readonly onStorage = (event: StorageEvent): void => {
+    if (event.key === 'token' || event.key === null) {
+      if (this.syncPlannedLocationScope()) this.notifyListeners();
+    }
+  };
 
   private constructor() {
-    // Restore persisted planned location from localStorage
+    this.plannedLocationScope = this.readPlannedLocationScope();
+    // A planned address belongs to the immutable account ID, never a username.
     const saved = this.loadPlannedLocation();
     this.hasExplicitPlannedLocation = saved !== null;
 
@@ -84,6 +93,7 @@ export class MapStateManager {
    * Get current state (readonly copy)
    */
   getState(): Readonly<IMapState> {
+    if (this.syncPlannedLocationScope()) this.notifyListeners();
     return { ...this.state };
   }
 
@@ -166,10 +176,15 @@ export class MapStateManager {
    * Subscribe to state changes
    */
   subscribe(listener: StateChangeListener): () => void {
+    if (this.syncPlannedLocationScope()) this.notifyListeners();
+    if (this.listeners.size === 0)
+      window.addEventListener('storage', this.onStorage);
     this.listeners.add(listener);
     // Return unsubscribe function
     return () => {
       this.listeners.delete(listener);
+      if (this.listeners.size === 0)
+        window.removeEventListener('storage', this.onStorage);
     };
   }
 
@@ -177,7 +192,8 @@ export class MapStateManager {
    * Notify all listeners of state change
    */
   private notifyListeners(): void {
-    this.listeners.forEach((listener) => listener(this.getState()));
+    this.syncPlannedLocationScope();
+    this.listeners.forEach((listener) => listener({ ...this.state }));
   }
 
   /**
@@ -192,6 +208,7 @@ export class MapStateManager {
    * Update current GPS location
    */
   setCurrentLocation(location: ILatLng): void {
+    this.syncPlannedLocationScope();
     this.state.currentLocation = location;
     this.state.gpsPermissionGranted = true;
     // If no custom planned location is set, keep planned = current GPS
@@ -206,6 +223,7 @@ export class MapStateManager {
    * Whether the user has set a custom planned location (not just GPS default)
    */
   hasCustomPlannedLocation(): boolean {
+    if (this.syncPlannedLocationScope()) this.notifyListeners();
     return this.hasExplicitPlannedLocation;
   }
 
@@ -213,6 +231,7 @@ export class MapStateManager {
    * Set a user-chosen planned location
    */
   setPlannedLocation(location: ILatLng, label: string): void {
+    this.syncPlannedLocationScope();
     this.hasExplicitPlannedLocation = true;
     this.state.plannedLocation = location;
     this.state.plannedLocationLabel = label;
@@ -224,6 +243,7 @@ export class MapStateManager {
    * Reset planned location back to current GPS location
    */
   resetPlannedLocationToCurrent(): void {
+    this.syncPlannedLocationScope();
     this.hasExplicitPlannedLocation = false;
     this.state.plannedLocation = this.state.currentLocation;
     this.state.plannedLocationLabel = this.state.currentLocation
@@ -238,6 +258,7 @@ export class MapStateManager {
    * The automatic campus fallback is never persisted as a rider's choice.
    */
   setGpsUnavailable(): void {
+    this.syncPlannedLocationScope();
     this.state.gpsPermissionGranted = false;
     this.state.currentLocation = null;
     // Default planned location to CMU Pittsburgh campus
@@ -252,16 +273,52 @@ export class MapStateManager {
    * Get the effective location for features (planned location or fallback)
    */
   getEffectiveLocation(): ILatLng | null {
+    if (this.syncPlannedLocationScope()) this.notifyListeners();
     return this.state.plannedLocation ?? this.state.currentLocation;
   }
 
   // ── localStorage persistence for planned location ──────────────────
-  private static PLANNED_LOCATION_KEY = 'scottygo_planned_location';
+  private static PLANNED_LOCATION_PREFIX = 'scottygo:planned-location:v2:';
+
+  private readPlannedLocationScope(): PlannedLocationScope {
+    try {
+      const token = getToken();
+      const userId = getSessionUserId(token);
+      if (userId) {
+        const identity = `user:${userId}`;
+        return {
+          identity,
+          key: `${MapStateManager.PLANNED_LOCATION_PREFIX}${encodeURIComponent(identity)}`
+        };
+      }
+      // Invalid/anonymous sessions can choose a place for this page only.
+      return { identity: `temporary:${token ?? ''}`, key: null };
+    } catch {
+      return { identity: 'unavailable', key: null };
+    }
+  }
+
+  /** Discard another account's private destination without altering GPS state. */
+  private syncPlannedLocationScope(): boolean {
+    const scope = this.readPlannedLocationScope();
+    if (scope.identity === this.plannedLocationScope.identity) return false;
+    this.plannedLocationScope = scope;
+    const saved = this.loadPlannedLocation();
+    this.hasExplicitPlannedLocation = saved !== null;
+    this.state.plannedLocation = saved?.location ??
+      this.state.currentLocation ?? { lat: 40.4433, lng: -79.9436 };
+    this.state.plannedLocationLabel =
+      saved?.label ??
+      (this.state.currentLocation ? 'Current Location' : 'CMU Campus');
+    return true;
+  }
 
   private savePlannedLocation(location: ILatLng, label: string): void {
+    const key = this.plannedLocationScope.key;
+    if (!key) return;
     try {
       localStorage.setItem(
-        MapStateManager.PLANNED_LOCATION_KEY,
+        key,
         JSON.stringify({ lat: location.lat, lng: location.lng, label })
       );
     } catch {
@@ -270,16 +327,21 @@ export class MapStateManager {
   }
 
   private clearSavedPlannedLocation(): void {
+    const key = this.plannedLocationScope.key;
+    if (!key) return;
     try {
-      localStorage.removeItem(MapStateManager.PLANNED_LOCATION_KEY);
+      localStorage.removeItem(key);
     } catch {
       // ignore
     }
   }
 
   private loadPlannedLocation(): { location: ILatLng; label: string } | null {
+    const key = this.plannedLocationScope.key;
+    if (!key) return null;
     try {
-      const raw = localStorage.getItem(MapStateManager.PLANNED_LOCATION_KEY);
+      // The old global key may belong to a different rider; never migrate it.
+      const raw = localStorage.getItem(key);
       if (!raw) return null;
       const data: unknown = JSON.parse(raw);
       if (!data || typeof data !== 'object') return null;

@@ -1,0 +1,265 @@
+rider-shortcuts {
+  display: block;
+}
+
+.map-popup__shortcut-actions .map-popup__action-btn {
+  min-height: 44px;
+  background: #f2f5f8;
+  color: #344456;
+}
+.map-popup__shortcut-actions .map-popup__action-btn[aria-pressed='true'] {
+  color: #a90e2e;
+  background: #fff0f3;
+}
+.map-popup__shortcut-actions .map-popup__action-btn:focus-visible {
+  outline: 3px solid #c30e37;
+  outline-offset: 2px;
+}
+.rider-shortcuts__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.rider-shortcuts__trigger .material-icons-outlined {
+  font-size: 19px;
+}
+.rider-shortcuts-dialog {
+  width: min(580px, calc(100vw - 32px));
+  max-height: min(78dvh, 720px);
+  box-sizing: border-box;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #dfe5ed;
+  border-radius: 22px;
+  background: #fff;
+  color: #17283c;
+  box-shadow: 0 20px 64px #0f172a40;
+  font-family: inherit;
+}
+.rider-shortcuts-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.rider-shortcuts-dialog::backdrop {
+  background: #0f172a55;
+}
+.rider-shortcuts__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 20px 12px;
+}
+.rider-shortcuts__header h2 {
+  margin: 0 0 4px;
+  font-size: 21px;
+}
+.rider-shortcuts__header p {
+  margin: 0;
+  color: #617083;
+  font-size: 13px;
+}
+.rider-shortcuts__close {
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: #f1f4f7;
+  color: #334155;
+  font-size: 28px;
+  cursor: pointer;
+}
+.rider-shortcuts__tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 0 14px;
+  border-bottom: 1px solid #e5eaf0;
+}
+.rider-shortcuts__tabs button {
+  min-height: 46px;
+  padding: 8px 3px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  color: #5f6e80;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.rider-shortcuts__tabs button[aria-selected='true'] {
+  color: #a90e2e;
+  border-bottom-color: #bc1234;
+}
+.rider-shortcuts__panel {
+  min-height: 110px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 18px 12px;
+}
+.rider-shortcuts__summary {
+  margin: 12px 0;
+  color: #657386;
+  font-size: 12px;
+}
+.rider-shortcuts__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  border-bottom: 1px solid #edf0f4;
+  padding: 7px 0;
+}
+.rider-shortcuts__primary {
+  flex: 1 1 180px;
+  min-width: 0;
+  min-height: 52px;
+  display: grid;
+  gap: 4px;
+  padding: 9px 6px;
+  border: 0;
+  border-radius: 9px;
+  text-align: left;
+  color: #17283c;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.rider-shortcuts__primary strong {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.rider-shortcuts__primary span {
+  color: #657386;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.rider-shortcuts__primary:hover {
+  background: #f4f6f8;
+}
+.rider-shortcuts__secondary,
+.rider-shortcuts__text-action {
+  min-height: 44px;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  color: #6a2840;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.rider-shortcuts__secondary:hover,
+.rider-shortcuts__text-action:hover {
+  background: #fbf0f3;
+}
+.rider-shortcuts__empty {
+  padding: 22px 6px;
+  text-align: center;
+}
+.rider-shortcuts__empty strong {
+  font-size: 16px;
+}
+.rider-shortcuts__empty p {
+  margin: 8px 0 0;
+  color: #657386;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.rider-shortcuts__form {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+.rider-shortcuts__form label {
+  display: block;
+  color: #344456;
+  font-size: 13px;
+  font-weight: 650;
+}
+.rider-shortcuts__form input {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid #cad3de;
+  border-radius: 8px;
+  color: #17283c;
+  background: #fff;
+  font: inherit;
+  font-size: 16px;
+}
+.rider-shortcuts__form p {
+  margin: 8px 0;
+  color: #657386;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.rider-shortcuts__save {
+  min-height: 44px;
+  margin-top: 10px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 9px;
+  color: #fff;
+  background: #b81032;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.rider-shortcuts__save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.rider-shortcuts__status {
+  margin: 0;
+  padding: 0 20px;
+  color: #794229;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.rider-shortcuts__status:not(:empty) {
+  padding-top: 8px;
+  padding-bottom: 6px;
+}
+.rider-shortcuts__privacy {
+  margin: 0;
+  padding: 12px 20px 16px;
+  border-top: 1px solid #edf0f4;
+  color: #657386;
+  background: #fafbfd;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.rider-shortcuts-dialog button:focus-visible,
+.rider-shortcuts-dialog input:focus-visible {
+  outline: 3px solid #c30e37;
+  outline-offset: 2px;
+}
+@media (max-width: 640px) {
+  .rider-shortcuts-dialog {
+    width: 100%;
+    max-width: 100%;
+    max-height: 82dvh;
+    margin: auto 0 0;
+    border-radius: 22px 22px 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .rider-shortcuts__header {
+    padding-top: 16px;
+  }
+  .rider-shortcuts__panel {
+    padding-inline: 14px;
+  }
+  .rider-shortcuts__primary {
+    flex-basis: 150px;
+  }
+}

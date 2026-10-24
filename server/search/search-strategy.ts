@@ -82,8 +82,13 @@ export class RouteSearchStrategy implements ISearchStrategy<IRoute[]> {
  */
 export class TransitSearchStrategy implements ISearchStrategy<ITransitSearchResult> {
   async search(query: string): Promise<ITransitSearchResult> {
+    const exactStopId = query.trim().toLowerCase();
     const queryTokens = toSearchTokens(query);
-    if (queryTokens.length === 0) return { routes: [], stops: [] };
+    if (
+      queryTokens.length === 0 &&
+      !/^[a-z0-9][a-z0-9_.:-]{0,119}$/.test(exactStopId)
+    )
+      return { routes: [], stops: [] };
 
     const [prtRoutes, cmuRoutes] = await Promise.all([
       TransitModel.getRoutes(),
@@ -96,9 +101,20 @@ export class TransitSearchStrategy implements ISearchStrategy<ITransitSearchResu
     const routes = [...prtRoutes, ...cmuRoutes]
       .filter((r) => matchesAllQueryTokens(queryTokens, `${r.id} ${r.name}`))
       .slice(0, MAX_TRANSIT_RESULTS);
-    const stops = uniqueStops([...gtfsService.getAllStops(), ...cmuStops.flat()])
-      .filter((s) =>
-        matchesAllQueryTokens(queryTokens, `${s.stopName} ${s.stopId}`)
+    const stops = uniqueStops([
+      ...gtfsService.getAllStops(),
+      ...cmuStops.flat()
+    ])
+      .filter(
+        (s) =>
+          s.stopId.toLowerCase() === exactStopId ||
+          matchesAllQueryTokens(queryTokens, `${s.stopName} ${s.stopId}`)
+      )
+      // A shared stop link must resolve even when many names or IDs contain it.
+      .sort(
+        (a, b) =>
+          Number(b.stopId.toLowerCase() === exactStopId) -
+          Number(a.stopId.toLowerCase() === exactStopId)
       )
       .slice(0, MAX_TRANSIT_RESULTS);
 
@@ -135,10 +151,7 @@ export class TransitAutocompleteStrategy implements ISearchStrategy<string[]> {
       ...routes.flatMap((route) => [route.id, route.name]),
       ...stops.flatMap((stop) => [stop.stopName, stop.stopId])
     ].map((label) => label.trim());
-    return uniqueLabels(labels, (label) => label).slice(
-      0,
-      MAX_TRANSIT_RESULTS
-    );
+    return uniqueLabels(labels, (label) => label).slice(0, MAX_TRANSIT_RESULTS);
   }
 }
 

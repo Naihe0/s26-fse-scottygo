@@ -6,12 +6,15 @@
 
 import type { IMapState } from './map-state';
 import { MapStateManager } from './map-state';
+import { parseStopLink } from '../utils/stop-link';
+import { validShortcutStopId } from '../utils/rider-shortcuts';
 
 export class URLSyncManager {
   private static instance: URLSyncManager;
   private stateManager: MapStateManager;
   private restoreListeners = new Set<() => void>();
   private lastRestoredURL = '';
+  private selectedStopId: string | null = null;
 
   private constructor() {
     this.stateManager = MapStateManager.getInstance();
@@ -115,7 +118,10 @@ export class URLSyncManager {
   /**
    * Build URL hash from current state
    */
-  private buildURL(state: Readonly<IMapState>): string {
+  private buildURL(
+    state: Readonly<IMapState>,
+    stopId: string | null = null
+  ): string {
     const params = new URLSearchParams();
 
     // Route filter
@@ -155,6 +161,7 @@ export class URLSyncManager {
       // Only add if not showing both (default)
       params.set('dir', directions.join(','));
     }
+    if (stopId) params.set('stop', stopId);
 
     const queryString = params.toString();
     return queryString ? `#/map?${queryString}` : '#/map';
@@ -167,12 +174,21 @@ export class URLSyncManager {
     state: Readonly<IMapState>,
     mode: 'replace' | 'push' = 'replace'
   ): void {
-    const newHash = this.buildURL(state);
+    // A deliberate filter navigation leaves a shared stop. Passive render and
+    // startup writes retain it until the rider changes their destination.
+    if (mode === 'push') this.selectedStopId = null;
+    const newHash = this.buildURL(state, this.selectedStopId);
     if (window.location.hash !== newHash) {
       if (mode === 'push') history.pushState(null, '', newHash);
       else history.replaceState(null, '', newHash);
     }
     this.lastRestoredURL = window.location.href;
+  }
+
+  /** Keep stop deep links separate from filter state and update this history entry. */
+  setSelectedStop(stopId: string | null): void {
+    this.selectedStopId = validShortcutStopId(stopId) ? stopId : null;
+    this.updateURL(this.stateManager.getState(), 'replace');
   }
 
   /** Serialize only public filters; never forward query strings or location data. */
@@ -185,6 +201,9 @@ export class URLSyncManager {
    */
   restoreStateFromURL(): Partial<IMapState> {
     this.lastRestoredURL = window.location.href;
+    // Set this before notifying state subscribers: they may synchronously
+    // canonicalize the URL while the shared stop is still being loaded.
+    this.selectedStopId = parseStopLink(window.location.hash);
     const urlState = this.parseURL();
     if (Object.keys(urlState).length > 0) {
       this.stateManager.updateFilters(urlState);

@@ -1,10 +1,14 @@
-/** Authentication carries filter data, never a user-controlled redirect URL. */
+import { parseStopLink } from './stop-link';
+
+/** Authentication carries public map state, never a user-controlled redirect URL. */
 export function sanitizeMapViewHash(hash: string): string | null {
   if (hash !== '#/map' && !hash.startsWith('#/map?')) return null;
   const source = new URLSearchParams(hash.slice(6));
   const filters = new URLSearchParams();
   const route = source.get('r');
   if (route && /^[A-Za-z0-9_-]{1,80}$/.test(route)) filters.set('r', route);
+  const stop = parseStopLink(hash);
+  if (stop) filters.set('stop', stop);
   const date = source.get('d');
   if (date && /^\d{8}$/.test(date)) {
     const year = Number(date.slice(0, 4));

@@ -38,6 +38,24 @@ Acceptance: route explorer, vehicle tracker, renderer and provider tests cover c
 
 ![Route exploration on a phone](wireframes/current/route-explorer-mobile.jpg)
 
+### Round 4 — accepted
+
+**My places** brings four compact sections to the map: **Saved stops**, **Places**, **Recent**, and **Views**. Stop cards offer **Save stop / Saved** and **Share stop** alongside directions. Open a saved stop to resolve its current transit record and arrivals. Saved places reuse a named planning origin; saved views restore route, transit-system and direction filters. Recent routes and stops provide a quick way back to an earlier selection.
+
+| Shortcut | Limit and behavior |
+| --- | --- |
+| Saved stops | 20 stops; open, share, or remove them. The card and saved list reflect the same state. |
+| Planning places | 8 named locations; save the current planning origin, reuse it, rename it, or remove it. |
+| Recent | The latest 8 distinct route/stop selections; reopen an item, remove it, or clear the list. |
+| Views | 8 named filter presets; save, apply, rename, or remove them. GPS, account credentials, and schedule dates/times are excluded. |
+| Share stop | A public `#/map?stop=...` link containing only the stop ID. It survives sign-in and supports a manual-copy fallback. |
+
+Shortcuts stay in this browser and are separated by immutable account ID. Changing a username preserves them; a different account does not inherit them. Named places contain locations the rider explicitly saves. Corrupt stored entries are discarded, and blocked storage retains changes for the current page session. Background history updates preserve a place-name or rename draft, its caret, and keyboard focus.
+
+Phone browser acceptance verified saving and applying a named CMU campus place, saving a **61C commute** view, reloading, clearing the route filter, and restoring that view. Stop **4407** was saved and shared; the local preview copied exactly `http://127.0.0.1:8180/#/map?stop=4407`, with no rider location or account data. Reload reopened that stop at zoom 16 and retained its map center despite an older saved planning origin. Recent reopening passed for stop 4407 and routes 61A/61C; the selected route and current stop card were restored correctly. Automated checks cover account isolation, bounded storage, draft preservation, cancelled/stale stop lookups, retry, and minimized-card restoration.
+
+![My places with saved commute shortcuts at phone width](wireframes/current/my-places-mobile.jpg)
+
 ## Map and route discovery
 
 After signing in, the map starts near your location when permission is available, or near CMU campus otherwise. Search by route number, route name, stop name, or stop ID. Selecting a result opens that route or stop without requiring you to find it manually on the map.
@@ -63,7 +81,9 @@ These interactions cover the main rider flows: find a route or stop, refine the 
 | Map key | Explain route, stop, bus, estimated-position, delayed-position, and personal-location symbols. |
 | Clear all filters | Restore default route/date/time/system/direction filters and close their panels. A chosen planning location is preserved. |
 | Copy view link | Share the current route and filters. Coordinates, planned locations, query strings, and account tokens are excluded. A manual-copy dialog appears if clipboard access fails. |
-| Browser Back / Forward | Restore the previous route/filter view. A shared view also survives the sign-in flow. |
+| My places | Open saved stops, named planning places, recent selections, and saved map-filter views. |
+| Share stop | Copy a link to one public stop; the receiving browser resolves the current record before opening its card. |
+| Browser Back / Forward | Restore the previous route/filter or shared-stop view. Shared views and stop links also survive the sign-in flow. |
 
 ### Current desktop map
 
@@ -92,6 +112,8 @@ The moving icon is an estimate, not a new GPS measurement. It does not change th
 ## Stops, arrivals, and walking
 
 Select a stop to see the serving routes, upcoming arrivals, delay indicators, and estimated walking time when a starting location is available. Predictions refresh while the stop card remains open. Empty results and unavailable data have separate messages; a scheduled route is not a promise that a live bus or arrival estimate currently exists.
+
+**Save stop** keeps the stop in My places; **Saved** removes it when tapped again. **Share stop** copies a public stop link. These controls remain usable after minimizing and restoring the card, including when a previous copy operation was still pending.
 
 Nearby-stop discovery uses the current or planned starting point and respects the selected filters. A rider can choose **Set a different location** through Places search, then return to **Current Location** later. A planned point helps with route discovery and walking directions, but does not grant GPS access or establish proximity for a bus report.
 

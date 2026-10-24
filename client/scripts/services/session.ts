@@ -8,6 +8,32 @@ export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
+/**
+ * Stable account namespace for browser-local preferences. This only reads the
+ * JWT claim; authenticated API requests still validate the token on the server.
+ */
+export function getSessionUserId(token: string | null): string | null {
+  if (!token) return null;
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3 || parts.some((part) => !part)) return null;
+    const encoded = parts[1];
+    const padded = encoded
+      .replace(/-/g, '+')
+      .replace(/_/g, '/')
+      .padEnd(Math.ceil(encoded.length / 4) * 4, '=');
+    const payload: unknown = JSON.parse(atob(padded));
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload))
+      return null;
+    const { userId } = payload as Record<string, unknown>;
+    return typeof userId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(userId)
+      ? userId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function getUsername(): string | null {
   return localStorage.getItem(USERNAME_KEY);
 }

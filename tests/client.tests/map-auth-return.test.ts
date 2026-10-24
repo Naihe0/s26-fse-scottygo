@@ -51,3 +51,20 @@ test('query redirect/token/location values are ignored when computing the map re
   expect(mapReturnPath()).toBe('/#/map?r=61C');
   expect(mapSignInPath()).toBe('/auth#/map?r=61C');
 });
+
+test('sign-in preserves a public stop link without private URL state', () => {
+  const hash =
+    '#/map?stop=cmu%3A123-4&lat=40&lng=-80&token=private&next=https://evil.example';
+  expect(sanitizeMapViewHash(hash)).toBe('#/map?stop=cmu%3A123-4');
+  expect(mapSignInPath(hash)).toBe('/auth#/map?stop=cmu%3A123-4');
+  expect(mapReturnPath(hash)).toBe('/#/map?stop=cmu%3A123-4');
+});
+
+test.each([
+  '#/map?stop=..%2Faccount',
+  '#/map?stop=https%3A%2F%2Fevil.example',
+  '#/map?stop=123&stop=456',
+  '#/map?stop=%3Cscript%3E'
+])('drops unsafe or ambiguous stop links: %s', (hash) => {
+  expect(sanitizeMapViewHash(hash)).toBe('#/map');
+});

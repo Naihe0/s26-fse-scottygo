@@ -25,14 +25,15 @@ const mockMap = {
 };
 const mockFilter = {
   setUserLocation: jest.fn(),
-  canRefreshLocation: () => false
+  invalidateView: jest.fn(),
+  canRefreshLocation: jest.fn(() => true)
 };
 const mockDirections = {
   isActive: false,
   updateUserLocation: jest.fn(),
   updatePlannedLocation: jest.fn()
 };
-const mockTracker = { updateUserLocation: jest.fn() };
+const mockTracker = { updateUserLocation: jest.fn(), cancelFollow: jest.fn() };
 jest.mock('../../client/scripts/services/auth.service', () => ({
   authService: {}
 }));
@@ -42,7 +43,7 @@ jest.mock('../../client/scripts/maps/google-map.provider', () => ({
   GoogleMapProvider: jest.fn(() => mockMap)
 }));
 jest.mock('../../client/scripts/state/url-sync', () => ({
-  URLSyncManager: { getInstance: () => ({}) }
+  URLSyncManager: { getInstance: () => ({ setSelectedStop: jest.fn() }) }
 }));
 jest.mock('../../client/scripts/controllers/filter-controller', () => ({
   FilterController: { getInstance: () => mockFilter }
@@ -103,6 +104,7 @@ beforeEach(() => {
   state.resetPlannedLocationToCurrent();
   state.setGpsUnavailable();
   jest.clearAllMocks();
+  mockFilter.canRefreshLocation.mockReturnValue(true);
   requestUserLocation(true);
 });
 afterEach(() => window.dispatchEvent(new Event('pagehide')));

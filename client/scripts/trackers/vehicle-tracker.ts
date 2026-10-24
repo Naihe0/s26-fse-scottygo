@@ -96,6 +96,7 @@ export class VehicleTracker {
   private followedPopup: HTMLElement | null = null;
   private followObserver: MutationObserver | null = null;
   private readonly panProviders = new WeakSet<IMapProvider>();
+  private onSelection: (vid: string) => void = () => undefined;
 
   private constructor() {
     this.stateManager = MapStateManager.getInstance();
@@ -173,6 +174,7 @@ export class VehicleTracker {
       !this.canRetain(vehicle)
     )
       return false;
+    this.onSelection(vid);
     this.showVehiclePopup(vid);
     const position = this.displayedPositions.get(vid) ?? {
       lat: vehicle.lat,
@@ -180,6 +182,11 @@ export class VehicleTracker {
     };
     focusNearby(this.mapProvider, position);
     return true;
+  }
+
+  /** Notify map navigation only after an explicitly selected bus is available. */
+  setSelectionCallback(callback: (vid: string) => void): void {
+    this.onSelection = callback;
   }
 
   /** An explicit map destination takes over from automatic bus centering. */
@@ -1424,6 +1431,7 @@ export class VehicleTracker {
     const vehicle = this.vehicleData.get(vid);
     if (!vehicle) return;
 
+    this.onSelection(vid);
     this.stopFollowing();
     this.openPopupVehicleId = vid;
 

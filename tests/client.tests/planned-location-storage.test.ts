@@ -1,13 +1,40 @@
 /** @jest-environment jsdom */
 
-const key = 'scottygo_planned_location';
+const scopedKey = (userId: string) =>
+  `scottygo:planned-location:v2:${encodeURIComponent(`user:${userId}`)}`;
+const key = scopedKey('account-a');
+const unsubscribers: Array<() => void> = [];
+function tokenFor(userId: unknown, username = 'alice') {
+  return `header.${btoa(JSON.stringify({ userId, username }))}.signature`;
+}
+function signIn(userId: string, username = 'alice') {
+  localStorage.setItem('token', tokenFor(userId, username));
+  localStorage.setItem('username', username);
+}
+function switchAccountInAnotherTab(userId: string | null) {
+  const oldValue = localStorage.getItem('token');
+  if (userId) signIn(userId);
+  else localStorage.removeItem('token');
+  window.dispatchEvent(
+    new StorageEvent('storage', {
+      key: 'token',
+      oldValue,
+      newValue: localStorage.getItem('token'),
+      storageArea: localStorage
+    })
+  );
+}
 
 beforeEach(() => {
   jest.resetModules();
   localStorage.clear();
+  signIn('account-a');
 });
 
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => {
+  unsubscribers.splice(0).forEach((unsubscribe) => unsubscribe());
+  jest.restoreAllMocks();
+});
 
 async function bootState() {
   const { MapStateManager } =
@@ -172,4 +199,169 @@ test('clearing route filters preserves explicit versus automatic planned-locatio
   expect(state.hasCustomPlannedLocation()).toBe(true);
   state.setCurrentLocation({ lat: 40.45, lng: -79.95 });
   expect(state.getEffectiveLocation()).toEqual({ lat: 40.4433, lng: -79.9436 });
+});
+
+test('never reads or migrates an old global private destination', async () => {
+  localStorage.setItem(
+    'scottygo_planned_location',
+    JSON.stringify({ lat: 40.4, lng: -79.9, label: 'Previous rider home' })
+  );
+  const state = await bootState();
+  expect(state.hasCustomPlannedLocation()).toBe(false);
+  expect(state.getState().plannedLocationLabel).toBe('CMU Campus');
+  expect(localStorage.getItem(key)).toBeNull();
+});
+
+test('reloading restores only the current immutable account destination', async () => {
+  const state = await bootState();
+  state.setPlannedLocation({ lat: 40.4, lng: -79.9 }, 'A home');
+  jest.resetModules();
+  expect((await bootState()).getState().plannedLocationLabel).toBe('A home');
+  signIn('account-b', 'alice');
+  jest.resetModules();
+  expect((await bootState()).hasCustomPlannedLocation()).toBe(false);
+  expect(localStorage.getItem(scopedKey('account-b'))).toBeNull();
+});
+
+test('renaming an account and refreshing its token retain the same private destination', async () => {
+  const state = await bootState();
+  state.setPlannedLocation({ lat: 40.4, lng: -79.9 }, 'A home');
+  signIn('account-a', 'alice-renamed');
+  expect(state.getState().plannedLocationLabel).toBe('A home');
+  expect(state.hasCustomPlannedLocation()).toBe(true);
+  expect(
+    Object.keys(localStorage).filter((item) =>
+      item.includes('planned-location')
+    )
+  ).toEqual([key]);
+  signIn('account-b', 'alice');
+  expect(state.hasCustomPlannedLocation()).toBe(false);
+});
+
+test('cross-tab account changes immediately restore the new plan and preserve GPS and filters', async () => {
+  const state = await bootState();
+  const current = { lat: 40.45, lng: -79.95 };
+  state.setCurrentLocation(current);
+  state.updateFilter('selectedRouteId', '61C');
+  state.setPlannedLocation({ lat: 40.4, lng: -79.9 }, 'A home');
+  localStorage.setItem(
+    scopedKey('account-b'),
+    JSON.stringify({ lat: 40.5, lng: -79.8, label: 'B work' })
+  );
+  const listener = jest.fn();
+  unsubscribers.push(state.subscribe(listener));
+  switchAccountInAnotherTab('account-b');
+  expect(listener).toHaveBeenCalledTimes(1);
+  expect(listener).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      currentLocation: current,
+      gpsPermissionGranted: true,
+      selectedRouteId: '61C',
+      plannedLocation: { lat: 40.5, lng: -79.8 },
+      plannedLocationLabel: 'B work'
+    })
+  );
+  switchAccountInAnotherTab('account-a');
+  expect(listener).toHaveBeenCalledTimes(2);
+  expect(state.getState().plannedLocationLabel).toBe('A home');
+});
+
+test('switching to an account without a plan resumes the existing GPS fix and subsequent fixes', async () => {
+  const state = await bootState();
+  state.setCurrentLocation({ lat: 40.45, lng: -79.95 });
+  state.setPlannedLocation({ lat: 40.4, lng: -79.9 }, 'A home');
+  const listener = jest.fn();
+  unsubscribers.push(state.subscribe(listener));
+  switchAccountInAnotherTab('account-b');
+  expect(listener).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      plannedLocation: { lat: 40.45, lng: -79.95 },
+      plannedLocationLabel: 'Current Location',
+      gpsPermissionGranted: true
+    })
+  );
+  expect(state.hasCustomPlannedLocation()).toBe(false);
+  state.setCurrentLocation({ lat: 40.46, lng: -79.96 });
+  expect(state.getEffectiveLocation()).toEqual({ lat: 40.46, lng: -79.96 });
+  expect(localStorage.getItem(scopedKey('account-b'))).toBeNull();
+});
+
+test('cross-tab logout clears private state and keeps the automatic campus fallback without GPS', async () => {
+  const state = await bootState();
+  state.setPlannedLocation({ lat: 40.4, lng: -79.9 }, 'A home');
+  const listener = jest.fn();
+  unsubscribers.push(state.subscribe(listener));
+  switchAccountInAnotherTab(null);
+  expect(listener).toHaveBeenCalledTimes(1);
+  expect(listener).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      currentLocation: null,
+      gpsPermissionGranted: false,
+      plannedLocationLabel: 'CMU Campus'
+    })
+  );
+  expect(state.hasCustomPlannedLocation()).toBe(false);
+});
+
+test('same-tab selection and reset write only the latest account even without storage events', async () => {
+  const state = await bootState();
+  state.setPlannedLocation({ lat: 40.4, lng: -79.9 }, 'A home');
+  signIn('account-b');
+  state.setPlannedLocation({ lat: 40.5, lng: -79.8 }, 'B work');
+  expect(JSON.parse(localStorage.getItem(key)!).label).toBe('A home');
+  expect(JSON.parse(localStorage.getItem(scopedKey('account-b'))!).label).toBe(
+    'B work'
+  );
+  state.resetPlannedLocationToCurrent();
+  expect(localStorage.getItem(scopedKey('account-b'))).toBeNull();
+  expect(JSON.parse(localStorage.getItem(key)!).label).toBe('A home');
+});
+
+test.each([
+  null,
+  'opaque-session',
+  'header.not-base64.signature',
+  `header.${btoa('null')}.signature`,
+  `header.${btoa('[]')}.signature`,
+  `header.${btoa('{}')}.signature`,
+  tokenFor(123),
+  tokenFor('account/a'),
+  tokenFor(''),
+  tokenFor('a'.repeat(129)),
+  `header.${btoa(JSON.stringify({ userId: 'account-a' }))}`
+])(
+  'missing or malformed account sessions never persist a planned address: %s',
+  async (token) => {
+    if (token === null) localStorage.removeItem('token');
+    else localStorage.setItem('token', token);
+    const state = await bootState();
+    state.setPlannedLocation({ lat: 40.4, lng: -79.9 }, 'Temporary place');
+    expect(state.getState().plannedLocationLabel).toBe('Temporary place');
+    expect(
+      Object.keys(localStorage).filter((item) => item.includes('planned'))
+    ).toEqual([]);
+    jest.resetModules();
+    expect((await bootState()).hasCustomPlannedLocation()).toBe(false);
+  }
+);
+
+test('two unrecognized sessions do not share temporary planned locations', async () => {
+  localStorage.setItem('token', 'opaque-a');
+  const state = await bootState();
+  state.setPlannedLocation({ lat: 40.4, lng: -79.9 }, 'Temporary home');
+  localStorage.setItem('token', 'opaque-b');
+  expect(state.getState().plannedLocationLabel).toBe('CMU Campus');
+  expect(state.hasCustomPlannedLocation()).toBe(false);
+});
+
+test('unsubscribing removes the account listener and subsequent reads still check account identity', async () => {
+  const state = await bootState();
+  state.setPlannedLocation({ lat: 40.4, lng: -79.9 }, 'A home');
+  const listener = jest.fn();
+  const unsubscribe = state.subscribe(listener);
+  unsubscribe();
+  switchAccountInAnotherTab('account-b');
+  expect(listener).not.toHaveBeenCalled();
+  expect(state.getState().plannedLocationLabel).toBe('CMU Campus');
+  expect(state.hasCustomPlannedLocation()).toBe(false);
 });
