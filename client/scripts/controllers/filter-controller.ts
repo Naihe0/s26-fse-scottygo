@@ -1083,6 +1083,14 @@ export class FilterController {
     header.appendChild(icon);
     header.appendChild(title);
     header.appendChild(subscribeBtn);
+    const explore = document.createElement('button');
+    explore.type = 'button';
+    explore.className = 'map-popup__subscribe';
+    explore.dataset.exploreRoute = 'true';
+    explore.setAttribute('aria-label', 'Explore stops and buses');
+    explore.title = 'Stops and buses';
+    explore.innerHTML = '<span class="material-icons-outlined" aria-hidden="true">format_list_bulleted</span>';
+    header.appendChild(explore);
     const headerSpacer = document.createElement('span');
     headerSpacer.className = 'map-popup__header-spacer';
     header.appendChild(headerSpacer);

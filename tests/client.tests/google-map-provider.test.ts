@@ -170,6 +170,27 @@ describe('Google Maps marker movement ownership', () => {
     expect(frames.size).toBe(0);
   });
 
+  test('user-pan callbacks subscribe to dragstart instead of programmatic center changes', async () => {
+    await provider.initialize(document.createElement('div'), {
+      apiKey: 'test',
+      lat: 40.44,
+      lon: -79.94,
+      defaultZoom: 14
+    });
+    const callback = jest.fn();
+    provider.onUserPan(callback);
+    expect(nativeMap.addListener).toHaveBeenCalledWith('dragstart', callback);
+    expect(nativeMap.addListener).not.toHaveBeenCalledWith(
+      'center_changed',
+      callback
+    );
+    const drag = nativeMap.addListener.mock.calls.find(
+      ([event]) => event === 'dragstart'
+    )![1];
+    drag();
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
   test('a direct position update cancels interpolated movement', () => {
     const { handle, marker } = addMarker();
     handle.animatePosition(destination);

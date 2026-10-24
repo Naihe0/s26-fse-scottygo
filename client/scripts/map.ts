@@ -32,6 +32,8 @@ import { showModal } from './utils/modal';
 import type { IRouteBellElement } from './components/route-bell';
 import './components/map-key';
 import './components/nearby-stops-panel';
+import './components/route-explorer';
+import type { RouteExplorer } from './components/route-explorer';
 import type { NearbyStopsPanel } from './components/nearby-stops-panel';
 import { dismissMapSelection } from './components/map-selection';
 import { createLocationIcon } from './utils/location-icon';
@@ -190,6 +192,14 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
       selectRoute(routeIds[0], true);
     });
 
+    const openStop = (stop: IStop) => {
+      if (directionsController.isActive) return;
+      vehicleTracker.cancelFollow();
+      mapNavigation.cancel();
+      mapProvider.setCenter({ lat: stop.lat, lng: stop.lon });
+      mapProvider.setZoom(Math.max(16, mapProvider.getZoom()));
+      return filterController.showStopDetailsFromSearch(stop);
+    };
     document.querySelector<NearbyStopsPanel>('nearby-stops-panel')?.configure({
       getCenter: () => mapProvider.getCenter(),
       getOrigin: () => ({
@@ -197,13 +207,29 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
         label: mapStateManager.getState().plannedLocationLabel ||
           (userLocation ? 'Your location' : 'CMU Campus · default area')
       }),
-      onSelectStop: (stop) => {
-        if (directionsController.isActive) return;
-        mapNavigation.cancel();
-        mapProvider.setCenter({ lat: stop.lat, lng: stop.lon });
-        mapProvider.setZoom(Math.max(16, mapProvider.getZoom()));
-        return filterController.showStopDetailsFromSearch(stop);
-      }
+      onSelectStop: openStop
+    });
+    document.querySelector<RouteExplorer>('route-explorer')?.configure({
+      getOrigin: () => getEffectiveLocation(),
+      onSelectStop: openStop
+    });
+    document.addEventListener('click', (event) => {
+      if (directionsController.isActive) return;
+      if (event.target instanceof Element && event.target.closest('[data-explore-route]'))
+        document.querySelector<RouteExplorer>('route-explorer')?.open();
+    });
+    document.addEventListener('selectBus', (event) => {
+      if (directionsController.isActive) return;
+      const { vid } = (event as CustomEvent<{vid: string}>).detail;
+      if (!vehicleTracker.selectVehicle(vid))
+        showToast('This bus is no longer visible. Refresh the route to try again.');
+    });
+    document.addEventListener('routeOverview', (event) => {
+      if (directionsController.isActive) return;
+      vehicleTracker.cancelFollow();
+      const { routeId } = (event as CustomEvent<{routeId: string}>).detail;
+      if (!routeRenderer.fitToVisibleRoute(routeId))
+        showToast('Route geometry is still loading. Try again shortly.');
     });
 
     vehicleTracker.initialize(mapProvider);
@@ -474,6 +500,7 @@ const registerTransitSearchEvents = (): void => {
   document.addEventListener('searchSelectStop', (e: Event) => {
     const { stop } = (e as CustomEvent).detail as { stop: IStop | undefined };
     if (!stop || directionsController.isActive) return;
+    vehicleTracker.cancelFollow();
     mapNavigation.cancel();
     mapProvider.setCenter({ lat: stop.lat, lng: stop.lon });
     void filterController.showStopDetailsFromSearch(stop);
@@ -507,6 +534,7 @@ const registerZoomAndMapEvents = (): void => {
   });
 
   document.addEventListener('recenter', () => {
+    vehicleTracker.cancelFollow();
     const state = mapStateManager.getState();
     if (
       !mapStateManager.hasCustomPlannedLocation() &&
@@ -1158,6 +1186,10 @@ function removeDirectionsPanel(): void {
 /** Disable all side filter controls while in directions mode. */
 function disableFilterControls(): void {
   closeAllPanels();
+  document.querySelector<NearbyStopsPanel>('nearby-stops-panel')?.close(false);
+  document.querySelector<RouteExplorer>('route-explorer')?.close(false);
+  document.querySelector('.rider-tools')?.setAttribute('inert', '');
+  vehicleTracker.cancelFollow();
   const controls = document.querySelector('map-controls');
   if (controls) controls.classList.add('directions-active');
   // Also disable toggle/filter panels from opening
@@ -1170,6 +1202,7 @@ function disableFilterControls(): void {
 
 /** Re-enable side filter controls after exiting directions mode. */
 function enableFilterControls(): void {
+  document.querySelector('.rider-tools')?.removeAttribute('inert');
   const controls = document.querySelector('map-controls');
   if (controls) controls.classList.remove('directions-active');
   const panels = getPanels();

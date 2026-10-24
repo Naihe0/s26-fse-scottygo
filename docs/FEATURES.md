@@ -28,6 +28,16 @@ Acceptance: 16 new behavior tests cover range filtering, sorting, cancellation, 
 
 ![Nearby stop comparison on a phone](wireframes/current/nearby-stops-mobile.jpg)
 
+### Round 3 — accepted
+
+**Explore route** provides a direction-specific stop browser, a nearest boarding stop from the current planning origin, a list of buses shown by the map filters, and **Show full route**. Stops are searchable and displayed alphabetically; the API does not provide a verified trip stop sequence. Selecting a list item centers its map object. A chosen stop remains marked even outside the current route layer.
+
+The bus card's **Follow** action keeps the displayed bus position centered at most once per second. Dragging pauses it; **Resume follow** explicitly starts it again. Closing/minimizing the card, selecting a different map target, entering directions, or hiding the bus stops follow mode. It follows the same reported/estimated marker and does not change GPS freshness.
+
+Acceptance: route explorer, vehicle tracker, renderer and provider tests cover cancellation, hidden-direction behavior, stopped follow state, stale selection, and viewport fitting. Phone browser checks used route 61C and bus 3518: switching to Outbound retained the Morewood search and returned stop 7117; list selection opened that bus; Follow → drag → Resume → Stop worked; route overview changed zoom 17 to 11. The selected-stop lifecycle also covers a platform outside the visible layers.
+
+![Route exploration on a phone](wireframes/current/route-explorer-mobile.jpg)
+
 ## Map and route discovery
 
 After signing in, the map starts near your location when permission is available, or near CMU campus otherwise. Search by route number, route name, stop name, or stop ID. Selecting a result opens that route or stop without requiring you to find it manually on the map.

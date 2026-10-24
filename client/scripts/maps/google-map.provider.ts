@@ -445,6 +445,10 @@ export class GoogleMapProvider implements IMapProvider {
     });
   }
 
+  onUserPan(callback: () => void): void {
+    this.map.addListener('dragstart', callback);
+  }
+
   fitBounds(bounds: {
     north: number;
     south: number;

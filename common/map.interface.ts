@@ -87,6 +87,8 @@ export interface IMapProvider {
   clearAll(): void;
   onMapClick(callback: (position: ILatLng) => void): void;
   onZoomChanged(callback: (zoom: number) => void): void;
+  /** User-originated map drags; programmatic centering must not emit this. */
+  onUserPan?(callback: () => void): void;
   fitBounds(bounds: {
     north: number;
     south: number;

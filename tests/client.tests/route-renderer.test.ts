@@ -217,6 +217,57 @@ describe('route and stop rendering', () => {
     );
   });
 
+  test('a search result outside drawn routes gets one selected marker and releases it on close', () => {
+    const clicked = jest.fn();
+    const selected = { ...stop('search-result'), routes: ['61C', '61D'] };
+    map.zoomTo(12);
+    renderer.setSelectedStop(selected, clicked);
+    expect(map.markers).toHaveLength(1);
+    const marker = map.markers[0].marker;
+    expect(marker.setVisible).not.toHaveBeenCalledWith(false);
+    expect(marker.setTitle).toHaveBeenLastCalledWith(
+      'Stop search-result · 61C · 61D'
+    );
+    expect(marker.setIcon).toHaveBeenLastCalledWith(
+      createStopIcon('#64748b', 12, { shared: true, selected: true })
+    );
+    marker.onClick.mock.calls[0][0]();
+    expect(clicked).toHaveBeenCalledWith(selected);
+    renderer.setSelectedStop(null);
+    expect(marker.remove).toHaveBeenCalledTimes(1);
+  });
+
+  test('selected stop ownership deduplicates normal markers and survives hidden routes until dismissed', () => {
+    const selected = { ...stop(), routes: ['61C'] };
+    renderer.renderStopMarkers('61C', [selected], 'OUTBOUND');
+    renderer.hideDirectionPolylines('61C', 'OUTBOUND');
+    expect(map.markers[0].marker.setVisible).toHaveBeenLastCalledWith(false);
+    renderer.setSelectedStop(selected, jest.fn());
+    expect(map.markers).toHaveLength(1);
+    expect(map.markers[0].marker.setVisible).toHaveBeenLastCalledWith(true);
+    renderer.hideRoute('61C');
+    expect(map.markers[0].marker.setVisible).toHaveBeenLastCalledWith(true);
+    renderer.setSelectedStop(null);
+    expect(map.markers[0].marker.setVisible).toHaveBeenLastCalledWith(false);
+    expect(map.markers[0].marker.remove).not.toHaveBeenCalled();
+    renderer.clearStopMarkers('61C_OUTBOUND');
+    expect(map.markers[0].marker.remove).toHaveBeenCalledTimes(1);
+  });
+
+  test('new route geometry can adopt an already selected marker without duplicating its platform', () => {
+    renderer.setSelectedStop(stop(), jest.fn());
+    renderer.renderStopMarkers('61C', [stop()], 'INBOUND');
+    renderer.setSelectedStop(stop('other', 40.45), jest.fn());
+    expect(map.markers).toHaveLength(2);
+    expect(map.markers[0].marker.remove).not.toHaveBeenCalled();
+    expect(map.markers[0].marker.setTitle).toHaveBeenLastCalledWith(
+      'Stop s1 · 61C'
+    );
+    renderer.setSelectedStop(null);
+    expect(map.markers[1].marker.remove).toHaveBeenCalledTimes(1);
+    expect(map.markers[0].marker.remove).not.toHaveBeenCalled();
+  });
+
   test('shared stop visibility follows its remaining visible route and direction owners', () => {
     const hiddenClick = jest.fn();
     const visibleClick = jest.fn();
@@ -448,6 +499,35 @@ describe('route and stop rendering', () => {
       east: -79.93,
       west: -79.95
     });
+  });
+
+  test('full-route overview fits only visible directions and returns false for absent geometry', () => {
+    renderer.renderRouteGeometry(
+      '61C',
+      [
+        { direction: 'INBOUND', path },
+        {
+          direction: 'OUTBOUND',
+          path: [
+            { lat: 41, lng: -80 },
+            { lat: 42, lng: -81 }
+          ]
+        }
+      ],
+      '#123456'
+    );
+    renderer.hideDirectionPolylines('61C', 'OUTBOUND');
+    expect(renderer.fitToVisibleRoute('61C')).toBe(true);
+    expect(map.provider.fitBounds).toHaveBeenLastCalledWith({
+      north: 40.44,
+      south: 40.44,
+      east: -79.93,
+      west: -79.95
+    });
+    renderer.hideRoute('61C');
+    expect(renderer.fitToVisibleRoute('61C')).toBe(false);
+    expect(renderer.fitToVisibleRoute('unknown')).toBe(false);
+    expect(map.provider.fitBounds).toHaveBeenCalledTimes(1);
   });
 
   test('late geometry replacement preserves hidden directions until explicitly cleared', () => {

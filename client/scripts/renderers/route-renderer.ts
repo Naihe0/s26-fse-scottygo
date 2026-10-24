@@ -9,6 +9,9 @@ import type {
 import type { IStop, IDetour } from '../../../common/transit.interface';
 import { createStopIcon, stopDotSize } from '../utils/stop-icon';
 
+const SELECTED_STOP_ROUTE = '__selected_stop__';
+const SELECTED_STOP_DIRECTION = 'SELECTED';
+
 interface GeoJSONGeometry {
   type: string;
   coordinates: number[][];
@@ -122,6 +125,27 @@ export class RouteRenderer {
   setFocusedStop(stopId: string | null): void {
     if (this.focusedStop === stopId) return;
     this.focusedStop = stopId;
+    this.refreshStops();
+  }
+
+  /** Keep an explicitly chosen stop visible even outside the currently drawn routes. */
+  setSelectedStop(
+    stop: IStop | null,
+    onStopClick?: (stop: IStop) => void
+  ): void {
+    this.focusedStop = stop?.stopId ?? null;
+    if (stop) {
+      this.renderStopMarkers(
+        SELECTED_STOP_ROUTE,
+        [stop],
+        SELECTED_STOP_DIRECTION,
+        onStopClick
+      );
+    } else {
+      this.clearStopMarkers(
+        `${SELECTED_STOP_ROUTE}_${SELECTED_STOP_DIRECTION}`
+      );
+    }
     this.refreshStops();
   }
 
@@ -395,13 +419,18 @@ export class RouteRenderer {
       stopKeys.add(stopKey);
       let shared = this.sharedStops.get(stopKey);
       if (!shared) {
+        const detail =
+          (routeId === 'NEARBY' || routeId === SELECTED_STOP_ROUTE
+            ? (stop.routes ?? [])
+            : [routeId]
+          ).join(' · ') || 'Bus stop';
         const icon = createStopIcon(
           this.getRouteColor(routeId),
           this.mapProvider.getZoom()
         );
         const marker = this.mapProvider.addMarker({
           position,
-          title: `${stop.stopName} · ${routeId === 'NEARBY' ? 'Bus stop' : routeId}`,
+          title: `${stop.stopName} · ${detail}`,
           icon: icon.url,
           iconAnchor: icon.anchor,
           iconSize: icon.size,
@@ -410,7 +439,7 @@ export class RouteRenderer {
             id: `stop:${stopKey}`,
             kind: 'stop',
             label: stop.stopName,
-            detail: routeId === 'NEARBY' ? 'Bus stop' : routeId
+            detail
           }
         });
         shared = {
@@ -449,8 +478,9 @@ export class RouteRenderer {
   private visibleStopOwners(shared: SharedStop): StopOwner[] {
     return [...shared.owners.values()].filter(
       (owner) =>
-        !this.hiddenRoutes.has(owner.routeId) &&
-        !this.hiddenDirections.get(owner.routeId)?.has(owner.direction)
+        owner.routeId === SELECTED_STOP_ROUTE ||
+        (!this.hiddenRoutes.has(owner.routeId) &&
+          !this.hiddenDirections.get(owner.routeId)?.has(owner.direction))
     );
   }
 
@@ -458,8 +488,14 @@ export class RouteRenderer {
     return [
       ...new Set(
         owners.flatMap((owner) => [
-          ...(owner.routeId !== 'NEARBY' ? [owner.routeId] : []),
-          ...(owner.direction === 'NEARBY' ? (owner.stop.routes ?? []) : [])
+          ...(owner.routeId !== 'NEARBY' &&
+          owner.routeId !== SELECTED_STOP_ROUTE
+            ? [owner.routeId]
+            : []),
+          ...(owner.direction === 'NEARBY' ||
+          owner.routeId === SELECTED_STOP_ROUTE
+            ? (owner.stop.routes ?? [])
+            : [])
         ])
       )
     ].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
@@ -638,5 +674,20 @@ export class RouteRenderer {
       )
     );
     if (bounds) this.mapProvider.fitBounds(bounds);
+  }
+
+  /** Fit only the route and detour directions currently visible to the rider. */
+  fitToVisibleRoute(routeId: string): boolean {
+    if (!this.mapProvider) return false;
+    const points = [this.routePolylines, this.detourPolylines].flatMap(
+      (overlays) =>
+        (overlays.get(routeId) ?? [])
+          .filter((segment) => this.segmentVisible(routeId, segment))
+          .flatMap((segment) => segment.path)
+    );
+    const bounds = this.boundsOf(points);
+    if (!bounds) return false;
+    this.mapProvider.fitBounds(bounds);
+    return true;
   }
 }

@@ -88,9 +88,24 @@ export class VehicleTracker {
   private currentZoom = 14;
   private openPopupVehicleId: string | null = null;
   private popupUpdatedInterval: number | null = null;
+  private followedVehicleId: string | null = null;
+  private followPaused = false;
+  private followedRouteContext: string | null = null;
+  private lastFollowTime = 0;
+  private lastFollowPosition: ILatLng | null = null;
+  private followedPopup: HTMLElement | null = null;
+  private followObserver: MutationObserver | null = null;
+  private readonly panProviders = new WeakSet<IMapProvider>();
 
   private constructor() {
     this.stateManager = MapStateManager.getInstance();
+    this.stateManager.subscribe?.((state) => {
+      if (
+        this.followedVehicleId &&
+        state.selectedRouteId !== this.followedRouteContext
+      )
+        this.stopFollowing();
+    });
     document.addEventListener('visibilitychange', () => this.resumeOrPause());
     window.addEventListener('pagehide', () => {
       this.pageSuspended = true;
@@ -124,6 +139,7 @@ export class VehicleTracker {
    */
   initialize(mapProvider: IMapProvider): void {
     this.stopAnimation();
+    this.stopFollowing();
     this.mapProvider = mapProvider;
     this.currentZoom = mapProvider.getZoom();
 
@@ -133,6 +149,42 @@ export class VehicleTracker {
       this.currentZoom = zoom;
       this.updateAllIcons();
     });
+    if (!this.panProviders.has(mapProvider)) {
+      this.panProviders.add(mapProvider);
+      mapProvider.onUserPan?.(() => {
+        if (this.mapProvider !== mapProvider || !this.followedVehicleId) return;
+        this.followPaused = true;
+        this.refreshFollowButton();
+      });
+    }
+  }
+
+  /** Use the same selection path for a marker and the route's bus list. */
+  selectVehicle(vid: string): boolean {
+    const vehicle = this.vehicleData.get(vid);
+    if (
+      !this.mapProvider ||
+      !vehicle ||
+      !this.vehicleMarkers.has(vid) ||
+      !this.isVehicleVisible(
+        vehicle,
+        this.stateManager.getState().selectedDirections
+      ) ||
+      !this.canRetain(vehicle)
+    )
+      return false;
+    this.showVehiclePopup(vid);
+    const position = this.displayedPositions.get(vid) ?? {
+      lat: vehicle.lat,
+      lng: vehicle.lon
+    };
+    focusNearby(this.mapProvider, position);
+    return true;
+  }
+
+  /** An explicit map destination takes over from automatic bus centering. */
+  cancelFollow(): void {
+    this.stopFollowing();
   }
 
   /** Shared cached geometry constrains estimates to the selected transit route. */
@@ -593,7 +645,8 @@ export class VehicleTracker {
           title: `Bus ${vehicle.vid}${vehicle.isDetoured ? ' (Detoured)' : ''}`,
           zIndex: 60,
           selection: {
-            id: `bus:${vehicle.vid}`, kind: 'bus',
+            id: `bus:${vehicle.vid}`,
+            kind: 'bus',
             label: `Bus ${vehicle.vid}`,
             detail: `${vehicle.routeId} · ${vehicle.direction || 'Shuttle'}`
           },
@@ -606,10 +659,7 @@ export class VehicleTracker {
 
         // Attach click handler for info popup
         marker.onClick(() => {
-          this.showVehiclePopup(vehicle.vid);
-          const position = this.displayedPositions.get(vehicle.vid);
-          if (position && this.mapProvider)
-            focusNearby(this.mapProvider, position);
+          this.selectVehicle(vehicle.vid);
         });
 
         this.vehicleMarkers.set(vehicle.vid, marker);
@@ -672,6 +722,7 @@ export class VehicleTracker {
       if (statusChanged) this.refreshMarkerTitle(vid);
       this.updateMarkerIcon(vid);
     });
+    this.updateFollowing();
   }
 
   private startAnimation(): void {
@@ -848,6 +899,7 @@ export class VehicleTracker {
     const vehicle = this.vehicleData.get(vid);
     if (!vehicle) return;
 
+    this.stopFollowing();
     prepareForNewPopup('bus');
     this.openPopupVehicleId = vid;
 
@@ -923,6 +975,10 @@ export class VehicleTracker {
       <button class="map-popup__action-btn map-popup__action-btn--check">
         <span class="material-icons-outlined">task_alt</span>
         <strong>Alerts</strong>
+      </button>
+      <button class="map-popup__action-btn map-popup__action-btn--follow" aria-label="Follow bus" aria-pressed="false" title="Keep this bus centered; drag the map to pause">
+        <span class="material-icons-outlined" aria-hidden="true">gps_fixed</span>
+        <strong>Follow</strong>
       </button>
     `;
     popup.appendChild(actions);
@@ -1025,6 +1081,7 @@ export class VehicleTracker {
   }
 
   private handlePopupMinimize(vid: string, vehicle: IVehicle): void {
+    this.stopFollowing();
     this.stopPopupUpdatedTicker();
     const label = `Bus ${vehicle.vid}`;
     const routeColor = this.getSelectedRouteColor();
@@ -1040,9 +1097,7 @@ export class VehicleTracker {
   private handlePopupReport(vid: string): void {
     const latestVehicle = this.vehicleData.get(vid);
     if (!latestVehicle || !this.isFresh(latestVehicle)) {
-      showToast(
-        'Wait for a fresh bus location before submitting a report.'
-      );
+      showToast('Wait for a fresh bus location before submitting a report.');
       return;
     }
     if (!this.userLocation) {
@@ -1106,8 +1161,7 @@ export class VehicleTracker {
     const closeBtn = popup.querySelector('.map-popup__close');
     if (closeBtn) {
       closeBtn.addEventListener('click', () => {
-        this.stopPopupUpdatedTicker();
-        dismissPopup('bus');
+        this.closeVehiclePopup();
       });
     }
 
@@ -1126,6 +1180,126 @@ export class VehicleTracker {
         this.handlePopupCheck(vehicle);
       });
     }
+    popup
+      .querySelector('.map-popup__action-btn--follow')
+      ?.addEventListener('click', () => {
+        if (this.followedVehicleId === vid && !this.followPaused)
+          this.stopFollowing();
+        else this.startFollowing(vid, popup);
+      });
+    this.refreshFollowButton();
+  }
+
+  private startFollowing(vid: string, popup: HTMLElement): void {
+    const vehicle = this.vehicleData.get(vid);
+    if (
+      !vehicle ||
+      !this.vehicleMarkers.has(vid) ||
+      !popup.isConnected ||
+      !this.isVehicleVisible(
+        vehicle,
+        this.stateManager.getState().selectedDirections
+      )
+    )
+      return;
+    this.stopFollowing();
+    this.followedVehicleId = vid;
+    this.followPaused = false;
+    this.followedRouteContext = this.stateManager.getState().selectedRouteId;
+    this.followedPopup = popup;
+    this.followObserver = new MutationObserver(() => {
+      if (
+        !this.followedPopup?.isConnected ||
+        document.getElementById(MAP_POPUP_ID) !== this.followedPopup
+      )
+        this.stopFollowing();
+    });
+    if (popup.parentElement)
+      this.followObserver.observe(popup.parentElement, { childList: true });
+    this.refreshFollowButton();
+    this.updateFollowing(true);
+  }
+
+  /** Dragging pauses until explicit resume; clearing/replacing the card cancels. */
+  private stopFollowing(): void {
+    this.followedVehicleId = null;
+    this.followPaused = false;
+    this.followedRouteContext = null;
+    this.lastFollowTime = 0;
+    this.lastFollowPosition = null;
+    this.followObserver?.disconnect();
+    this.followObserver = null;
+    this.followedPopup = null;
+    this.refreshFollowButton();
+  }
+
+  private refreshFollowButton(): void {
+    const button = document.querySelector<HTMLButtonElement>(
+      `#${MAP_POPUP_ID} .map-popup__action-btn--follow`
+    );
+    if (!button) return;
+    const following =
+      !!this.followedVehicleId &&
+      this.followedVehicleId === this.openPopupVehicleId;
+    button.setAttribute(
+      'aria-pressed',
+      String(following && !this.followPaused)
+    );
+    button.setAttribute(
+      'aria-label',
+      following
+        ? this.followPaused
+          ? 'Resume following bus'
+          : 'Stop following bus'
+        : 'Follow bus'
+    );
+    button.querySelector('strong')!.textContent = following
+      ? this.followPaused
+        ? 'Resume follow'
+        : 'Following'
+      : 'Follow';
+    button.title = following
+      ? this.followPaused
+        ? 'Following paused after moving the map'
+        : 'Following bus; drag the map to pause'
+      : 'Keep this bus centered; drag the map to pause';
+  }
+
+  private updateFollowing(force = false): void {
+    if (!this.followedVehicleId) return;
+    const vehicle = this.vehicleData.get(this.followedVehicleId);
+    if (
+      !vehicle ||
+      !this.vehicleMarkers.has(this.followedVehicleId) ||
+      !this.followedPopup?.isConnected ||
+      document.getElementById(MAP_POPUP_ID) !== this.followedPopup ||
+      !this.isVehicleVisible(
+        vehicle,
+        this.stateManager.getState().selectedDirections
+      )
+    ) {
+      this.stopFollowing();
+      return;
+    }
+    if (
+      this.followPaused ||
+      document.hidden ||
+      this.pageSuspended ||
+      !this.mapProvider
+    )
+      return;
+    const now = Date.now();
+    if (!force && now - this.lastFollowTime < 1000) return;
+    const position = this.displayedPositions.get(this.followedVehicleId);
+    if (
+      !position ||
+      (this.lastFollowPosition?.lat === position.lat &&
+        this.lastFollowPosition.lng === position.lng)
+    )
+      return;
+    this.lastFollowTime = now;
+    this.lastFollowPosition = { ...position };
+    this.mapProvider.setCenter(position);
   }
 
   private startPopupUpdatedTicker(): void {
@@ -1146,7 +1320,8 @@ export class VehicleTracker {
     if (!this.openPopupVehicleId) return;
 
     const popup = document.getElementById(MAP_POPUP_ID);
-    if (!popup) {
+    if (!popup?.querySelector('.bus-popup__content')) {
+      this.stopFollowing();
       this.openPopupVehicleId = null;
       this.stopPopupUpdatedTicker();
       return;
@@ -1249,6 +1424,7 @@ export class VehicleTracker {
     const vehicle = this.vehicleData.get(vid);
     if (!vehicle) return;
 
+    this.stopFollowing();
     this.openPopupVehicleId = vid;
 
     this.bindVehiclePopupActionButtons(popup, vid, vehicle);
@@ -1259,6 +1435,7 @@ export class VehicleTracker {
   }
 
   private closeVehiclePopup(): void {
+    this.stopFollowing();
     this.openPopupVehicleId = null;
     this.stopPopupUpdatedTicker();
     dismissPopup('bus');

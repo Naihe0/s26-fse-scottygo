@@ -159,10 +159,11 @@ export class TransitApiService {
     );
   }
 
-  async getStops(routeId: string, direction: string): Promise<IStop[] | null> {
+  async getStops(routeId: string, direction: string, signal?: AbortSignal): Promise<IStop[] | null> {
     return this.getPayload(
       `/transit/stops/${path(routeId)}?dir=${path(direction)}`,
-      'StopsRetrieved'
+      'StopsRetrieved',
+      { signal, timeout: REQUEST_TIMEOUT_MS }
     );
   }
 

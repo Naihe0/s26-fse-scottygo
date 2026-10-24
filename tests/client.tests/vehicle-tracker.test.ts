@@ -35,11 +35,12 @@ jest.mock('../../client/scripts/utils/map-focus', () => ({
 }));
 
 const mockSetActiveVehicles = jest.fn();
+const mockDirections = { inbound: true, outbound: true };
 jest.mock('../../client/scripts/state/map-state', () => ({
   MapStateManager: {
     getInstance: () => ({
       getState: () => ({
-        selectedDirections: { inbound: true, outbound: true }
+        selectedDirections: mockDirections
       }),
       setActiveVehicles: mockSetActiveVehicles
     })
@@ -96,6 +97,8 @@ function deferredVehicles() {
 describe('live vehicle freshness and polling lifecycle', () => {
   let tracker: VehicleTracker;
   let addMarker: jest.Mock<IMapMarker>;
+  let centerMap: jest.Mock;
+  let userPan: () => void;
   const frames = new Map<number, FrameRequestCallback>();
   let frameId = 0;
   let motionChanged: () => void = () => undefined;
@@ -140,6 +143,8 @@ describe('live vehicle freshness and polling lifecycle', () => {
     mockEstimates.clear();
     frames.clear();
     media.matches = false;
+    mockDirections.inbound = mockDirections.outbound = true;
+    centerMap = jest.fn();
     Object.defineProperty(window, 'matchMedia', {
       configurable: true,
       value: () => media
@@ -179,6 +184,10 @@ describe('live vehicle freshness and polling lifecycle', () => {
     tracker.initialize({
       getZoom: () => 14,
       onZoomChanged: jest.fn(),
+      onUserPan: (callback: () => void) => {
+        userPan = callback;
+      },
+      setCenter: centerMap,
       addMarker
     } as unknown as IMapProvider);
     window.dispatchEvent(new Event('pageshow'));
@@ -189,6 +198,157 @@ describe('live vehicle freshness and polling lifecycle', () => {
     expect(jest.getTimerCount()).toBe(0);
     jest.restoreAllMocks();
     jest.useRealTimers();
+  });
+
+  test('bus list selection reuses marker selection and rejects unknown or hidden vehicles', async () => {
+    const bus = { ...vehicle('list-bus'), direction: 'INBOUND' };
+    getVehicles.mockResolvedValue({ vehicles: [bus] });
+    tracker.startPolling('61C');
+    await tick();
+    expect(tracker.selectVehicle('list-bus')).toBe(true);
+    expect(document.querySelector('.map-popup__title')?.textContent).toBe(
+      'Bus list-bus'
+    );
+    expect(tracker.selectVehicle('missing')).toBe(false);
+    mockDirections.inbound = false;
+    tracker.refreshDirectionVisibility();
+    expect(tracker.selectVehicle('list-bus')).toBe(false);
+  });
+
+  test('explicit bus following centers displayed movement at most once each second', async () => {
+    const bus = vehicle('follow-bus');
+    mockEstimates.set(bus.vid, estimate(bus, 40.441));
+    getVehicles.mockResolvedValue({ vehicles: [bus] });
+    tracker.startPolling('61C');
+    await tick();
+    tracker.selectVehicle(bus.vid);
+    const follow = document.querySelector<HTMLButtonElement>(
+      '.map-popup__action-btn--follow'
+    )!;
+    expect(centerMap).not.toHaveBeenCalled();
+    follow.click();
+    expect(centerMap).toHaveBeenLastCalledWith({ lat: 40.441, lng: -79.94 });
+    expect(follow.getAttribute('aria-pressed')).toBe('true');
+    mockEstimates.set(bus.vid, estimate(bus, 40.442));
+    runFrame(34);
+    runFrame(68);
+    expect(centerMap).toHaveBeenCalledTimes(1);
+    await tick(1000);
+    expect(centerMap).toHaveBeenCalledTimes(2);
+    expect(centerMap).toHaveBeenLastCalledWith({ lat: 40.442, lng: -79.94 });
+    await tick(1000);
+    expect(centerMap).toHaveBeenCalledTimes(2);
+  });
+
+  test('dragging pauses bus following until explicit resume, and another click stops it', async () => {
+    const bus = vehicle('pan-bus');
+    mockEstimates.set(bus.vid, estimate(bus, 40.441));
+    getVehicles.mockResolvedValue({ vehicles: [bus] });
+    tracker.startPolling('61C');
+    await tick();
+    tracker.selectVehicle(bus.vid);
+    const follow = document.querySelector<HTMLButtonElement>(
+      '.map-popup__action-btn--follow'
+    )!;
+    follow.click();
+    userPan();
+    expect(follow.textContent).toContain('Resume follow');
+    expect(follow.getAttribute('aria-pressed')).toBe('false');
+    mockEstimates.set(bus.vid, estimate(bus, 40.443));
+    await tick(1000);
+    expect(centerMap).toHaveBeenCalledTimes(1);
+    follow.click();
+    expect(centerMap).toHaveBeenLastCalledWith({ lat: 40.443, lng: -79.94 });
+    expect(follow.getAttribute('aria-pressed')).toBe('true');
+    follow.click();
+    mockEstimates.set(bus.vid, estimate(bus, 40.444));
+    await tick(1000);
+    expect(centerMap).toHaveBeenCalledTimes(2);
+    expect(follow.getAttribute('aria-label')).toBe('Follow bus');
+  });
+
+  test.each(['.map-popup__close', '.map-popup__minimize'])(
+    '%s cancels following and never continues from a hidden card',
+    async (selector) => {
+      const bus = vehicle('dismiss-bus');
+      mockEstimates.set(bus.vid, estimate(bus, 40.441));
+      getVehicles.mockResolvedValue({ vehicles: [bus] });
+      tracker.startPolling('61C');
+      await tick();
+      tracker.selectVehicle(bus.vid);
+      document
+        .querySelector<HTMLButtonElement>('.map-popup__action-btn--follow')!
+        .click();
+      document.querySelector<HTMLButtonElement>(selector)!.click();
+      mockEstimates.set(bus.vid, estimate(bus, 40.443));
+      await tick(1000);
+      expect(centerMap).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  test('replacing the bus card with a stop card cancels following before the next movement', async () => {
+    const bus = vehicle('replaced');
+    mockEstimates.set(bus.vid, estimate(bus, 40.441));
+    getVehicles.mockResolvedValue({ vehicles: [bus] });
+    tracker.startPolling('61C');
+    await tick();
+    tracker.selectVehicle(bus.vid);
+    document
+      .querySelector<HTMLButtonElement>('.map-popup__action-btn--follow')!
+      .click();
+    document.getElementById('map-popup')!.remove();
+    const stopCard = document.createElement('div');
+    stopCard.id = 'map-popup';
+    stopCard.textContent = 'Station arrivals';
+    document.querySelector('.map-container')!.append(stopCard);
+    await Promise.resolve();
+    mockEstimates.set(bus.vid, estimate(bus, 40.443));
+    await tick(1000);
+    expect(centerMap).toHaveBeenCalledTimes(1);
+    expect(stopCard.textContent).toBe('Station arrivals');
+  });
+
+  test('filtering out the followed bus cancels tracking immediately', async () => {
+    const bus = { ...vehicle('hidden-follow'), direction: 'INBOUND' };
+    mockEstimates.set(bus.vid, estimate(bus, 40.441));
+    getVehicles.mockResolvedValue({ vehicles: [bus] });
+    tracker.startPolling('61C');
+    await tick();
+    tracker.selectVehicle(bus.vid);
+    const follow = document.querySelector<HTMLButtonElement>(
+      '.map-popup__action-btn--follow'
+    )!;
+    follow.click();
+    mockDirections.inbound = false;
+    tracker.refreshDirectionVisibility();
+    expect(follow.getAttribute('aria-pressed')).toBe('false');
+    mockEstimates.set(bus.vid, estimate(bus, 40.443));
+    await tick(1000);
+    expect(centerMap).toHaveBeenCalledTimes(1);
+  });
+
+  test('explicit map destinations cancel follow without closing the useful bus card', async () => {
+    const bus = vehicle('destination-change');
+    mockEstimates.set(bus.vid, estimate(bus, 40.441));
+    getVehicles.mockResolvedValue({ vehicles: [bus] });
+    tracker.startPolling('61C');
+    await tick();
+    tracker.selectVehicle(bus.vid);
+    document
+      .querySelector<HTMLButtonElement>('.map-popup__action-btn--follow')!
+      .click();
+    tracker.cancelFollow();
+    expect(document.querySelector('.map-popup__title')?.textContent).toBe(
+      'Bus destination-change'
+    );
+    mockEstimates.set(bus.vid, estimate(bus, 40.443));
+    await tick(1000);
+    expect(centerMap).toHaveBeenCalledTimes(1);
+    expect(
+      document
+        .querySelector('.map-popup__action-btn--follow')
+        ?.getAttribute('aria-pressed')
+    ).toBe('false');
   });
 
   test.each([false, true])(
