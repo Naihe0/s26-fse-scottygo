@@ -1,7 +1,7 @@
 /**
  * TripShot liveStatus Service
  *
- * Polls the TripShot liveStatus endpoint every 30 seconds and keeps CMU
+ * Polls the TripShot liveStatus endpoint every 15 seconds and keeps CMU
  * shuttle vehicles, arrivals, and per-route schedule summaries in memory.
  *
  * Data is keyed by TripShot route/stop UUIDs (CMURouteMetadata.routeId);
@@ -17,6 +17,7 @@ import {
   TsStopState
 } from './tripshot-api';
 import { PollingFeed } from './polling-feed';
+import { reconcileVehicleSnapshot } from './vehicle-snapshot';
 
 /** Ignore arrivals that are already stale beyond this grace period. */
 const STALE_PREDICTION_GRACE_MS = 60_000;
@@ -59,8 +60,9 @@ function append<T>(map: Map<string, T[]>, key: string, value: T): void {
 
 function awaitingStops(ride: TsLiveRide): AwaitingStop[] {
   return ride.stopStatus
-    .filter((status): status is Extract<TsStopState, { Awaiting: unknown }> =>
-      'Awaiting' in status
+    .filter(
+      (status): status is Extract<TsStopState, { Awaiting: unknown }> =>
+        'Awaiting' in status
     )
     .map((status) => status.Awaiting);
 }
@@ -155,10 +157,18 @@ function toVehicle(
     lon: status.location.lg,
     routeId: normalizedRouteId, // TripShot UUID; callers rewrite to CMU-n.
     heading:
-      typeof status.bearing === 'number' && Number.isFinite(status.bearing)
+      typeof status.bearing === 'number' &&
+      Number.isFinite(status.bearing) &&
+      status.bearing >= 0 &&
+      status.bearing <= 360
         ? status.bearing
         : undefined,
-    speed: status.speed,
+    speed:
+      typeof status.speed === 'number' &&
+      Number.isFinite(status.speed) &&
+      status.speed >= 0
+        ? status.speed
+        : undefined,
     source: 'live',
     lastUpdate: status.when,
     isDetoured: false
@@ -176,7 +186,11 @@ function addScheduleSpan(
   const day = new Date(start).getDay();
   const span = spans.get(normalizedRouteId);
   if (!span) {
-    spans.set(normalizedRouteId, { first: start, last: end, days: new Set([day]) });
+    spans.set(normalizedRouteId, {
+      first: start,
+      last: end,
+      days: new Set([day])
+    });
     return;
   }
   span.first = Math.min(span.first, start);
@@ -191,9 +205,30 @@ function addScheduleSpan(
  * GPS are skipped: their schedule no longer reflects where the bus is.
  */
 function buildIndex(data: TsLiveStatus, now: number): ILiveStatusIndex {
-  const statusByVehicle = new Map(
-    data.vehicleStatuses.map((status) => [status.vehicleId, status])
-  );
+  const statusByVehicle = new Map<string, TsLiveVehicleStatus>();
+  for (const status of data.vehicleStatuses) {
+    if (
+      !status.location ||
+      !Number.isFinite(status.location.lt) ||
+      !Number.isFinite(status.location.lg) ||
+      Math.abs(status.location.lt) > 90 ||
+      Math.abs(status.location.lg) > 180
+    )
+      continue;
+    const previous = statusByVehicle.get(status.vehicleId);
+    const previousTime = previous ? Date.parse(previous.when) : NaN;
+    const incomingTime = Date.parse(status.when);
+    const previousValid =
+      Number.isFinite(previousTime) && previousTime <= now + 5_000;
+    const incomingValid =
+      Number.isFinite(incomingTime) && incomingTime <= now + 5_000;
+    if (
+      !previous ||
+      !previousValid ||
+      (incomingValid && incomingTime > previousTime)
+    )
+      statusByVehicle.set(status.vehicleId, status);
+  }
   const vehicles = new Map<string, IVehicle[]>();
   const predictions = new Map<string, IPrediction[]>();
   const spans = new Map<string, ScheduleSpan>();
@@ -241,7 +276,7 @@ export class TripShotLiveStatusService extends PollingFeed<ILiveStatusIndex> {
   constructor() {
     super({
       name: 'TripShotLiveStatus',
-      intervalMs: 30_000,
+      intervalMs: 15_000,
       timeoutMs: 10_000,
       maxAgeMs: 90_000
     });
@@ -273,7 +308,13 @@ export class TripShotLiveStatusService extends PollingFeed<ILiveStatusIndex> {
   }
 
   protected applySnapshot(index: ILiveStatusIndex): void {
-    this.vehiclesByTsRouteId = index.vehicles;
+    const vehicles = reconcileVehicleSnapshot(
+      [...index.vehicles.values()].flat(),
+      [...this.vehiclesByTsRouteId.values()].flat()
+    );
+    this.vehiclesByTsRouteId = new Map();
+    for (const vehicle of vehicles)
+      append(this.vehiclesByTsRouteId, vehicle.routeId, vehicle);
     this.predictionsByStopId = index.predictions;
     this.scheduleByTsRouteId = index.schedules;
     let vehicleCount = 0;

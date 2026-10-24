@@ -15,11 +15,13 @@ import {
 import { showToast } from '../../client/scripts/utils/toast';
 import { focusNearby } from '../../client/scripts/utils/map-focus';
 import type { VehicleMotionEstimate } from '../../client/scripts/services/vehicle-motion';
+import { createBusIcon } from '../../client/scripts/utils/bus-icon';
 
 const mockEstimates = new Map<string, VehicleMotionEstimate>();
 const mockMotion = {
   setRouteGeometry: jest.fn(),
   ingest: jest.fn(),
+  rebaseDisplay: jest.fn(),
   pause: jest.fn((vid: string, position: { lat: number; lng: number }) => {
     const current = mockEstimates.get(vid);
     if (current)
@@ -53,11 +55,11 @@ jest.mock('../../client/scripts/services/transit-api.service', () => ({
   transitApiService: { getVehicles: jest.fn(), getHealth: jest.fn() }
 }));
 jest.mock('../../client/scripts/utils/bus-icon', () => ({
-  createBusIcon: () => ({
+  createBusIcon: jest.fn(() => ({
     url: 'mock-bus-icon',
     anchor: { x: 0, y: 0 },
     size: { width: 20, height: 20 }
-  })
+  }))
 }));
 jest.mock('../../client/scripts/utils/map-popup', () => ({
   ...jest.requireActual('../../client/scripts/utils/map-popup'),
@@ -143,6 +145,7 @@ describe('live vehicle freshness and polling lifecycle', () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-09-19T12:00:00Z'));
     jest.clearAllMocks();
+    mockMotion.ingest.mockReset();
     mockEstimates.clear();
     frames.clear();
     media.matches = false;
@@ -204,6 +207,129 @@ describe('live vehicle freshness and polling lifecycle', () => {
     jest.useRealTimers();
   });
 
+  test('vehicle response feed metadata renders without waiting for the health endpoint', async () => {
+    getHealth.mockReturnValue(new Promise(() => undefined));
+    getVehicles.mockResolvedValue({
+      vehicles: [vehicle('immediate')],
+      feed: {
+        healthy: true,
+        lastFetched: new Date().toISOString(),
+        consecutiveFailures: 0
+      }
+    });
+    tracker.startPolling('61C');
+    await tick();
+    expect(addMarker).toHaveBeenCalledTimes(1);
+    expect(getHealth).not.toHaveBeenCalled();
+    expect(status().dataset.state).toBe('live');
+  });
+
+  test('polling follows a five-second start cadence without adding response time', async () => {
+    const pending = deferredVehicles();
+    getVehicles.mockReturnValueOnce(pending.promise);
+    tracker.startPolling('61C');
+    await tick(2000);
+    pending.resolve({
+      vehicles: [],
+      feed: { healthy: true, lastFetched: null, consecutiveFailures: 0 }
+    });
+    await tick();
+    await tick(2999);
+    expect(getVehicles).toHaveBeenCalledTimes(1);
+    await tick(1);
+    expect(getVehicles).toHaveBeenCalledTimes(2);
+  });
+
+  test.each(['single', 'multiple'] as const)(
+    'reapplying the same %s route selection preserves its marker and motion history',
+    async (mode) => {
+      const bus = vehicle('persistent');
+      getVehicles.mockResolvedValue({ vehicles: [bus] });
+      const start = () =>
+        mode === 'single'
+          ? tracker.startPolling('61C')
+          : tracker.startMultiRoutePolling(['61C']);
+      start();
+      await tick();
+      const marker = addMarker.mock.results[0].value;
+      const clearCount = mockMotion.clear.mock.calls.length;
+      start();
+      await tick();
+      expect(addMarker).toHaveBeenCalledTimes(1);
+      expect(marker.remove).not.toHaveBeenCalled();
+      expect(mockMotion.clear).toHaveBeenCalledTimes(clearCount);
+    }
+  );
+
+  test('returning to the app starts from its last painted position instead of jumping back to GPS', async () => {
+    const bus = vehicle('background');
+    mockEstimates.set(bus.vid, estimate(bus, 40.441));
+    getVehicles.mockResolvedValue({ vehicles: [bus] });
+    tracker.startPolling('61C');
+    await tick();
+    const marker = addMarker.mock.results[0].value;
+    const painted = tracker.getVehiclePositions()[0];
+    jest.mocked(marker.setPosition).mockClear();
+    hidden(true);
+    await tick(10_000);
+    expect(marker.setPosition).not.toHaveBeenCalled();
+    expect(tracker.getVehiclePositions()[0]).toEqual(painted);
+    hidden(false);
+    await tick();
+    expect(mockMotion.rebaseDisplay).toHaveBeenCalledWith(
+      bus.vid,
+      painted,
+      180
+    );
+    expect(addMarker).toHaveBeenCalledTimes(1);
+  });
+
+  test('a rejected GPS spike cannot replace the reported card position or source age', async () => {
+    const bus = vehicle('accepted');
+    getVehicles.mockResolvedValue({ vehicles: [bus] });
+    tracker.startPolling('61C');
+    await tick();
+    const spike = {
+      ...bus,
+      lat: 41,
+      lastUpdate: new Date(Date.now() + 5000).toISOString()
+    };
+    mockMotion.ingest.mockReturnValue(false);
+    getVehicles.mockResolvedValue({ vehicles: [spike] });
+    await tick(5000);
+    expect(mockSetActiveVehicles).toHaveBeenLastCalledWith([bus]);
+    expect(tracker.getVehiclePositions()[0]).toEqual({
+      lat: bus.lat,
+      lng: bus.lon
+    });
+    tracker.selectVehicle(bus.vid);
+    expect(
+      document.querySelector('.bus-position-state')?.textContent
+    ).toContain('GPS 5s ago');
+  });
+
+  test('heading wraps by the short turn and remains still when the bus stops', async () => {
+    const bus = vehicle('heading');
+    mockEstimates.set(bus.vid, { ...estimate(bus, 40.441), heading: 350 });
+    getVehicles.mockResolvedValue({ vehicles: [bus] });
+    tracker.startPolling('61C');
+    await tick();
+    mockEstimates.set(bus.vid, { ...estimate(bus, 40.4411), heading: 10 });
+    await tick(34);
+    runFrame(34);
+    const turned = jest.mocked(createBusIcon).mock.lastCall![0].heading!;
+    expect(turned).toBeGreaterThanOrEqual(350);
+    expect(turned).toBeLessThan(360);
+    mockEstimates.set(bus.vid, {
+      ...estimate(bus, 40.4411),
+      heading: 190,
+      moving: false
+    });
+    await tick(34);
+    runFrame(68);
+    expect(jest.mocked(createBusIcon).mock.lastCall![0].heading).toBe(turned);
+  });
+
   test('bus list selection reuses marker selection and rejects unknown or hidden vehicles', async () => {
     const bus = { ...vehicle('list-bus'), direction: 'INBOUND' };
     getVehicles.mockResolvedValue({ vehicles: [bus] });
@@ -231,7 +357,7 @@ describe('live vehicle freshness and polling lifecycle', () => {
     jest.mocked(marker.onClick).mock.calls[0][0]();
     expect(selected).toHaveBeenCalledTimes(1);
     expect(selected).toHaveBeenCalledWith(bus.vid);
-    await tick(10_000);
+    await tick(5_000);
     expect(selected).toHaveBeenCalledTimes(1);
     document.querySelector<HTMLButtonElement>('.map-popup__minimize')!.click();
     restorePopup('bus');
@@ -483,7 +609,7 @@ describe('live vehicle freshness and polling lifecycle', () => {
       { lat: 40.442, lng: bus.lon }
     ]);
     mockEstimates.set(bus.vid, estimate(bus, 40.443));
-    await tick(10_000);
+    await tick(5_000);
     expect(frames.size).toBe(1);
   });
 
@@ -497,11 +623,11 @@ describe('live vehicle freshness and polling lifecycle', () => {
     const second = {
       ...first,
       lat: 40.442,
-      lastUpdate: new Date(Date.now() + 10_000).toISOString()
+      lastUpdate: new Date(Date.now() + 5_000).toISOString()
     };
     mockEstimates.set(first.vid, estimate(second, 40.4415, false));
     getVehicles.mockResolvedValueOnce({ vehicles: [second] });
-    await tick(10_000);
+    await tick(5_000);
     expect(marker.setPosition).toHaveBeenLastCalledWith({
       lat: 40.4415,
       lng: first.lon
@@ -612,6 +738,29 @@ describe('live vehicle freshness and polling lifecycle', () => {
     );
   });
 
+  test('a significant correction is explained briefly, then a frozen forecast asks for newer GPS', async () => {
+    const bus = { ...vehicle('explained'), speed: 6 };
+    mockEstimates.set(bus.vid, { ...estimate(bus, 40.441), correcting: true });
+    getVehicles.mockResolvedValue({ vehicles: [bus] });
+    tracker.startPolling('61C');
+    await tick();
+    tracker.selectVehicle(bus.vid);
+    expect(document.querySelector('.bus-position-state')?.textContent).toBe(
+      'Updating position · GPS 0s ago'
+    );
+    expect(
+      document.querySelector('.bus-position-explanation')?.textContent
+    ).toBe('Aligning with a newer GPS report.');
+    mockEstimates.set(bus.vid, { ...estimate(bus, 40.441), moving: false });
+    await tick(1000);
+    expect(document.querySelector('.bus-position-state')?.textContent).toBe(
+      'Waiting for GPS · GPS 1s ago'
+    );
+    expect(
+      document.querySelector('.bus-position-explanation')?.textContent
+    ).toContain('reached its limit');
+  });
+
   test('reduced motion immediately returns to raw position and cancels the frame loop', async () => {
     const bus = vehicle('quiet');
     mockEstimates.set(bus.vid, estimate(bus, 40.441));
@@ -630,6 +779,38 @@ describe('live vehicle freshness and polling lifecycle', () => {
     media.matches = false;
     motionChanged();
     expect(frames.size).toBe(1);
+  });
+
+  test('reduced motion updates a moving bus heading without animation and holds confirmed-stop bearings', async () => {
+    media.matches = true;
+    const bus = { ...vehicle('quiet-turn'), heading: 0, speed: 6 };
+    getVehicles.mockResolvedValue({ vehicles: [bus] });
+    tracker.startPolling('61C');
+    await tick();
+    const update = async (changes: Partial<IVehicle>) => {
+      getVehicles.mockResolvedValue({
+        vehicles: [
+          {
+            ...bus,
+            lat: bus.lat + 0.001,
+            ...changes,
+            lastUpdate: new Date(Date.now() + 5000).toISOString()
+          }
+        ]
+      });
+      await tick(5000);
+      expect(frames.size).toBe(0);
+      return jest.mocked(createBusIcon).mock.lastCall![0].heading;
+    };
+    expect(await update({ heading: 90 })).toBe(90);
+    expect(await update({ heading: 180, speed: 0 })).toBe(90);
+    expect(await update({ heading: 270, currentStatus: 'STOPPED_AT' })).toBe(
+      90
+    );
+    expect(
+      await update({ heading: 270, speed: undefined, lat: bus.lat + 0.002 })
+    ).toBe(270);
+    expect(addMarker).toHaveBeenCalledTimes(1);
   });
 
   test('an old frame cannot revive after route cleanup or replace the new loop', async () => {
@@ -661,7 +842,7 @@ describe('live vehicle freshness and polling lifecycle', () => {
     await tick();
     jest.mocked(addMarker.mock.results[0].value.onClick).mock.calls[0][0]();
     getHealth.mockResolvedValue(null);
-    await tick(10_000);
+    await tick(5_000);
     expect(frames.size).toBe(0);
     expect(tracker.getVehiclePositions()).toEqual([
       { lat: 40.441, lng: bus.lon }
@@ -675,7 +856,7 @@ describe('live vehicle freshness and polling lifecycle', () => {
       'Wait for a fresh bus location before submitting a report.'
     );
     expect(document.querySelector('.bus-position-state')?.textContent).toBe(
-      'Delayed · GPS 10s ago'
+      'Delayed · GPS 5s ago'
     );
   });
 
@@ -683,7 +864,7 @@ describe('live vehicle freshness and polling lifecycle', () => {
     getVehicles.mockResolvedValueOnce({ vehicles: [vehicle('gone')] });
     tracker.startPolling('61C');
     await tick();
-    await tick(10_000);
+    await tick(5_000);
     expect(addMarker.mock.results[0].value.remove).toHaveBeenCalledTimes(1);
     expect(status().dataset.state).toBe('empty');
     expect(mockMotion.remove).toHaveBeenCalledWith('gone');
@@ -722,7 +903,7 @@ describe('live vehicle freshness and polling lifecycle', () => {
     getVehicles.mockResolvedValueOnce({
       vehicles: [{ ...bus, lat: 40.46, speed: 0, currentStatus: 'STOPPED_AT' }]
     });
-    await tick(10_000);
+    await tick(5_000);
     expect(mockSetActiveVehicles).toHaveBeenLastCalledWith([
       expect.objectContaining({
         lat: bus.lat,
@@ -739,7 +920,7 @@ describe('live vehicle freshness and polling lifecycle', () => {
         }
       ]
     });
-    await tick(10_000);
+    await tick(5_000);
     expect(tracker.getVehiclePositions()).toEqual([
       { lat: bus.lat, lng: bus.lon }
     ]);
@@ -848,7 +1029,7 @@ describe('live vehicle freshness and polling lifecycle', () => {
     await tick();
     const marker = addMarker.mock.results[0].value;
     await tick(10_000);
-    expect(getVehicles).toHaveBeenCalledTimes(2);
+    expect(getVehicles).toHaveBeenCalledTimes(3);
     expect(marker.remove).not.toHaveBeenCalled();
     expect(status().dataset.state).toBe('delayed');
     jest.setSystemTime(Date.now() + 809_000);
@@ -925,7 +1106,7 @@ describe('live vehicle freshness and polling lifecycle', () => {
     getVehicles
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ vehicles: [vehicle('second', '71A')] });
-    await tick(10_000);
+    await tick(5_000);
     expect(tracker.getVehiclePositions()).toHaveLength(2);
     expect(status().dataset.state).toBe('partial');
   });
@@ -941,20 +1122,20 @@ describe('live vehicle freshness and polling lifecycle', () => {
     expect(signal.aborted).toBe(true);
     expect(status().dataset.state).toBe('unavailable');
     pending.resolve({ vehicles: [vehicle('too-late')] });
-    await tick(9_999);
+    await tick(999);
     expect(addMarker).not.toHaveBeenCalled();
     expect(getVehicles).toHaveBeenCalledTimes(1);
     await tick(1);
     expect(getVehicles).toHaveBeenCalledTimes(2);
   });
 
-  test('hiding the tab aborts work, retains raw positions and makes no background requests; resuming refreshes immediately', async () => {
+  test('hiding the tab aborts work, retains displayed positions and makes no background requests; resuming refreshes immediately', async () => {
     getVehicles.mockResolvedValueOnce({ vehicles: [vehicle('visible')] });
     tracker.startPolling('61C');
     await tick();
     const pending = deferredVehicles();
     getVehicles.mockReturnValueOnce(pending.promise);
-    await tick(10_000);
+    await tick(5_000);
     const signal = getVehicles.mock.calls[1][1]!;
     hidden(true);
     expect(signal.aborted).toBe(true);

@@ -13,6 +13,32 @@ describe('Transit queries distinguish no service from a failed request', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
+  test('vehicle queries preserve feed health from the same response', async () => {
+    const feed = {
+      healthy: false,
+      lastFetched: '2026-10-24T10:00:00Z',
+      consecutiveFailures: 2
+    };
+    http.get.mockResolvedValue({
+      status: 200,
+      data: { name: 'VehiclesLocated', payload: [], feed }
+    });
+    expect(await transitApiService.getVehicles('61C')).toEqual({
+      vehicles: [],
+      feed
+    });
+  });
+
+  test('vehicle queries remain compatible with older response envelopes', async () => {
+    http.get.mockResolvedValue({
+      status: 200,
+      data: { name: 'VehiclesLocated', payload: [] }
+    });
+    expect(await transitApiService.getVehicles('61C')).toEqual({
+      vehicles: []
+    });
+  });
+
   test.each(['stops', 'date/time'] as const)(
     '%s preserves successful empty data',
     async (kind) => {

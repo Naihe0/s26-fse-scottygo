@@ -82,12 +82,16 @@ Polling and socket-triggered refresh retain successful source snapshots on indep
 1. Start the HTTP server, memory monitor, GTFS load, and MongoDB connection. Readiness is separate from the listening socket.
 2. After MongoDB connects, enable memory persistence and seed `admin` only if absent. A reset requires explicit `ALLOW_DB_RESET=true` in DEV and is forbidden in PROD.
 3. Await static GTFS loading, populate transit caches, and release parsing memory before starting live pollers. Downloads/CSV parsing stream with bounded attempts and deadlines to limit startup memory.
-4. Poll PRT vehicle positions, PRT trip updates, and TripShot live status approximately every 30 seconds. Requests cannot overlap their own preceding poll. Stale data affects health; a repeated measurement does not acquire a new GPS timestamp.
+4. Poll PRT vehicle positions and TripShot live status every 15 seconds, and PRT trip updates every 30 seconds. Each source has one shared server poller; requests cannot overlap. Repeated failures back off to five minutes and respect longer provider `Retry-After` instructions. Stale data affects health; a repeated measurement retains its GPS timestamp.
 5. Poll PRT service alerts every five minutes and broadcast changed snapshots. Initialize the last-known reported bus conditions and refresh transit caches every 24 hours.
 
 PRT static GTFS supplies routes, stops, trip directions, schedules, and exact trip shape IDs. GTFS-RT supplies vehicles, arrivals, and alerts. TrueTime supplements route colors and detours; missing its optional key does not disable public GTFS feeds. CMU uses public TripShot live status and route metadata/geometry with static CSV support; it does **not** require the obsolete `TRIPSHOT_API_KEY` settings from early project drafts. Route IDs prefixed `CMU-` select that adapter. Stop UUIDs select CMU prediction data.
 
 GTFS service dates use Pittsburgh's timezone and handle schedule times extending after midnight. Date/time route filtering represents scheduled availability, not replay or future vehicle simulation. Keep arrival prediction data separate from marker-motion estimates.
+
+`vehicle-snapshot.ts` reconciles each successful fleet snapshot by vehicle ID. Older or unknown-time updates cannot replace a known accepted fix. Equal-timestamp copies retain coordinates and heading while admitting safety information such as a stopped status or zero speed. Invalid coordinates are excluded and future times beyond five seconds do not poison later acceptance. Missing vehicles leave the server snapshot; failed fetches retain the previous snapshot. CMU also validates reported speed/bearing and deduplicates repeated vehicle statuses and active rides.
+
+Vehicle responses include their source's `feed.healthy`, `feed.lastFetched`, and `feed.consecutiveFailures` alongside the original array payload, with `Cache-Control: no-store`. The five-second foreground browser loop consumes this metadata with the vehicles, removing the extra health-request delay. Hidden pages suspend polling; each source still sees one server poller regardless of connected browser count.
 
 ## Browser state and live movement
 
@@ -109,7 +113,7 @@ Provider GPS + source timestamp
   → smooth correction when a newer GPS measurement arrives
 ```
 
-The pure `vehicle-motion.ts` estimator has no Google Maps or timer dependency. It rejects duplicate/out-of-order observations as new motion evidence, checks implausible speed/jumps, resets on trip changes, and favors exact shape identity. Geometry compiles lazily; distance-along-path lookup avoids scanning the full route every frame. Correction and prediction update a single marker; raw positions remain available for report proximity and timestamps.
+The pure `vehicle-motion.ts` estimator has no Google Maps or timer dependency. It rejects duplicate/out-of-order observations as new motion evidence, quarantines an impossible jump until a second physically consistent report confirms relocation, resets on trip changes, and favors exact shape identity. Geometry compiles lazily; distance-along-path lookup avoids scanning the full route every frame. Repeated identical stop metadata leaves motion untouched; changed stops reuse compiled shapes and velocity history while replanning smoothly from the displayed point. Replacement shapes re-match the measured fix and reconcile from the displayed point, preserving source time. Correction and prediction update a single marker; raw positions remain available for report proximity and timestamps.
 
 The model estimates unique source-report cadence rather than assuming every HTTP poll is a new GPS observation. A delayed measurement can still support motion. Generic mapped stops slow passage; a feed-announced next stop creates an approach, six-second dwell, and departure phase when movement evidence supports it. Explicit `STOPPED_AT` or zero-speed evidence holds position. Missing/ambiguous geometry, invalid time, detours, terminals, and off-route fixes constrain extrapolation. A provider outage freezes the displayed point until a distinct source report arrives, avoiding a jump back to the old raw fix.
 
@@ -120,12 +124,27 @@ The model estimates unique source-report cadence rather than assuming every HTTP
 | Adaptive continuation | Starts with a 60-second cadence; the first observed interval replaces that prior, and later intervals use a 0.6 previous / 0.4 new weighted average, bounded to 10–60 seconds. Motion spans the expected next unique update, normally 30–90 seconds after receipt, then decays over 20–45 seconds. |
 | Absolute limits | No extrapolation beyond 180 seconds of source age or 3 km of route progress; earlier confidence/stop/terminal limits still apply. |
 | Freshness | Fresh through 30 seconds, aging through 90 seconds, stale afterward. Stale classification alone does not disable a still-supported estimate. |
-| Corrections | Slide the same marker for 600–4,000 ms along a shared shape, bounded to 3 km. Short off-shape corrections are bounded to 100 meters; implausible teleports snap rather than animating across the map. |
+| Corrections | Slide the same marker, usually for 600–4,000 ms and bounded to 3 km; use the shared shape when matched. Small forward-motion overshoots can converge more slowly without reversing along a cruise segment. Larger corrections retain an explicit correcting state. |
 | Duplicate polls | Never renew source age, velocity evidence, or the forecast deadline. |
+| GPS jitter | Repeated confirmed-stop fixes within 12 meters retain a stable resting point. Source travel pace constrains speed; slow traffic uses recent samples and positive slow-speed evidence to avoid alternating movement and freezes. |
 
 `VehicleTracker` owns polling, retention, source-health handling, accessible marker labels, and a shared animation loop. It does not create a second marker for predictions. Visible moving markers animate; hidden pages, reduced-motion mode, stationary vehicles, and exhausted estimates avoid unnecessary animation. Delayed markers have a 15-minute retention bound measured from the source timestamp, or first observation when the timestamp is unknown. Healthy authoritative removal clears the marker and its card. The UI keeps technical tracking information behind an explicit disclosure.
 
 Never refresh measurement age from receipt time, use a predicted coordinate to authorize a report, or infer missing protobuf speed/status/bearing as zero. Optional feed fields are decoded only when present and valid; unknown observation time is an empty string. The estimator's confidence is an internal heuristic, not a calibrated probability or a promise of location accuracy.
+
+### Prediction approach and evaluation
+
+The selected approach combines route matching, recent measured travel pace, reported speed, stop-aware phases, bounded extrapolation, and smooth reconciliation. It runs in the browser and requires no model service or online server training. A learned predictor would need representative historical trajectories with independently measured current-position ground truth and held-out routes/times; the available delayed GPS samples cannot establish that it predicts better. Local training remains a possible later experiment once that dataset exists.
+
+The [GTFS Realtime best practices](https://gtfs.org/documentation/realtime/realtime-best-practices/) recommend frequently refreshed feeds and vehicle observations no older than 90 seconds. [GTFS VehiclePosition definitions](https://gtfs.org/documentation/realtime/reference/#message-vehicleposition) distinguish the observation timestamp from feed creation time. These support separate transport health and per-bus GPS age; they do not establish per-second GPS availability from PRT or CMU.
+
+Run deterministic trajectory replay against the previous release with:
+
+```text
+node tools/vehicle-motion-replay.mjs --baseline 17a0421
+```
+
+The fixtures cover delayed reports, noisy slow traffic, isolated bad fixes, stops/restarts, turns and feed gaps. They compare position error, unwanted reverse travel and long frozen periods using known synthetic trajectories. Results measure behavior on those scenarios; they are not field-measured location accuracy. Unit tests additionally cover lifecycle, duplicate/out-of-order updates, outage handling and background restoration.
 
 ## Accounts, persistence, and events
 

@@ -17,6 +17,8 @@ export interface VehicleMotionEstimate {
   confidence: number;
   sourceTimestamp: number | null;
   ageMs: number | null;
+  /** Significant reconciliation, surfaced briefly on the selected bus card. */
+  correcting?: boolean;
 }
 
 export const VEHICLE_MOTION_LIMITS = {
@@ -85,6 +87,10 @@ interface Track {
   receivedAt: number;
   speed: number;
   observedSpeed: number | null;
+  speedSamples: number[];
+  idleSourceSeconds: number;
+  /** Suppresses small GPS wander while a measured stop is confirmed. */
+  restingPosition: ILatLng | null;
   quality: number;
   stopAt: number;
   cadenceMs: number;
@@ -100,6 +106,8 @@ interface Track {
   correction: {
     from: ILatLng;
     fromProgress: number | null;
+    targetProgress: number | null;
+    distance: number;
     startedAt: number;
     duration: number;
   } | null;
@@ -281,6 +289,10 @@ function stopProgress(
 export class VehicleMotionEstimator {
   private readonly routes = new Map<string, RouteGeometry>();
   private readonly tracks = new Map<string, Track>();
+  private readonly suspects = new Map<
+    string,
+    { vehicle: IVehicle; timestamp: number }
+  >();
 
   setRouteGeometry(
     routeId: string,
@@ -288,34 +300,80 @@ export class VehicleMotionEstimator {
     stops: IStop[]
   ): void {
     const existing = this.routes.get(routeId);
-    if (existing?.patterns === patterns && existing.stops === stops) return;
-    // Bulk registration is O(1). Compile only shapes an observed vehicle needs.
-    this.routes.set(routeId, {
-      patterns,
-      stops,
-      compiled: new Map(),
-      stopPositions: null
-    });
-    // Changing geometry invalidates path continuity, not the observed GPS fix.
+    const samePatterns = existing?.patterns === patterns;
+    const sameStops =
+      existing &&
+      (existing.stops === stops ||
+        (existing.stops.length === stops.length &&
+          existing.stops.every((stop, index) => {
+            const next = stops[index];
+            return (
+              stop.stopId === next.stopId &&
+              stop.lat === next.lat &&
+              stop.lon === next.lon
+            );
+          })));
+    // Filter hydration creates new arrays even when the spatial data is unchanged.
+    // Do not restart a moving bus or its ongoing correction for that bookkeeping.
+    if (samePatterns && sameStops) return;
+    const now = Date.now();
+    const displays = new Map<string, VehicleMotionEstimate>();
+    for (const [vid, track] of this.tracks) {
+      if (track.vehicle.routeId === routeId)
+        displays.set(vid, this.estimate(vid, now)!);
+    }
+    if (samePatterns && existing) {
+      // Stops can arrive after the shape. Keep compiled path identity so the
+      // next GPS fix still has a usable velocity/continuity history.
+      existing.stops = stops;
+      existing.stopPositions = null;
+      for (const pattern of existing.compiled.values()) pattern?.stops.clear();
+    } else {
+      // Compile replacement shapes lazily, only for observed vehicles.
+      this.routes.set(routeId, {
+        patterns,
+        stops,
+        compiled: new Map(),
+        stopPositions: null
+      });
+    }
     for (const track of this.tracks.values()) {
       if (track.vehicle.routeId !== routeId) continue;
-      track.sample.match = this.match(
-        track.vehicle,
-        track.sample.position,
-        null,
-        undefined
-      );
-      track.speed = 0;
-      track.observedSpeed = null;
+      const previousDisplay = displays.get(track.vehicle.vid)!;
+      const previousProgress = samePatterns
+        ? this.displayedProgress(track, previousDisplay.position, now)
+        : null;
+      if (!samePatterns) {
+        // A different path invalidates velocity evidence, not the measured fix.
+        track.sample.match = this.match(
+          track.vehicle,
+          track.sample.position,
+          null,
+          undefined
+        );
+        track.speed = 0;
+        track.observedSpeed = null;
+        track.speedSamples = [];
+        if (track.paused) track.paused.progress = null;
+      }
       track.correction = null;
       track.phases = [];
-      if (track.paused) track.paused.progress = null;
+      if (track.sample.match && track.speed > 0) this.planMotion(track);
+      if (!track.paused)
+        this.startCorrection(
+          track,
+          previousDisplay,
+          samePatterns
+            ? previousProgress
+            : this.displayedProgress(track, previousDisplay.position, now),
+          now
+        );
     }
   }
 
-  ingest(vehicle: IVehicle, receivedAt = Date.now()): void {
+  ingest(vehicle: IVehicle, receivedAt = Date.now()): boolean {
     const position = { lat: vehicle.lat, lng: vehicle.lon };
-    if (!validPosition(position) || !Number.isFinite(receivedAt)) return;
+    if (!validPosition(position) || !Number.isFinite(receivedAt)) return false;
     const parsedTime = Date.parse(vehicle.lastUpdate);
     const timestamp =
       Number.isFinite(parsedTime) && parsedTime <= receivedAt + 5_000
@@ -325,10 +383,9 @@ export class VehicleMotionEstimator {
     if (
       previous?.sample.timestamp !== null &&
       previous?.sample.timestamp !== undefined &&
-      timestamp !== null &&
-      timestamp < previous.sample.timestamp
+      (timestamp === null || timestamp < previous.sample.timestamp)
     )
-      return;
+      return false;
 
     const sameJourney =
       !!previous &&
@@ -341,19 +398,28 @@ export class VehicleMotionEstimator {
       timestamp !== null &&
       timestamp === previous.sample.timestamp
     ) {
-      if (previous.paused) return;
+      if (previous.paused) return true;
       // Repeated HTTP snapshots must not create motion or renew source freshness.
       // New safety information can stop existing prediction, never accelerate it.
       if (
-        vehicle.currentStatus === 'STOPPED_AT' ||
-        vehicle.isDetoured ||
-        vehicle.speed === 0
+        previous.speed > 0 &&
+        (vehicle.currentStatus === 'STOPPED_AT' ||
+          vehicle.isDetoured ||
+          vehicle.speed === 0)
       ) {
         const previousDisplay = this.estimate(vehicle.vid, receivedAt)!;
-        const previousProgress = previous.sample.match
-          ? this.progress(previous, receivedAt)
-          : null;
+        const previousProgress = this.displayedProgress(
+          previous,
+          previousDisplay.position,
+          receivedAt
+        );
         previous.speed = 0;
+        previous.vehicle = {
+          ...previous.vehicle,
+          currentStatus: vehicle.currentStatus,
+          isDetoured: vehicle.isDetoured,
+          speed: vehicle.speed
+        };
         previous.correction = null;
         this.startCorrection(
           previous,
@@ -362,14 +428,14 @@ export class VehicleMotionEstimator {
           receivedAt
         );
       }
-      return;
+      return true;
     }
 
     const elapsed =
       sameJourney && timestamp !== null && previous.sample.timestamp !== null
         ? (timestamp - previous.sample.timestamp) / 1_000
         : null;
-    const usableHistory = elapsed !== null && elapsed >= 2 && elapsed <= 120;
+    const usableHistory = elapsed !== null && elapsed >= 0.5 && elapsed <= 120;
     const rawDistance =
       elapsed !== null && elapsed > 0 && previous
         ? distance(previous!.sample.position, position)
@@ -379,6 +445,33 @@ export class VehicleMotionEstimator {
     const teleport =
       impliedSpeed !== null &&
       impliedSpeed > VEHICLE_MOTION_LIMITS.maximumObservedSpeed;
+    if (teleport && timestamp !== null) {
+      const suspect = this.suspects.get(vehicle.vid);
+      const interval = suspect ? (timestamp - suspect.timestamp) / 1_000 : 0;
+      const corroborated =
+        suspect &&
+        interval >= 2 &&
+        interval <= 60 &&
+        suspect.vehicle.tripId === vehicle.tripId &&
+        suspect.vehicle.routeId === vehicle.routeId &&
+        distance(
+          { lat: suspect.vehicle.lat, lng: suspect.vehicle.lon },
+          position
+        ) /
+          interval <=
+          VEHICLE_MOTION_LIMITS.maximumObservedSpeed;
+      // A single corrupt fix must not fling the bus away and then back. A
+      // second distinct, physically consistent fix can confirm a relocation.
+      if (!corroborated) {
+        if (!suspect || timestamp > suspect.timestamp)
+          this.suspects.set(vehicle.vid, {
+            vehicle: { ...vehicle },
+            timestamp
+          });
+        return false;
+      }
+    }
+    this.suspects.delete(vehicle.vid);
     const history = usableHistory && !teleport ? (previous ?? null) : null;
     const inferredHeading =
       rawDistance >= 8 && history
@@ -391,6 +484,9 @@ export class VehicleMotionEstimator {
       receivedAt,
       speed: 0,
       observedSpeed: null,
+      speedSamples: history ? [...history.speedSamples] : [],
+      idleSourceSeconds: 0,
+      restingPosition: null,
       quality: 0,
       stopAt: match?.pattern.length ?? 0,
       cadenceMs: history
@@ -417,9 +513,27 @@ export class VehicleMotionEstimator {
     this.tracks.set(vehicle.vid, track);
 
     this.configureMotion(track, history, elapsed ?? 0, rawDistance, !previous);
+    const confirmedStop =
+      vehicle.currentStatus === 'STOPPED_AT' || vehicle.speed === 0;
+    const previouslyStopped =
+      previous?.vehicle.currentStatus === 'STOPPED_AT' ||
+      previous?.vehicle.speed === 0;
     if (
       sameJourney &&
-      !teleport &&
+      confirmedStop &&
+      previouslyStopped &&
+      previousDisplay &&
+      distance(
+        previous.restingPosition ?? previous.sample.position,
+        position
+      ) <= 12
+    ) {
+      track.restingPosition = previous.restingPosition ?? {
+        ...previous.sample.position
+      };
+    }
+    if (
+      sameJourney &&
       previous &&
       timestamp !== null &&
       previous.sample.timestamp !== null
@@ -429,18 +543,21 @@ export class VehicleMotionEstimator {
         previousMatch &&
         match &&
         previousMatch.pattern === match.pattern &&
-        previousMatch.distance <= 15 &&
-        match.distance <= 15;
+        previousMatch.distance <= 35 &&
+        match.distance <= 35;
       this.startCorrection(
         track,
         previousDisplay!,
         samePattern
-          ? previous.paused
-            ? previous.paused.progress
-            : this.progress(previous, receivedAt)
+          ? this.displayedProgress(
+              previous,
+              previousDisplay!.position,
+              receivedAt
+            )
           : null
       );
     }
+    return true;
   }
   estimate(vid: string, now = Date.now()): VehicleMotionEstimate | null {
     const track = this.tracks.get(vid);
@@ -458,7 +575,9 @@ export class VehicleMotionEstimator {
           : 'fresh';
     const rawPosition = { ...track.sample.position };
     const result: VehicleMotionEstimate = {
-      position: rawPosition,
+      position: track.restingPosition
+        ? { ...track.restingPosition }
+        : rawPosition,
       rawPosition: { ...rawPosition },
       heading: normalizedHeading(track.vehicle.heading),
       estimated: false,
@@ -496,17 +615,20 @@ export class VehicleMotionEstimator {
     }
     const correction = track.correction;
     if (correction && clock < correction.startedAt + correction.duration) {
-      const fraction = clamp(
+      result.correcting = correction.distance >= 15;
+      const linear = clamp(
         (clock - correction.startedAt) / correction.duration,
         0,
         1
       );
+      const fraction = linear * linear * (3 - 2 * linear);
       if (correction.fromProgress !== null && match) {
         const targetProgress = this.progress(track, clock);
         const intermediate = pointAt(
           match.pattern,
-          correction.fromProgress +
-            (targetProgress - correction.fromProgress) * fraction
+          targetProgress +
+            (correction.fromProgress - correction.targetProgress!) *
+              (1 - fraction)
         );
         const startPoint = pointAt(
           match.pattern,
@@ -601,11 +723,67 @@ export class VehicleMotionEstimator {
 
   remove(vid: string): void {
     this.tracks.delete(vid);
+    this.suspects.delete(vid);
   }
 
   /** Clear vehicles between selections without refetching cached route geometry. */
   clear(): void {
     this.tracks.clear();
+    this.suspects.clear();
+  }
+
+  /** Resume from the point actually painted before background suspension. */
+  rebaseDisplay(
+    vid: string,
+    position: ILatLng,
+    heading?: number,
+    now = Date.now()
+  ): void {
+    const track = this.tracks.get(vid);
+    if (!track || track.paused || !validPosition(position)) return;
+    const target = this.estimate(vid, now)!;
+    const fromProgress = this.displayedProgress(track, position, now);
+    track.correction = null;
+    this.startCorrection(
+      track,
+      { ...target, position, heading },
+      fromProgress,
+      now
+    );
+  }
+
+  private displayedProgress(
+    track: Track,
+    position: ILatLng,
+    now: number
+  ): number | null {
+    if (track.paused) return track.paused.progress;
+    const match = track.sample.match;
+    if (!match) return null;
+    let expected = this.progress(track, now);
+    const correction = track.correction;
+    if (
+      correction?.fromProgress !== null &&
+      correction?.fromProgress !== undefined &&
+      now < correction.startedAt + correction.duration
+    ) {
+      const t = clamp((now - correction.startedAt) / correction.duration, 0, 1);
+      expected +=
+        (correction.fromProgress - correction.targetProgress!) *
+        (1 - t * t * (3 - 2 * t));
+    }
+    const candidates = match.pattern.segments
+      .filter((segment) => nearSegment(position, segment, 35))
+      .map((segment) => project(position, segment))
+      .filter((candidate) => candidate.distance <= 35)
+      .sort(
+        (a, b) =>
+          a.distance +
+          Math.abs(a.progress - expected) * 0.1 -
+          b.distance -
+          Math.abs(b.progress - expected) * 0.1
+      );
+    return candidates[0]?.progress ?? null;
   }
 
   private startCorrection(
@@ -623,16 +801,36 @@ export class VehicleMotionEstimator {
     );
     if (
       correctionDistance < 1 ||
-      correctionDistance >
-        (fromProgress === null ? 100 : VEHICLE_MOTION_LIMITS.maximumDistance)
+      correctionDistance > VEHICLE_MOTION_LIMITS.maximumDistance
     )
       return;
     track.correction = {
       from: { ...previousDisplay.position },
       fromProgress,
+      targetProgress: fromProgress === null ? null : this.progress(track, now),
+      distance: correctionDistance,
       startedAt: now,
       duration: clamp(correctionDistance * 20, 600, 4_000)
     };
+    const ahead =
+      fromProgress === null ? 0 : fromProgress - this.progress(track, now);
+    if (ahead > 0 && ahead <= 60 && track.speed > 0.7 && target.moving) {
+      // Catch a slightly overpredicted moving bus by slowing down. The maximum
+      // derivative of smoothstep is 1.5; this duration avoids reversing it.
+      const duration = Math.max(
+        track.correction.duration,
+        (1_700 * ahead) / track.speed
+      );
+      const seconds = duration / 1_000;
+      const futureProgress = this.progress(track, now + duration);
+      // Only promise forward-only reconciliation on a cruise segment. A stop,
+      // terminal or expiry must still converge to the latest supported point.
+      if (
+        futureProgress - this.progress(track, now) >=
+        track.speed * seconds * 0.99
+      )
+        track.correction.duration = duration;
+    }
   }
 
   private configureMotion(
@@ -667,20 +865,48 @@ export class VehicleMotionEstimator {
 
     if (history?.sample.match?.pattern === match.pattern) {
       const progressDelta = match.progress - history.sample.match.progress;
+      track.idleSourceSeconds =
+        rawDistance < 1 ? history.idleSourceSeconds + elapsed : 0;
+      if (track.idleSourceSeconds >= 10) return;
       const observed = Math.max(0, progressDelta / elapsed);
       const physical =
-        progressDelta >= -10 &&
+        progressDelta >= -15 &&
         observed <= VEHICLE_MOTION_LIMITS.maximumObservedSpeed &&
         (history.observedSpeed === null ||
           Math.abs(observed - history.observedSpeed) / elapsed <= 3);
       if (!physical) return;
       track.observedSpeed = observed;
-      if (rawDistance < 8 || progressDelta < 5) return;
+      const slowTraffic =
+        history.speedSamples.length > 0 &&
+        history.speed > 0 &&
+        history.speed <= 3 &&
+        feedSpeed !== null &&
+        feedSpeed > 0.7 &&
+        feedSpeed <= 3 &&
+        Math.abs(progressDelta) <= 15;
+      // An absolute eight-metre threshold incorrectly freezes a moving bus
+      // when the agency improves its sampling rate. Scale the evidence window
+      // with elapsed source time; the independent positive speed corroborates
+      // short-interval travel, while a long-interval GPS wobble still stops it.
+      const minimumProgress =
+        feedSpeed !== null ? Math.min(5, elapsed * 0.7) : 5;
+      const minimumDistance =
+        feedSpeed !== null ? Math.min(8, elapsed * 0.8) : 8;
+      if (
+        (rawDistance < minimumDistance || progressDelta < minimumProgress) &&
+        !slowTraffic
+      )
+        return;
+      if (progressDelta >= minimumProgress) track.speedSamples.push(observed);
+      track.speedSamples = track.speedSamples.slice(-5);
+      const sorted = [...track.speedSamples].sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)] ?? observed;
+      const measured = slowTraffic ? Math.min(median, feedSpeed!) : observed;
       // Source-to-source progress includes real traffic delays. A faster
       // instantaneous feed speed cannot overrule that observed travel pace.
       track.speed = Math.min(
-        observed,
-        feedSpeed ?? observed * 0.8,
+        measured,
+        feedSpeed ?? (track.speedSamples.length >= 2 ? median : observed * 0.8),
         VEHICLE_MOTION_LIMITS.maximumSpeed
       );
       track.quality = feedSpeed === null ? 0.65 : 0.85;
@@ -772,12 +998,19 @@ export class VehicleMotionEstimator {
         const projected = project(position, segment);
         if (projected.distance > VEHICLE_MOTION_LIMITS.maximumRouteDistance)
           continue;
-        const angle =
+        let angle =
           heading === undefined
             ? 0
             : headingDifference(heading, segment.heading);
-        if (angle > 70) continue;
         const prior = previous?.sample.match;
+        // At bends the feed bearing can still describe the previous road.
+        // Distinct measured travel and the same route provide better evidence.
+        if (prior?.pattern === pattern && inferredHeading !== undefined)
+          angle = Math.min(
+            angle,
+            headingDifference(inferredHeading, segment.heading)
+          );
+        if (angle > 70) continue;
         if (prior?.pattern === pattern) {
           const advance = projected.progress - prior.progress;
           if (
@@ -795,7 +1028,19 @@ export class VehicleMotionEstimator {
           progress: projected.progress,
           distance: projected.distance,
           heading: segment.heading,
-          score: projected.distance + angle * 0.12
+          score:
+            projected.distance +
+            angle * 0.12 +
+            (prior?.pattern === pattern
+              ? Math.min(
+                  30,
+                  Math.abs(
+                    projected.progress -
+                      prior.progress -
+                      (previous?.speed ?? 0) * elapsed
+                  ) * 0.1
+                ) - 6
+              : 0)
         });
       }
     }

@@ -207,4 +207,34 @@ describe('route motion through the real vehicle tracker', () => {
     expect(tracker.getVehiclePositions()[0].lat).toBeGreaterThan(resumed.lat);
     expect(addMarker).toHaveBeenCalledTimes(1);
   });
+
+  test('foreground return rebases the real forecast from the last rendered point', async () => {
+    await jest.advanceTimersByTimeAsync(5000);
+    const beforeHide = tracker.getVehiclePositions()[0];
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      value: true
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+    await jest.advanceTimersByTimeAsync(20_000);
+    expect(tracker.getVehiclePositions()[0]).toEqual(beforeHide);
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      value: false
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(tracker.getVehiclePositions()[0].lat).toBeCloseTo(
+      beforeHide.lat,
+      10
+    );
+    expect(tracker.getVehiclePositions()[0].lng).toBeCloseTo(
+      beforeHide.lng,
+      10
+    );
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(tracker.getVehiclePositions()[0].lat).toBeGreaterThan(
+      beforeHide.lat
+    );
+    expect(addMarker).toHaveBeenCalledTimes(1);
+  });
 });

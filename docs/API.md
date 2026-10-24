@@ -96,7 +96,7 @@ Saved stops, named planning places, recent selections and filter presets are bro
 
 ## Transit
 
-Transit and diagnostic endpoints are currently public. They read cached provider data rather than fetching a fresh GPS fix per request. Empty arrays may be valid (no active bus/arrival) or appear during initialization; inspect `/transit/health` separately. CMU IDs begin with `CMU-`; do not assume the route list, fleet, or route count is fixed.
+Transit and diagnostic endpoints are currently public. They read cached provider data rather than fetching a fresh GPS fix per request. Empty arrays may be valid (no active bus/arrival) or appear during initialization; vehicle responses include source health, and `/transit/health` reports overall readiness. CMU IDs begin with `CMU-`; do not assume the route list, fleet, or route count is fixed.
 
 | Method and path | Parameters / body | Success name and payload |
 | --- | --- | --- |
@@ -105,7 +105,7 @@ Transit and diagnostic endpoints are currently public. They read cached provider
 | `POST /transit/routes/available` | `{date: "YYYY-MM-DD", time?: "HH:MM"}` | `RoutesRetrieved`: scheduled PRT routes from GTFS. This endpoint does not add CMU routes. |
 | `GET /transit/routes/:id` | Route ID | `PathGenerated`: `IPattern[]`. |
 | `GET /transit/routes/:routeId/schedule` | Route ID | `RouteScheduleRetrieved`: `IRouteSchedule`. |
-| `GET /transit/vehicles/:routeId` | Route ID | `VehiclesLocated`: measured `IVehicle[]`; an inactive/unknown route can return an empty list. |
+| `GET /transit/vehicles/:routeId` | Route ID | `VehiclesLocated`: measured `IVehicle[]`, with top-level `feed` health; an inactive/unknown route can return an empty list. |
 | `GET /transit/stops/:routeId` | Required `dir=INBOUND` or `OUTBOUND`, case-normalized | `StopsRetrieved`: `IStop[]`. |
 | `GET /transit/stops/nearbystops` | See nearby-stop parameters below | `NearbyStopsRetrieved`: `INearbyStopsPayload`. |
 | `GET /transit/stops/:stopId/predictions` | Optional exact `routeId` filter | `PredictionsRetrieved`: `IPrediction[]`. |
@@ -113,6 +113,28 @@ Transit and diagnostic endpoints are currently public. They read cached provider
 | `GET /transit/detours/:routeId/geometry` | Route ID | `DetoursRetrieved`: detours having geometry. |
 
 Missing route geometry/schedule returns 404 `RouteNotFound`; no stops for a requested route/direction returns 404 `StopNotFound`. An unconfigured CMU geometry adapter retains the legacy status **451** with `ServiceUnavailable`. CMU schedules currently return empty `alerts` and `detours` arrays. Not all systems provide both directions or every optional field.
+
+### Vehicle freshness and delivery
+
+`GET /transit/vehicles/:routeId` returns `Cache-Control: no-store`. Its existing `name`, `message`, and array `payload` are unchanged; the additional top-level `feed` object describes that route's PRT or CMU source:
+
+```json
+{
+  "name": "VehiclesLocated",
+  "payload": [],
+  "feed": {
+    "healthy": true,
+    "lastFetched": "2026-10-24T12:00:00.000Z",
+    "consecutiveFailures": 0
+  }
+}
+```
+
+`lastFetched` is the last successful source fetch, or `null` before initialization. `healthy` requires a successful fetch within 90 seconds and no subsequent failure. A failed feed retains its last successful payload with `healthy: false`; clients can display delayed markers while stopping unsupported motion. This metadata lets vehicle rendering proceed without another health-request round trip. The browser's foreground vehicle loop targets five seconds, pauses when hidden, and reads the shared server cache.
+
+PRT vehicle positions and CMU live status are fetched once per server every 15 seconds; PRT arrival predictions remain on a 30-second cadence. Requests never overlap within one source. Repeated failures back off to five minutes, or longer when the provider supplies `Retry-After`. These cadences describe acquisition, not the frequency of new GPS measurements.
+
+Snapshots deduplicate buses by vehicle ID and retain the newest accepted measurement when an older or unknown-time copy arrives. Equal-timestamp copies keep accepted coordinates and heading; safety updates such as zero speed or a stopped status may still halt prediction. Buses missing from a successful snapshot are removed from that snapshot. Invalid coordinates are excluded, and future-clock errors beyond five seconds cannot block acceptance of a later valid fix. The original measurement timestamp is retained throughout.
 
 ### Nearby stops
 

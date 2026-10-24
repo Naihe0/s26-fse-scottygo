@@ -38,6 +38,12 @@ interface IFeedHealth {
 
 export interface IVehicleResult {
   vehicles: IVehicle[];
+  /** Feed state from the same response as the positions; absent on older servers. */
+  feed?: {
+    healthy: boolean;
+    lastFetched: string | null;
+    consecutiveFailures: number;
+  };
 }
 
 export interface INearbyStopsOptions {
@@ -159,7 +165,11 @@ export class TransitApiService {
     );
   }
 
-  async getStops(routeId: string, direction: string, signal?: AbortSignal): Promise<IStop[] | null> {
+  async getStops(
+    routeId: string,
+    direction: string,
+    signal?: AbortSignal
+  ): Promise<IStop[] | null> {
     return this.getPayload(
       `/transit/stops/${path(routeId)}?dir=${path(direction)}`,
       'StopsRetrieved',
@@ -231,12 +241,38 @@ export class TransitApiService {
     routeId: string,
     signal?: AbortSignal
   ): Promise<IVehicleResult | null> {
-    const vehicles = await this.getPayload<IVehicle[]>(
-      `/transit/vehicles/${path(routeId)}`,
-      'VehiclesLocated',
-      { signal, timeout: REQUEST_TIMEOUT_MS }
-    );
-    return Array.isArray(vehicles) ? { vehicles } : null;
+    try {
+      const res = await axios.get(`/transit/vehicles/${path(routeId)}`, {
+        signal,
+        timeout: REQUEST_TIMEOUT_MS,
+        headers: authHeaders(),
+        validateStatus: () => true
+      });
+      const vehicles = payloadOf<IVehicle[]>(res, 'VehiclesLocated');
+      if (!Array.isArray(vehicles)) return null;
+      const feed = res.data?.feed;
+      return {
+        vehicles,
+        ...(feed && typeof feed.healthy === 'boolean'
+          ? {
+              feed: {
+                healthy: feed.healthy,
+                lastFetched:
+                  typeof feed.lastFetched === 'string'
+                    ? feed.lastFetched
+                    : null,
+                consecutiveFailures: Number.isFinite(feed.consecutiveFailures)
+                  ? feed.consecutiveFailures
+                  : 0
+              }
+            }
+          : {})
+      };
+    } catch (err) {
+      if (!signal?.aborted)
+        console.error('[TransitApiService] getVehicles error:', err);
+      return null;
+    }
   }
 
   async getHealth(signal?: AbortSignal): Promise<IServiceHealth | null> {

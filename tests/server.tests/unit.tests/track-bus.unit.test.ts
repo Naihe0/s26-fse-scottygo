@@ -15,6 +15,7 @@ import TransitController from '../../../server/controllers/transit.controller';
 import { parseLimit } from '../../../server/controllers/health.controller';
 import trueTimeService from '../../../server/services/truetime.service';
 import vehiclePositionsService from '../../../server/services/vehicle-positions.service';
+import tripshotLiveStatusService from '../../../server/services/tripshot-livestatus.service';
 import tripshotService from '../../../server/services/tripshot.service';
 import {
   IDetour,
@@ -27,12 +28,14 @@ import DAC, { type IDatabase } from '../../../server/db/dac';
 type MockResponse = Partial<Response> & {
   status: jest.Mock;
   json: jest.Mock;
+  setHeader: jest.Mock;
 };
 
 const createMockResponse = (): MockResponse => {
   const res: MockResponse = {
     status: jest.fn(),
-    json: jest.fn()
+    json: jest.fn(),
+    setHeader: jest.fn()
   };
   res.status.mockReturnValue(res);
   res.json.mockReturnValue(res);
@@ -342,6 +345,12 @@ describe('TUC2 – Track Bus in Real-Time unit tests', () => {
           payload: cmuVehicles
         })
       );
+      expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
+      expect(res.json.mock.calls[0][0].feed).toEqual({
+        healthy: tripshotLiveStatusService.isHealthy(),
+        lastFetched: null,
+        consecutiveFailures: 0
+      });
     });
 
     test('dispatches to GTFS-RT vehicle positions for PRT route', async () => {
@@ -362,6 +371,13 @@ describe('TUC2 – Track Bus in Real-Time unit tests', () => {
         .spyOn(vehiclePositionsService, 'getVehicles')
         .mockReturnValue(prtVehicles);
       const tsSpy = jest.spyOn(tripshotService, 'getVehicles');
+      jest.spyOn(vehiclePositionsService, 'isHealthy').mockReturnValue(false);
+      jest
+        .spyOn(vehiclePositionsService, 'getLastFetched')
+        .mockReturnValue(new Date('2026-10-24T12:00:00Z'));
+      jest
+        .spyOn(vehiclePositionsService, 'getConsecutiveFailures')
+        .mockReturnValue(2);
 
       const res = createMockResponse();
       await callGetVehicles('61C', res);
@@ -375,6 +391,11 @@ describe('TUC2 – Track Bus in Real-Time unit tests', () => {
           payload: prtVehicles
         })
       );
+      expect(res.json.mock.calls[0][0].feed).toEqual({
+        healthy: false,
+        lastFetched: '2026-10-24T12:00:00.000Z',
+        consecutiveFailures: 2
+      });
     });
   });
 });

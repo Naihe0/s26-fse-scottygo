@@ -37,7 +37,9 @@ import { showToast } from '../utils/toast';
 import { getToken } from '../services/session';
 import { haversineMeters, METERS_PER_MILE } from '../../../common/geo';
 
-const POLL_MS = 10_000;
+// Read the shared server cache frequently; this does not poll the agency per rider.
+const POLL_MS = 5_000;
+const MIN_POLL_GAP_MS = 1_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_POSITION_AGE_MS = 90_000;
 const MAX_RETAINED_AGE_MS = 15 * 60_000;
@@ -58,6 +60,7 @@ export class VehicleTracker {
   private requestDeadline: number | null = null;
   private expiryTimer: number | null = null;
   private pageSuspended = false;
+  private displaySuspended = false;
   private sessionToken: string | null = null;
   private readonly trackingStatus = new LiveTrackingStatus();
   private partialTracking = false;
@@ -72,7 +75,12 @@ export class VehicleTracker {
   private readonly motion = new VehicleMotionEstimator();
   private readonly displayedPositions = new Map<string, ILatLng>();
   private readonly displayedHeadings = new Map<string, number | undefined>();
+  private readonly headingUpdatedAt = new Map<string, number>();
   private readonly displayedStatuses = new Map<string, BusPositionStatus>();
+  private readonly displayedMotionStates = new Map<
+    string,
+    'correcting' | 'waiting' | null
+  >();
   private readonly iconKeys = new Map<string, string>();
   private animationFrame: number | null = null;
   private animationGeneration = 0;
@@ -223,10 +231,13 @@ export class VehicleTracker {
    */
   startPolling(routeId: string, routeColor = '#4285F4'): void {
     if (!this.mapProvider) return;
-    this.stopPolling();
+    const continuing =
+      this.currentRouteId === routeId && this.sessionToken === getToken();
+    if (!continuing) this.stopPolling();
     this.currentRouteId = routeId;
     this.currentRouteColor = routeColor;
     this.routeColorMap.set(routeId, routeColor);
+    this.updateAllIcons();
     this.sessionToken = getToken();
     this.resumeOrPause();
   }
@@ -236,6 +247,7 @@ export class VehicleTracker {
     this.cancelPendingWork();
     this.currentRouteId = null;
     this.multiRouteIds = [];
+    this.displaySuspended = false;
     this.clearVehicles();
     this.trackingStatus.hide();
   }
@@ -246,9 +258,16 @@ export class VehicleTracker {
     routeColors?: Map<string, string>
   ): void {
     if (!this.mapProvider) return;
-    this.stopPolling();
-    this.multiRouteIds = [...new Set(routeIds)];
+    const uniqueRoutes = [...new Set(routeIds)];
+    const continuing =
+      !this.currentRouteId &&
+      this.sessionToken === getToken() &&
+      uniqueRoutes.length === this.multiRouteIds.length &&
+      uniqueRoutes.every((routeId) => this.multiRouteIds.includes(routeId));
+    if (!continuing) this.stopPolling();
+    this.multiRouteIds = uniqueRoutes;
     routeColors?.forEach((color, id) => this.routeColorMap.set(id, color));
+    this.updateAllIcons();
     this.sessionToken = getToken();
     this.resumeOrPause();
   }
@@ -279,7 +298,9 @@ export class VehicleTracker {
       return;
     }
     if (document.hidden || this.pageSuspended) {
-      this.updateDisplayedVehicles(true);
+      // Keep the last painted point. Resetting to GPS here used to make the bus
+      // jump backwards when switching apps or returning from the browser cache.
+      this.displaySuspended = true;
       this.trackingStatus.show(
         'paused',
         'Live tracking paused while this tab is hidden.'
@@ -287,6 +308,18 @@ export class VehicleTracker {
       return;
     }
     this.pruneExpiredVehicles();
+    if (this.displaySuspended) {
+      this.displaySuspended = false;
+      this.displayedPositions.forEach((position, vid) => {
+        this.motion.rebaseDisplay(
+          vid,
+          position,
+          this.displayedHeadings.get(vid)
+        );
+      });
+    }
+    this.updateDisplayedVehicles();
+    this.startAnimation();
     this.trackingStatus.show('loading', 'Checking live bus locations...');
     void this.pollVehicles();
   }
@@ -304,6 +337,7 @@ export class VehicleTracker {
   /** One bounded cycle; a new one is scheduled only after this one finishes. */
   private async pollVehicles(): Promise<void> {
     const generation = this.pollingGeneration;
+    const startedAt = Date.now();
     if (!this.isCurrent(generation)) {
       if (generation === this.pollingGeneration) this.stopPolling();
       return;
@@ -322,14 +356,7 @@ export class VehicleTracker {
     );
     try {
       const results = await Promise.race([
-        Promise.all([
-          transitApiService.getHealth(request.signal),
-          Promise.all(
-            routeIds.map((routeId) =>
-              transitApiService.getVehicles(routeId, request.signal)
-            )
-          )
-        ]),
+        this.fetchVehicleResults(routeIds, request.signal),
         aborted
       ]);
       if (!this.isCurrent(generation)) return;
@@ -350,10 +377,13 @@ export class VehicleTracker {
       }
       request.abort();
       if (this.isCurrent(generation)) {
-        this.pollingInterval = window.setTimeout(() => {
-          this.pollingInterval = null;
-          void this.pollVehicles();
-        }, POLL_MS);
+        this.pollingInterval = window.setTimeout(
+          () => {
+            this.pollingInterval = null;
+            void this.pollVehicles();
+          },
+          Math.max(MIN_POLL_GAP_MS, POLL_MS - (Date.now() - startedAt))
+        );
       } else if (
         generation === this.pollingGeneration &&
         this.sessionToken !== getToken()
@@ -361,6 +391,22 @@ export class VehicleTracker {
         this.stopPolling();
       }
     }
+  }
+
+  /** Modern vehicle replies carry their own feed state, avoiding a health-request waterfall. */
+  private async fetchVehicleResults(
+    routeIds: string[],
+    signal: AbortSignal
+  ): Promise<[IServiceHealth | null, (IVehicleResult | null)[]]> {
+    const results = await Promise.all(
+      routeIds.map((routeId) => transitApiService.getVehicles(routeId, signal))
+    );
+    const needsLegacyHealth = results.some((result) => result && !result.feed);
+    const health =
+      needsLegacyHealth && !signal.aborted
+        ? await transitApiService.getHealth(signal)
+        : null;
+    return [health, results];
   }
 
   private showUnavailable(): void {
@@ -429,10 +475,12 @@ export class VehicleTracker {
     let unavailable = 0;
     this.unavailableRoutes.clear();
     routeIds.forEach((routeId, index) => {
-      const provider = routeId.startsWith('CMU-')
-        ? health?.tripshotLiveStatus
-        : health?.vehiclePositions;
       const result = results[index];
+      const provider =
+        result?.feed ??
+        (routeId.startsWith('CMU-')
+          ? health?.tripshotLiveStatus
+          : health?.vehiclePositions);
       const authoritative = !!provider?.healthy && !!result;
       if (!authoritative) {
         unavailable++;
@@ -483,13 +531,18 @@ export class VehicleTracker {
               heading: previous.heading
             };
           }
+          if (!this.canRetain(vehicle)) return;
+          if (this.motion.ingest(vehicle) === false) {
+            // An isolated GPS spike must not leak into the card or regain
+            // freshness after the motion estimator has rejected its position.
+            if (!previous || !this.canRetain(previous)) return;
+            vehicle = previous;
+          }
           this.sourceTimes.set(vehicle.vid, {
             value: vehicle.lastUpdate,
             time: this.sourceTime(vehicle)
           });
-          if (!this.canRetain(vehicle)) return;
           vehicles.set(vehicle.vid, vehicle);
-          this.motion.ingest(vehicle);
         });
       }
       if (authoritative) {
@@ -705,7 +758,18 @@ export class VehicleTracker {
         lat: vehicle.lat,
         lng: vehicle.lon
       };
-      const heading = estimate ? estimate.heading : vehicle.heading;
+      const previous = this.displayedPositions.get(vid);
+      const reportedMoving =
+        vehicle.currentStatus !== 'STOPPED_AT' &&
+        vehicle.speed !== 0 &&
+        ((typeof vehicle.speed === 'number' && vehicle.speed > 0) ||
+          (!!previous && haversineMeters(previous, position) >= 1));
+      const heading = this.smoothHeading(
+        vid,
+        estimate ? estimate.heading : vehicle.heading,
+        this.motionPreference?.matches ? reportedMoving : !!estimate?.moving,
+        now
+      );
       // Feed age governs reporting permissions; the motion model separately
       // decides whether a delayed but recently received fix supports motion.
       const status: BusPositionStatus =
@@ -714,7 +778,6 @@ export class VehicleTracker {
           : fresh
             ? 'reported'
             : 'delayed';
-      const previous = this.displayedPositions.get(vid);
       if (
         !previous ||
         previous.lat !== position.lat ||
@@ -726,10 +789,44 @@ export class VehicleTracker {
       const statusChanged = this.displayedStatuses.get(vid) !== status;
       this.displayedHeadings.set(vid, heading);
       this.displayedStatuses.set(vid, status);
+      this.displayedMotionStates.set(
+        vid,
+        estimate?.correcting
+          ? 'correcting'
+          : estimate?.estimated &&
+              !estimate.moving &&
+              vehicle.currentStatus !== 'STOPPED_AT' &&
+              vehicle.speed !== 0 &&
+              !this.unavailableRoutes.has(
+                this.vehicleOwners.get(vid) ?? vehicle.routeId
+              )
+            ? 'waiting'
+            : null
+      );
       if (statusChanged) this.refreshMarkerTitle(vid);
       this.updateMarkerIcon(vid);
     });
     this.updateFollowing();
+  }
+
+  /** Turn by the shortest angle; stationary GPS bearings do not spin the arrow. */
+  private smoothHeading(
+    vid: string,
+    heading: number | undefined,
+    moving: boolean,
+    now: number
+  ): number | undefined {
+    const previous = this.displayedHeadings.get(vid);
+    const previousTime = this.headingUpdatedAt.get(vid) ?? now;
+    this.headingUpdatedAt.set(vid, now);
+    if (heading === undefined || !Number.isFinite(heading)) return previous;
+    const target = ((heading % 360) + 360) % 360;
+    if (previous === undefined) return target;
+    if (!moving) return previous;
+    if (this.motionPreference?.matches) return target;
+    const delta = ((target - previous + 540) % 360) - 180;
+    const limit = 120 * Math.min(0.25, Math.max(0, now - previousTime) / 1000);
+    return (previous + Math.max(-limit, Math.min(limit, delta)) + 360) % 360;
   }
 
   private startAnimation(): void {
@@ -846,7 +943,9 @@ export class VehicleTracker {
       this.motion.remove(vid);
       this.displayedPositions.delete(vid);
       this.displayedHeadings.delete(vid);
+      this.headingUpdatedAt.delete(vid);
       this.displayedStatuses.delete(vid);
+      this.displayedMotionStates.delete(vid);
       this.iconKeys.delete(vid);
     });
     if (!this.vehicleData.size) this.stopAnimation();
@@ -870,7 +969,9 @@ export class VehicleTracker {
     this.unavailableRoutes.clear();
     this.displayedPositions.clear();
     this.displayedHeadings.clear();
+    this.headingUpdatedAt.clear();
     this.displayedStatuses.clear();
+    this.displayedMotionStates.clear();
     this.iconKeys.clear();
     this.closeVehiclePopup();
   }
@@ -1339,6 +1440,7 @@ export class VehicleTracker {
 
     const fresh = this.isFresh(vehicle);
     const estimated = this.displayedStatuses.get(vehicle.vid) === 'estimated';
+    const motionState = this.displayedMotionStates.get(vehicle.vid);
     const positionKind = estimated
       ? 'estimated'
       : fresh
@@ -1347,11 +1449,16 @@ export class VehicleTracker {
     const status = popup.querySelector<HTMLElement>('.bus-position-state');
     if (status) {
       status.dataset.state = positionKind;
-      const label = {
-        estimated: 'Estimated',
-        reported: 'Reported',
-        delayed: 'Delayed'
-      }[positionKind];
+      const label =
+        motionState === 'correcting'
+          ? 'Updating position'
+          : motionState === 'waiting'
+            ? 'Waiting for GPS'
+            : {
+                estimated: 'Estimated',
+                reported: 'Reported',
+                delayed: 'Delayed'
+              }[positionKind];
       const age =
         this.sourceTime(vehicle) === null
           ? 'GPS age unknown'
@@ -1360,11 +1467,16 @@ export class VehicleTracker {
     }
     const explanation = popup.querySelector('.bus-position-explanation');
     if (explanation) {
-      explanation.textContent = estimated
-        ? 'Movement is estimated along the route between GPS reports. Older reports mean less certainty. Details below come from the last report.'
-        : !fresh
-          ? 'Position updates are paused; this bus may have moved. Reporting becomes available when fresh GPS returns.'
-          : 'Showing the latest GPS report. Speed and stop details are from that report.';
+      explanation.textContent =
+        motionState === 'correcting'
+          ? 'Aligning with a newer GPS report.'
+          : motionState === 'waiting'
+            ? 'The estimate has reached its limit. The marker will continue when a newer GPS report arrives.'
+            : estimated
+              ? 'Movement is estimated along the route between GPS reports. Older reports mean less certainty. Details below come from the last report.'
+              : !fresh
+                ? 'Position updates are paused; this bus may have moved. Reporting becomes available when fresh GPS returns.'
+                : 'Showing the latest GPS report. Speed and stop details are from that report.';
       if (estimated && !fresh)
         explanation.textContent += ' Reporting needs a fresher GPS update.';
     }

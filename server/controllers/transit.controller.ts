@@ -4,6 +4,7 @@ import { Request, Response } from 'express';
 import Controller from './controller';
 import tripshotService from '../services/tripshot.service';
 import vehiclePositionsService from '../services/vehicle-positions.service';
+import tripshotLiveStatusService from '../services/tripshot-livestatus.service';
 import tripUpdatesService from '../services/trip-updates.service';
 import { TransitModel } from '../models/transit.model';
 import gtfsService from '../services/gtfs.service';
@@ -424,15 +425,24 @@ export default class TransitController extends Controller {
               ? gtfsService.getTripShapeId(vehicle.tripId)
               : undefined
           }));
-      res
-        .status(200)
-        .json(
-          this.success(
-            'VehiclesLocated',
-            vehicles,
-            `Found ${vehicles.length} vehicles on route ${routeId}`
-          )
-        );
+      const feed = isCmuRoute(routeId)
+        ? tripshotLiveStatusService
+        : vehiclePositionsService;
+      // This status describes the same in-memory source as the vehicles. The
+      // browser can render immediately without waiting for a second health call.
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).json({
+        ...this.success(
+          'VehiclesLocated',
+          vehicles,
+          `Found ${vehicles.length} vehicles on route ${routeId}`
+        ),
+        feed: {
+          healthy: feed.isHealthy(),
+          lastFetched: feed.getLastFetched()?.toISOString() ?? null,
+          consecutiveFailures: feed.getConsecutiveFailures()
+        }
+      });
     } catch (error) {
       this.handleError(res, error);
     }

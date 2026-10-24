@@ -2,6 +2,35 @@
 
 ScottyGo combines Pittsburgh Regional Transit (PRT) buses and CMU shuttles in one map. The current personal deployment is [scottygo-ningrui.onrender.com](https://scottygo-ningrui.onrender.com/). This guide describes the implemented app; [ARCHITECTURE.md](ARCHITECTURE.md) covers development and operations, and [API.md](API.md) describes its interfaces.
 
+## Realtime bus movement refinement
+
+The map keeps one marker per bus and updates its position between agency reports. This iteration improves how fresh reports reach the browser and how the marker reconciles them:
+
+- Shared PRT and CMU feeds refresh every 15 seconds. The visible map reads cached positions every 5 seconds, with feed health included in the same response. Failed upstream requests back off and honor `Retry-After`.
+- An isolated impossible GPS jump is quarantined. A second distinct, consistent measurement can confirm a relocation. Repeated or older measurements retain their original position and source timestamp.
+- Small overshoots on a moving route converge by slowing the marker instead of sending it backwards. Significant corrections slide along the route and briefly show **Updating position** in the selected bus card.
+- Low-speed traffic and frequent source updates use cadence-aware motion evidence. Repeated confirmed stops suppress GPS wobble; fresh timestamps with unchanged coordinates eventually stop prediction even if a speed value is stuck.
+- Route metadata refreshes and reselecting the same route preserve usable motion history. Returning from a hidden tab starts from the last painted point. The heading arrow turns smoothly through the shortest angle and remains steady at rest.
+- A prediction that exhausts its evidence shows **Waiting for GPS**. Actual stop reports, route terminals, outages, reduced-motion preferences and bounded prediction horizons remain respected.
+
+The selected approach is a lightweight route-constrained estimator with robust observation filtering and adaptive reconciliation, computed in the browser. Offline-trained models were considered; the project currently has no labelled high-frequency ground-truth trajectory set with which to establish that one would predict more accurately. Agency measurement age remains visible in Details, and all proximity/reporting checks continue to use measured coordinates.
+
+### Realtime acceptance
+
+Use cases cover a continuously moving bus with delayed reports, slow traffic with GPS noise, an isolated bad coordinate and recovery, a measured stop and departure, route bends, duplicate/out-of-order data, missing geometry, background return, and refreshed route metadata. The deterministic comparison runs with `node tools/vehicle-motion-replay.mjs --baseline 17a0421`.
+
+| Controlled replay | Previous version | Refined version |
+| --- | --- | --- |
+| Low-speed noisy traffic: backwards travel over 120 seconds | 81.30 m | 11.30 m |
+| Low-speed noisy traffic: frozen display while truth moves | 56.40 s | 9.40 s |
+| Low-speed noisy traffic: mean position error | 10.38 m | 4.21 m |
+| Isolated impossible fix: largest movement in a 50 ms frame | 1,472.40 m | 3.37 m |
+| Missing route geometry: largest movement in a 50 ms frame | 160.00 m | 3.75 m |
+
+These are synthetic regression measurements with known trajectories, not measured accuracy of real buses. Sliding without known geometry adds about 10 m to mean lag in that scenario while removing the abrupt jump. A reported zero speed still takes effect immediately in the model, and an outage eventually holds the marker instead of inventing indefinite travel.
+
+Local acceptance passed the full regression suite (1,349 tests, 20 opt-in tests skipped), followed by 59 tracker tests including the final reduced-motion heading correction. Eleven replay scenarios cover the motion behavior. A 390 × 760 browser fixture using the real map provider and production tracker verified continuous movement, one-marker retention through an injected 1.7 km outlier, measured stop/restart, same-route selection, provider outage, and 95–105-second delayed reports. This is desktop browser emulation; physical iPhone validation remains separate.
+
 ## Five-iteration rider experience release
 
 All 25 additions below are implemented and accepted through automated behavior tests and local browser checks. Each round contains five independently usable features. Release commits are recorded below; production deployment is verified separately.

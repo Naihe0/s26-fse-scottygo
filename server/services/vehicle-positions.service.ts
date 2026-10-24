@@ -1,13 +1,14 @@
 /**
  * GTFS-RT Vehicle Positions Service
  *
- * Polls the PRT GTFS-RT vehicle positions protobuf feed every 30 seconds and
+ * Polls the PRT GTFS-RT vehicle positions protobuf feed every 15 seconds and
  * keeps the decoded vehicles in memory, indexed by route ID.
  */
 
 import { transit_realtime } from 'gtfs-realtime-bindings';
 import { IVehicle } from '../../common/transit.interface';
 import { PollingFeed } from './polling-feed';
+import { reconcileVehicleSnapshot } from './vehicle-snapshot';
 
 const GTFSRT_VEHICLE_URL =
   'https://truetime.portauthority.org/gtfsrt-bus/vehicles';
@@ -66,7 +67,9 @@ function decodeVehicleEntity(
     sequence !== undefined && Number.isInteger(sequence) ? sequence : undefined;
   // GTFS current_status is only meaningful with a current_stop_sequence.
   const status =
-    stopSequence !== undefined ? observedNumber(vp, 'currentStatus') : undefined;
+    stopSequence !== undefined
+      ? observedNumber(vp, 'currentStatus')
+      : undefined;
 
   return {
     vid: vp.vehicle?.id || entity.id,
@@ -93,7 +96,7 @@ export class VehiclePositionsService extends PollingFeed<IVehicle[]> {
   constructor() {
     super({
       name: 'VehiclePositions',
-      intervalMs: 30_000,
+      intervalMs: 15_000,
       timeoutMs: 15_000,
       maxAgeMs: 90_000
     });
@@ -121,6 +124,7 @@ export class VehiclePositionsService extends PollingFeed<IVehicle[]> {
   }
 
   protected applySnapshot(vehicles: IVehicle[]): void {
+    vehicles = reconcileVehicleSnapshot(vehicles, this.allVehicles);
     const byRoute = new Map<string, IVehicle[]>();
     for (const vehicle of vehicles) {
       if (!vehicle.routeId) continue;

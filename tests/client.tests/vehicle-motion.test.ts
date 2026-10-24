@@ -314,15 +314,17 @@ describe('latency-aware, bounded vehicle motion', () => {
     });
   });
 
-  test('a teleport snaps to the reported point without animating the jump or extrapolating it', () => {
+  test('a single impossible fix is quarantined without moving the accepted GPS', () => {
     const estimator = moving();
-    estimator.ingest(vehicle(12, 1_500), at(12));
+    const expected = estimator.estimate('bus', at(12));
+    expect(estimator.ingest(vehicle(12, 1_500), at(12))).toBe(false);
+    expect(estimator.estimate('bus', at(12))).toEqual(expected);
     expect(estimator.estimate('bus', at(12))).toMatchObject({
-      position: point(1_500),
-      estimated: false,
-      moving: false
+      rawPosition: point(100),
+      sourceTimestamp: at(10)
     });
-    expect(estimator.estimate('bus', at(40))!.position).toEqual(point(1_500));
+    expect(estimator.ingest(vehicle(20, 200), at(20))).toBe(true);
+    expect(estimator.estimate('bus', at(24))!.rawPosition).toEqual(point(200));
   });
 
   test('an implausible acceleration resets velocity even below the absolute speed limit', () => {
@@ -337,11 +339,10 @@ describe('latency-aware, bounded vehicle motion', () => {
 
   test('subsecond timestamps still reject a teleport instead of treating it as a local correction', () => {
     const estimator = moving();
-    estimator.ingest(vehicle(10.5, 190), at(10.5));
+    expect(estimator.ingest(vehicle(10.5, 190), at(10.5))).toBe(false);
     expect(estimator.estimate('bus', at(10.5))).toMatchObject({
-      position: point(190),
-      moving: false,
-      estimated: false
+      rawPosition: point(100),
+      sourceTimestamp: at(10)
     });
   });
 
@@ -745,9 +746,17 @@ describe('single-marker reconciliation and cached geometry', () => {
     const mid = xy(estimator.estimate('bus', at(30.3))!.position);
     expect(mid.x).toBeCloseTo(150, 1);
     expect(mid.y).toBeGreaterThan(30);
-    expect(mid.y).toBeLessThan(45);
-    const end = xy(estimator.estimate('bus', at(30.6))!.position);
-    const next = xy(estimator.estimate('bus', at(30.601))!.position);
+    expect(mid.y).toBeGreaterThanOrEqual(xy(before).y);
+    // A small moving overshoot converges by slowing down along the bend.
+    let last = mid.y;
+    for (let t = 30.4; t <= 40; t += 0.1) {
+      const current = xy(estimator.estimate('bus', at(t))!.position);
+      expect(current.x).toBeCloseTo(150, 1);
+      expect(current.y).toBeGreaterThanOrEqual(last - 0.001);
+      last = current.y;
+    }
+    const end = xy(estimator.estimate('bus', at(40))!.position);
+    const next = xy(estimator.estimate('bus', at(40.001))!.position);
     expect(Math.abs(next.y - end.y)).toBeLessThan(0.02);
     expect(next.x).toBeCloseTo(end.x, 5);
   });

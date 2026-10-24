@@ -7,6 +7,25 @@
 
 import { createLogger, errorMessage, type ILogger } from '../logger';
 
+class FeedHttpError extends Error {
+  constructor(
+    status: number,
+    readonly retryAt: number
+  ) {
+    super(`HTTP ${status}`);
+  }
+}
+
+/** Retry-After may contain seconds or an HTTP date. Never retry before it. */
+function retryAfterTime(value: string | null | undefined): number {
+  if (!value?.trim()) return 0;
+  const seconds = Number(value);
+  const deadline = Number.isFinite(seconds)
+    ? Date.now() + Math.max(0, seconds) * 1000
+    : Date.parse(value);
+  return Number.isFinite(deadline) ? deadline : 0;
+}
+
 export interface IPollingFeedOptions {
   /** Log tag, e.g. "VehiclePositions". */
   name: string;
@@ -26,6 +45,7 @@ export abstract class PollingFeed<TSnapshot> {
   private lastFetched: Date | null = null;
   private consecutiveFailures = 0;
   private lastError: string | null = null;
+  private nextAllowedPoll = 0;
 
   /** Optional hook run once after the first successful poll. */
   onFirstSuccess: (() => void) | null = null;
@@ -43,9 +63,15 @@ export abstract class PollingFeed<TSnapshot> {
   start(): void {
     if (this.intervalId) return;
     this.stopped = false;
-    this.log.info(`Starting polling (every ${this.options.intervalMs / 1000}s)`);
+    this.nextAllowedPoll = 0;
+    this.log.info(
+      `Starting polling (every ${this.options.intervalMs / 1000}s)`
+    );
     this.pollTick();
-    this.intervalId = setInterval(() => this.pollTick(), this.options.intervalMs);
+    this.intervalId = setInterval(
+      () => this.pollTick(),
+      this.options.intervalMs
+    );
     this.intervalId.unref?.();
   }
 
@@ -92,13 +118,17 @@ export abstract class PollingFeed<TSnapshot> {
     const response = await fetch(url, { ...init, signal });
     if (!response.ok) {
       await response.body?.cancel();
-      throw new Error(`HTTP ${response.status}`);
+      throw new FeedHttpError(
+        response.status,
+        retryAfterTime(response.headers?.get('Retry-After'))
+      );
     }
     return response;
   }
 
   private pollTick(): void {
     if (this.stopped) return;
+    if (Date.now() < this.nextAllowedPoll) return;
     if (this.activeRequest) {
       this.catchUpPending = true;
       this.log.warn('Skipping poll tick: previous fetch still in progress');
@@ -108,6 +138,7 @@ export abstract class PollingFeed<TSnapshot> {
   }
 
   private async poll(): Promise<void> {
+    const startedAt = Date.now();
     const request = new AbortController();
     this.activeRequest = request;
     const deadline = setTimeout(() => request.abort(), this.options.timeoutMs);
@@ -121,10 +152,21 @@ export abstract class PollingFeed<TSnapshot> {
       this.lastFetched = new Date();
       this.consecutiveFailures = 0;
       this.lastError = null;
+      this.nextAllowedPoll = 0;
       if (isFirstSuccess) this.runFirstSuccessHook();
     } catch (error) {
       if (!isCurrent()) return;
       this.consecutiveFailures++;
+      // The first failure gets one normal retry; repeated failures back off up
+      // to five minutes. Respect a longer delay explicitly requested upstream.
+      const delay = Math.min(
+        5 * 60_000,
+        this.options.intervalMs * 2 ** Math.min(this.consecutiveFailures - 1, 8)
+      );
+      this.nextAllowedPoll = Math.max(
+        startedAt + delay,
+        error instanceof FeedHttpError ? error.retryAt : 0
+      );
       this.lastError = request.signal.aborted
         ? `Feed request timed out (>${this.options.timeoutMs / 1000} s)`
         : errorMessage(error);
@@ -138,7 +180,7 @@ export abstract class PollingFeed<TSnapshot> {
         this.activeRequest = null;
         if (this.catchUpPending && !this.stopped) {
           this.catchUpPending = false;
-          void this.poll();
+          this.pollTick();
         }
       }
     }
