@@ -31,6 +31,8 @@ import { showToast } from './utils/toast';
 import { showModal } from './utils/modal';
 import type { IRouteBellElement } from './components/route-bell';
 import './components/map-key';
+import './components/nearby-stops-panel';
+import type { NearbyStopsPanel } from './components/nearby-stops-panel';
 import { dismissMapSelection } from './components/map-selection';
 import { createLocationIcon } from './utils/location-icon';
 import './components/location-search';
@@ -186,6 +188,22 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
     routeRenderer.setRouteClickCallback((routeIds) => {
       if (directionsController.isActive || !routeIds[0]) return;
       selectRoute(routeIds[0], true);
+    });
+
+    document.querySelector<NearbyStopsPanel>('nearby-stops-panel')?.configure({
+      getCenter: () => mapProvider.getCenter(),
+      getOrigin: () => ({
+        position: getEffectiveLocation(),
+        label: mapStateManager.getState().plannedLocationLabel ||
+          (userLocation ? 'Your location' : 'CMU Campus · default area')
+      }),
+      onSelectStop: (stop) => {
+        if (directionsController.isActive) return;
+        mapNavigation.cancel();
+        mapProvider.setCenter({ lat: stop.lat, lng: stop.lon });
+        mapProvider.setZoom(Math.max(16, mapProvider.getZoom()));
+        return filterController.showStopDetailsFromSearch(stop);
+      }
     });
 
     vehicleTracker.initialize(mapProvider);

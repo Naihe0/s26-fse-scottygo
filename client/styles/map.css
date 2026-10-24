@@ -2368,3 +2368,22 @@ location-search {
     left: 112px;
   }
 }
+
+/* A compact discovery dock keeps less frequent tools within thumb reach. */
+.rider-tools {
+  position: absolute;
+  z-index: 110;
+  bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  left: 90px;
+  right: 84px;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: none;
+}
+.rider-tools > * { pointer-events: auto; }
+.map-container:has(#map-popup) .rider-tools,
+.map-container:has(#directions-panel) .rider-tools { display: none; }
+@media (min-width: 769px) {
+  .rider-tools { bottom: 36px; left: 150px; right: 100px; }
+}

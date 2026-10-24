@@ -40,16 +40,20 @@ export interface IVehicleResult {
   vehicles: IVehicle[];
 }
 
+export interface INearbyStopsOptions {
+  radiusMeters?: number;
+  routeId?: string;
+  direction?: string;
+  signal?: AbortSignal;
+}
+
 const REQUEST_TIMEOUT_MS = 15_000;
 const BULK_TIMEOUT_MS = 30_000;
 
 const path = (value: string) => encodeURIComponent(value);
 
 /** Payload of a 200 response named `expectedName`, else undefined. */
-function payloadOf<T>(
-  res: AxiosResponse,
-  expectedName: string
-): T | undefined {
+function payloadOf<T>(res: AxiosResponse, expectedName: string): T | undefined {
   return res.status === 200 && res.data?.name === expectedName
     ? (res.data.payload as T)
     : undefined;
@@ -90,6 +94,7 @@ export class TransitApiService {
       }
       return null;
     } catch (err) {
+      if (config.signal?.aborted) return null;
       console.error(`[TransitApiService] GET ${url} error:`, err);
       return null;
     }
@@ -135,7 +140,10 @@ export class TransitApiService {
       );
       const routes = payloadOf<IRoute[]>(res, 'RoutesRetrieved');
       if (routes !== undefined) return routes;
-      console.error('[TransitApiService] filterRoutesByDateTime failed:', res.data);
+      console.error(
+        '[TransitApiService] filterRoutesByDateTime failed:',
+        res.data
+      );
       return null;
     } catch (err) {
       console.error('[TransitApiService] filterRoutesByDateTime error:', err);
@@ -174,13 +182,37 @@ export class TransitApiService {
   async getNearbyStops(
     lat: number,
     lon: number,
-    system?: string
+    system?: string,
+    options: INearbyStopsOptions = {}
   ): Promise<INearbyStopsPayload | null> {
+    const { signal, ...filters } = options;
     return this.getPayload(
       '/transit/stops/nearbystops',
       'NearbyStopsRetrieved',
-      { params: system ? { lat, lon, system } : { lat, lon } }
+      {
+        params: { lat, lon, ...(system ? { system } : {}), ...filters },
+        signal,
+        timeout: REQUEST_TIMEOUT_MS
+      }
     );
+  }
+
+  /** Arrival comparisons need to distinguish a valid empty list from failure. */
+  async getPredictionsResult(
+    stopId: string,
+    routeId?: string,
+    signal?: AbortSignal
+  ): Promise<IPrediction[] | null> {
+    const predictions = await this.getPayload<IPrediction[]>(
+      `/transit/stops/${path(stopId)}/predictions`,
+      'PredictionsRetrieved',
+      {
+        params: routeId ? { routeId } : undefined,
+        signal,
+        timeout: REQUEST_TIMEOUT_MS
+      }
+    );
+    return Array.isArray(predictions) ? predictions : null;
   }
 
   /** Detours that have geometry for a route; empty on failure. */

@@ -20,6 +20,14 @@ Shared stops now use one marker with all serving routes; below zoom 14, ordinary
 
 Acceptance: 547 client tests passed (45 suites), plus lint, TypeScript and production build. A fixed CMU browser fixture at 390 × 760 verified two overlapping buses, one shared stop and two routes; selecting the stop/route invokes the correct action, overview hides ordinary dots, and highlighting retains the stop. Live-map phone acceptance and deployment evidence are recorded with the release commit.
 
+### Round 2 — accepted
+
+**Near me** opens a distance-sorted stop list. Choose an approximate 5, 10 or 15-minute walking range, search the current map center, or return to the current/planned starting point. When a route is selected, switch between that route and all routes. The nearest five stops compare their next arrivals, refreshing every 30 seconds while the panel is visible. Failed predictions remain distinct from a valid empty response; tap any stop to open its full arrival card.
+
+Acceptance: 16 new behavior tests cover range filtering, sorting, cancellation, route scope, independent prediction failures and bounded concurrency. Browser checks at 390 × 760 returned 28 stops for 10 minutes, 3 for 5 minutes, and 2 after filtering to 61C. Area search changed the query center; the original starting point remained available. A stop-row selection centered the map and opened stop 7117. No upcoming arrivals were supplied in this live overnight sample; populated arrivals are covered by deterministic tests.
+
+![Nearby stop comparison on a phone](wireframes/current/nearby-stops-mobile.jpg)
+
 ## Map and route discovery
 
 After signing in, the map starts near your location when permission is available, or near CMU campus otherwise. Search by route number, route name, stop name, or stop ID. Selecting a result opens that route or stop without requiring you to find it manually on the map.
