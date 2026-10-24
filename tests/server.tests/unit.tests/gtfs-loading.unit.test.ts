@@ -96,6 +96,14 @@ describe('bounded streaming GTFS startup', () => {
     expect(service.getTripDirection('trip')).toBe('OUTBOUND');
     expect(service.getTripShapeId('trip')).toBe('shape');
     expect(service.getTripShapeId('unknown')).toBeUndefined();
+    expect(service.getTripDirection('trip', '61C')).toBe('OUTBOUND');
+    expect(service.getTripShapeId('trip', '61C')).toBe('shape');
+    // A live-feed trip ID reused for another route must not inherit this
+    // static trip's direction or shape, even though the ID exists.
+    expect(service.getTripDirection('trip', '28X')).toBeUndefined();
+    expect(service.getTripShapeId('trip', '28X')).toBeUndefined();
+    expect(service.getTripDirection('unknown', '61C')).toBeUndefined();
+    expect(service.getTripShapeId('unknown', '61C')).toBeUndefined();
     expect(service.filterRoutesByDate(new Date(2026, 8, 19))).toHaveLength(1);
     expect(service.filterRoutesByDate(new Date(2026, 8, 20))).toHaveLength(0);
     expect(service.getRouteSchedule('61C')?.directions).toEqual([

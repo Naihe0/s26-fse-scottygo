@@ -249,7 +249,7 @@ describe('latency-aware, bounded vehicle motion', () => {
   });
 
   test.each([
-    { shapeId: undefined },
+    { shapeId: 'unknown' },
     { heading: undefined },
     { speed: undefined },
     { speed: 0.4 }
@@ -527,17 +527,17 @@ describe('stop and geometry safeguards', () => {
     });
   });
 
-  test('overlapping same-direction variants remain ambiguous without exact shape metadata', () => {
+  test('overlapping variants share motion only up to their fork without exact shape metadata', () => {
     const variants = [
       shape([point(0), point(150), point(150, 500)], 'north'),
       shape([point(0), point(150), point(150, -500)], 'south')
     ];
     const unknown = moving(variants, [], { shapeId: undefined });
-    expect(unknown.estimate('bus', at(25))).toMatchObject({
-      position: point(100),
-      moving: false,
-      estimated: false
-    });
+    const shared = unknown.estimate('bus', at(25))!;
+    expect(xy(shared.position).x).toBeGreaterThan(100);
+    expect(xy(shared.position).x).toBeLessThanOrEqual(150);
+    expect(xy(shared.position).y).toBeCloseTo(0, 1);
+    expect(shared.moving).toBe(false);
     const exact = moving(variants, [], { shapeId: 'north' });
     const predicted = xy(exact.estimate('bus', at(25))!.position);
     expect(predicted.x).toBeCloseTo(150, 1);

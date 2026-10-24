@@ -424,6 +424,8 @@ describe('TUC 2: Track Bus in Real-Time — Integration Tests', () => {
     expect(v1!.source).toBe('live');
     expect(v1!.isDetoured).toBe(false);
     expect(v1!.shapeId).toBe('shape-trip-001');
+    expect(mockGtfs.getTripDirection).toHaveBeenCalledWith('trip-001', 'P1');
+    expect(mockGtfs.getTripShapeId).toHaveBeenCalledWith('trip-001', 'P1');
 
     // Verify second vehicle is flagged as detoured with delay
     const v2 = vehicles.find((v) => v.vid === '3302');

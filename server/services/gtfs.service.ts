@@ -59,7 +59,10 @@ function formatClockTime(minutes: number): string {
 }
 
 /** Map stop IDs to their parsed stops, skipping IDs missing from stops.txt. */
-function resolveStops(stopIds: Set<string>, stopMap: Map<string, IStop>): IStop[] {
+function resolveStops(
+  stopIds: Set<string>,
+  stopMap: Map<string, IStop>
+): IStop[] {
   const stops: IStop[] = [];
   for (const stopId of stopIds) {
     const stop = stopMap.get(stopId);
@@ -472,13 +475,28 @@ export class GTFSService {
 
   /**
    * Return the direction ('INBOUND' or 'OUTBOUND') for a given GTFS trip_id,
-   * or undefined when the trip is not found in the loaded GTFS data.
+   * or undefined when the trip is absent or belongs to a different route.
+   * Trip IDs can be reused across static-feed revisions; a live route must
+   * agree with the loaded trip before its static direction can be trusted.
    */
-  getTripDirection(tripId: string): string | undefined {
+  getTripDirection(
+    tripId: string,
+    expectedRouteId?: string
+  ): string | undefined {
+    if (
+      expectedRouteId !== undefined &&
+      this.tripRoute.get(tripId) !== expectedRouteId
+    )
+      return undefined;
     return this.tripDirection.get(tripId);
   }
 
-  getTripShapeId(tripId: string): string | undefined {
+  getTripShapeId(tripId: string, expectedRouteId?: string): string | undefined {
+    if (
+      expectedRouteId !== undefined &&
+      this.tripRoute.get(tripId) !== expectedRouteId
+    )
+      return undefined;
     return this.tripShape.get(tripId);
   }
 

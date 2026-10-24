@@ -64,6 +64,8 @@ interface Match {
   distance: number;
   heading: number;
   score: number;
+  /** Shared travel supported by every plausible variant, ending before a fork. */
+  commonEnd?: number;
 }
 
 interface Sample {
@@ -913,11 +915,13 @@ export class VehicleMotionEstimator {
     } else {
       const heading = normalizedHeading(vehicle.heading);
       // Start without waiting for a second delayed packet only when independent
-      // feed evidence agrees: exact trip shape, nearby GPS, heading and speed.
+      // feed evidence agrees: a unique/shared path, nearby GPS, heading and speed.
       if (
         !firstObservation ||
-        !vehicle.shapeId ||
-        vehicle.shapeId !== match.pattern.shapeId ||
+        (vehicle.shapeId !== undefined &&
+          vehicle.shapeId !== match.pattern.shapeId) ||
+        (match.commonEnd !== undefined &&
+          match.commonEnd - match.progress < 15) ||
         match.distance > 15 ||
         heading === undefined ||
         headingDifference(heading, match.heading) > 35 ||
@@ -1049,13 +1053,44 @@ export class VehicleMotionEstimator {
     if (!best) return null;
     const ambiguous = candidates
       .slice(1)
-      .some(
+      .filter(
         (candidate) =>
           candidate.score <= best.score + 8 &&
           (candidate.pattern !== best.pattern ||
             Math.abs(candidate.progress - best.progress) > 20)
       );
-    return ambiguous ? null : best;
+    if (!ambiguous.length) return best;
+    // Repeated legs of one loop require history to establish which visit it is.
+    if (ambiguous.some((candidate) => candidate.pattern === best.pattern))
+      return null;
+    // When the feed's trip is absent from the current schedule, route variants
+    // often share a long corridor. Keep all plausible paths as hypotheses and
+    // forecast only their common prefix; never choose an unobserved fork.
+    const variants = [best, ...ambiguous];
+    const matchesAt = (advance: number) => {
+      const point = pointAt(best.pattern, best.progress + advance);
+      return variants.every((candidate) => {
+        if (candidate.progress + advance > candidate.pattern.length)
+          return false;
+        const other = pointAt(candidate.pattern, candidate.progress + advance);
+        return (
+          distance(point.position, other.position) <= 3 &&
+          headingDifference(point.heading, other.heading) <= 35
+        );
+      });
+    };
+    if (!matchesAt(0)) return null;
+    let shared = 0;
+    for (
+      let advance = 5;
+      advance <= VEHICLE_MOTION_LIMITS.maximumDistance;
+      advance += 5
+    ) {
+      if (!matchesAt(advance)) break;
+      shared = advance;
+    }
+    if (shared < 5) return null;
+    return { ...best, commonEnd: best.progress + shared };
   }
 
   private planMotion(track: Track): void {
@@ -1065,6 +1100,7 @@ export class VehicleMotionEstimator {
     const stops = routeStops(route);
     track.stopAt = Math.min(
       match.pattern.length,
+      match.commonEnd ?? Infinity,
       match.progress + VEHICLE_MOTION_LIMITS.maximumDistance
     );
     const current = pointAt(match.pattern, match.progress).position;

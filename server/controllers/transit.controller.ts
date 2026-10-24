@@ -419,10 +419,10 @@ export default class TransitController extends Controller {
         : vehiclePositionsService.getVehicles(routeId).map((vehicle) => ({
             ...vehicle,
             direction: vehicle.tripId
-              ? gtfsService.getTripDirection(vehicle.tripId)
+              ? gtfsService.getTripDirection(vehicle.tripId, vehicle.routeId)
               : undefined,
             shapeId: vehicle.tripId
-              ? gtfsService.getTripShapeId(vehicle.tripId)
+              ? gtfsService.getTripShapeId(vehicle.tripId, vehicle.routeId)
               : undefined
           }));
       const feed = isCmuRoute(routeId)

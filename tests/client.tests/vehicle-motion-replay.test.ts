@@ -264,3 +264,156 @@ describe('new-fix reconciliation and interruption recovery', () => {
     expect(estimator.hasActiveMotion(replayTime(210))).toBe(false);
   });
 });
+
+describe('missing trip shape uses only an unambiguous shared route corridor', () => {
+  const north = {
+    shapeId: 'north',
+    direction: 'OUTBOUND',
+    path: [point(0), point(150), point(150, 500)]
+  };
+  const south = {
+    shapeId: 'south',
+    direction: 'OUTBOUND',
+    path: [point(0), point(150), point(150, -500)]
+  };
+  const unknownShape = (second: number, x: number, y = 0, heading = 90) =>
+    packet(second, x, 8, y, { shapeId: undefined, heading });
+
+  test('a single well-supported fix moves along a unique route without an exact shape ID', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [north], []);
+    estimator.ingest(unknownShape(0, 100), replayTime(0));
+    const result = estimator.estimate('bus', replayTime(5))!;
+    expect(result.moving).toBe(true);
+    expect(meters(result.position).x).toBeGreaterThan(120);
+    expect(meters(result.position).x).toBeLessThan(150);
+    expect(result.sourceTimestamp).toBe(replayTime(0));
+    expect(meters(result.rawPosition).x).toBeCloseTo(100, 2);
+  });
+
+  test('overlapping variants move to their shared branch point, then wait without choosing a branch', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [north, south], []);
+    const gps = unknownShape(0, 100);
+    estimator.ingest(gps, replayTime(0));
+    expect(
+      meters(estimator.estimate('bus', replayTime(3))!.position).x
+    ).toBeGreaterThan(110);
+    for (let second = 0; second <= 30; second += 0.25) {
+      const location = meters(
+        estimator.estimate('bus', replayTime(second))!.position
+      );
+      expect(location.x).toBeLessThanOrEqual(150.01);
+      expect(Math.abs(location.y)).toBeLessThan(0.01);
+    }
+    const waiting = estimator.estimate('bus', replayTime(30))!;
+    expect(meters(waiting.position).x).toBeGreaterThanOrEqual(130);
+    expect(waiting.moving).toBe(false);
+    estimator.ingest(gps, replayTime(35));
+    estimator.ingest(gps, replayTime(45));
+    expect(estimator.estimate('bus', replayTime(60))!.position).toEqual(
+      waiting.position
+    );
+    expect(estimator.estimate('bus', replayTime(60))!.sourceTimestamp).toBe(
+      replayTime(0)
+    );
+  });
+
+  test('the earliest split among all plausible variants limits the shared corridor', () => {
+    const early = {
+      shapeId: 'early',
+      direction: 'OUTBOUND',
+      path: [point(0), point(130), point(130, 500)]
+    };
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [north, south, early], []);
+    estimator.ingest(unknownShape(0, 100), replayTime(0));
+    const result = meters(estimator.estimate('bus', replayTime(30))!.position);
+    expect(result.x).toBeGreaterThan(110);
+    expect(result.x).toBeLessThanOrEqual(130.01);
+    expect(Math.abs(result.y)).toBeLessThan(0.01);
+  });
+
+  test('distinct parallel roads more than five metres apart do not become a shared corridor', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry(
+      'R',
+      [
+        {
+          shapeId: 'left',
+          direction: 'OUTBOUND',
+          path: [point(0, -4), point(1000, -4)]
+        },
+        {
+          shapeId: 'right',
+          direction: 'OUTBOUND',
+          path: [point(0, 4), point(1000, 4)]
+        }
+      ],
+      []
+    );
+    estimator.ingest(unknownShape(0, 100), replayTime(0));
+    expect(estimator.estimate('bus', replayTime(10))).toMatchObject({
+      position: point(100),
+      moving: false,
+      estimated: false
+    });
+    estimator.ingest(unknownShape(10, 180), replayTime(10));
+    expect(estimator.estimate('bus', replayTime(30))).toMatchObject({
+      position: point(180),
+      moving: false,
+      estimated: false
+    });
+  });
+
+  test('duplicate variants with identical geometry can continue along the complete common route', () => {
+    const path = [point(0), point(1000)];
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry(
+      'R',
+      [
+        { shapeId: 'first', direction: 'OUTBOUND', path },
+        { shapeId: 'second', direction: 'OUTBOUND', path: [...path] }
+      ],
+      []
+    );
+    estimator.ingest(unknownShape(0, 100), replayTime(0));
+    expect(
+      meters(estimator.estimate('bus', replayTime(20))!.position).x
+    ).toBeGreaterThan(200);
+    estimator.ingest(unknownShape(20, 260), replayTime(20));
+    expect(
+      meters(estimator.estimate('bus', replayTime(30))!.position).x
+    ).toBeGreaterThan(300);
+    expect(estimator.estimate('bus', replayTime(30))!.moving).toBe(true);
+  });
+
+  test('new GPS and heading can resolve the fork before motion continues down that branch', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [north, south], []);
+    estimator.ingest(unknownShape(0, 100), replayTime(0));
+    expect(
+      Math.abs(meters(estimator.estimate('bus', replayTime(20))!.position).y)
+    ).toBeLessThan(0.01);
+    estimator.ingest(unknownShape(20, 150, 30, 0), replayTime(20));
+    const resolved = estimator.estimate('bus', replayTime(25))!;
+    expect(meters(resolved.position).x).toBeCloseTo(150, 2);
+    expect(meters(resolved.position).y).toBeGreaterThan(30);
+    expect(resolved.moving).toBe(true);
+    expect(resolved.sourceTimestamp).toBe(replayTime(20));
+  });
+
+  test('a supplied unrecognized shape ID is never replaced with a guessed corridor', () => {
+    const estimator = new VehicleMotionEstimator();
+    estimator.setRouteGeometry('R', [north, south], []);
+    estimator.ingest(
+      packet(0, 100, 8, 0, { shapeId: 'not-on-this-route' }),
+      replayTime(0)
+    );
+    expect(estimator.estimate('bus', replayTime(20))).toMatchObject({
+      position: point(100),
+      moving: false,
+      estimated: false
+    });
+  });
+});

@@ -89,6 +89,8 @@ PRT static GTFS supplies routes, stops, trip directions, schedules, and exact tr
 
 GTFS service dates use Pittsburgh's timezone and handle schedule times extending after midnight. Date/time route filtering represents scheduled availability, not replay or future vehicle simulation. Keep arrival prediction data separate from marker-motion estimates.
 
+Static and realtime trip IDs can diverge across feed versions. `getTripDirection` and `getTripShapeId` accept an expected route ID; the vehicle endpoint supplies the live route and omits metadata when the static `tripRoute` mapping disagrees. Never infer compatibility from shape names or attach another route's direction to a live bus.
+
 `vehicle-snapshot.ts` reconciles each successful fleet snapshot by vehicle ID. Older or unknown-time updates cannot replace a known accepted fix. Equal-timestamp copies retain coordinates and heading while admitting safety information such as a stopped status or zero speed. Invalid coordinates are excluded and future times beyond five seconds do not poison later acceptance. Missing vehicles leave the server snapshot; failed fetches retain the previous snapshot. CMU also validates reported speed/bearing and deduplicates repeated vehicle statuses and active rides.
 
 Vehicle responses include their source's `feed.healthy`, `feed.lastFetched`, and `feed.consecutiveFailures` alongside the original array payload, with `Cache-Control: no-store`. The five-second foreground browser loop consumes this metadata with the vehicles, removing the extra health-request delay. Hidden pages suspend polling; each source still sees one server poller regardless of connected browser count.
@@ -117,10 +119,12 @@ The pure `vehicle-motion.ts` estimator has no Google Maps or timer dependency. I
 
 The model estimates unique source-report cadence rather than assuming every HTTP poll is a new GPS observation. A delayed measurement can still support motion. Generic mapped stops slow passage; a feed-announced next stop creates an approach, six-second dwell, and departure phase when movement evidence supports it. Explicit `STOPPED_AT` or zero-speed evidence holds position. Missing/ambiguous geometry, invalid time, detours, terminals, and off-route fixes constrain extrapolation. A provider outage freezes the displayed point until a distinct source report arrives, avoiding a jump back to the old raw fix.
 
+Without an exact shape ID, heading, spatial distance and recent travel identify locally plausible route variants. A unique candidate can support motion. When several variants share a corridor, the estimator compares their forward positions every five meters, requiring agreement within three meters and 35 degrees; `commonEnd` caps prediction at the last shared point. Repeated visits to the same leg of a loop still require distinguishing history. This calculation runs for new observations, with at most 3 km of look-ahead, rather than on animation frames.
+
 | Motion safeguard | Current behavior |
 | --- | --- |
 | Start from delayed data | At most 120 seconds old when received; older data can be shown but does not start a forecast. |
-| First-report forecast | Requires exact shape, fix within 15 meters, heading within 35°, and reported speed above 0.7 through 25 m/s; starts at 85% of reported speed, capped at 20 m/s. Otherwise wait for source-to-source progress evidence. |
+| First-report forecast | Requires a compatible exact shape or a locally supported route path, fix within 15 meters, heading within 35°, and reported speed above 0.7 through 25 m/s; starts at 85% of reported speed, capped at 20 m/s. Shared-variant forecasts require at least 15 meters of common path. Otherwise wait for source-to-source progress evidence. |
 | Adaptive continuation | Starts with a 60-second cadence; the first observed interval replaces that prior, and later intervals use a 0.6 previous / 0.4 new weighted average, bounded to 10–60 seconds. Motion spans the expected next unique update, normally 30–90 seconds after receipt, then decays over 20–45 seconds. |
 | Absolute limits | No extrapolation beyond 180 seconds of source age or 3 km of route progress; earlier confidence/stop/terminal limits still apply. |
 | Freshness | Fresh through 30 seconds, aging through 90 seconds, stale afterward. Stale classification alone does not disable a still-supported estimate. |
