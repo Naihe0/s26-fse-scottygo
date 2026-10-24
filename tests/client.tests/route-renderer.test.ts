@@ -55,6 +55,7 @@ function mapFixture() {
       const line = {
         id: `line-${lines.length}`,
         setVisible: jest.fn(),
+        setStyle: jest.fn(),
         onClick: jest.fn(),
         remove: jest.fn()
       };
@@ -68,6 +69,8 @@ function mapFixture() {
         animatePosition: jest.fn(),
         setIcon: jest.fn(),
         setVisible: jest.fn(),
+        setTitle: jest.fn(),
+        setSelection: jest.fn(),
         onClick: jest.fn(),
         remove: jest.fn()
       };
@@ -108,7 +111,7 @@ describe('route and stop rendering', () => {
     expect(map.markers[0].options).toEqual(
       expect.objectContaining({
         position: { lat: station.lat, lng: station.lon },
-        title: 'Stop s1 (Stop #1)',
+        title: 'Stop s1 · 61C',
         iconAnchor: { x: 14, y: 14 },
         iconSize: { width: 28, height: 28 },
         zIndex: 30
@@ -120,7 +123,7 @@ describe('route and stop rendering', () => {
     expect(svg).not.toContain('<path');
     map.markers[0].marker.onClick.mock.calls[0][0]();
     expect(clicked).toHaveBeenCalledTimes(1);
-    expect(clicked).toHaveBeenCalledWith(station);
+    expect(clicked).toHaveBeenCalledWith({ ...station, routes: ['61C'] });
   });
 
   test('duplicate stop records in one direction create only one callback and marker', () => {
@@ -131,7 +134,7 @@ describe('route and stop rendering', () => {
       jest.fn()
     );
     expect(map.markers).toHaveLength(2);
-    expect(map.markers[1].options.title).toBe('Stop s2 (Stop #2)');
+    expect(map.markers[1].options.title).toBe('Stop s2 · 61C');
     map.markers.forEach(({ marker }) =>
       expect(marker.onClick).toHaveBeenCalledTimes(1)
     );
@@ -145,6 +148,122 @@ describe('route and stop rendering', () => {
     );
     expect(map.markers).toHaveLength(1);
     expect(map.markers[0].options.position.lat).toBe(0);
+  });
+
+  test('a shared platform has one neutral marker, merged routes and surviving owner callbacks', () => {
+    const first = jest.fn();
+    const second = jest.fn();
+    renderer.renderStopMarkers('61C', [stop()], 'INBOUND', first);
+    renderer.renderStopMarkers('61D', [stop()], 'INBOUND', second);
+    renderer.renderStopMarkers('61C', [stop()], 'OUTBOUND', first);
+    expect(map.markers).toHaveLength(1);
+    const marker = map.markers[0].marker;
+    expect(marker.setTitle).toHaveBeenLastCalledWith('Stop s1 · 61C · 61D');
+    expect(marker.setIcon).toHaveBeenLastCalledWith(
+      createStopIcon('#64748b', 14, { shared: true, selected: false })
+    );
+    renderer.clearStopMarkers('61C_INBOUND');
+    renderer.clearStopMarkers('61C_OUTBOUND');
+    expect(marker.remove).not.toHaveBeenCalled();
+    expect(marker.setTitle).toHaveBeenLastCalledWith('Stop s1 · 61D');
+    marker.onClick.mock.calls[0][0]();
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledWith({ ...stop(), routes: ['61D'] });
+    renderer.clearStopMarkers('61D_INBOUND');
+    expect(marker.remove).toHaveBeenCalledTimes(1);
+    marker.onClick.mock.calls[0][0]();
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
+  test('opposing platforms stay separate even with identical names or IDs at different positions', () => {
+    renderer.renderStopMarkers(
+      '61C',
+      [stop('s1'), { ...stop('s2'), stopName: 'Stop s1' }],
+      'INBOUND'
+    );
+    renderer.renderStopMarkers('61D', [stop('s1', 40.4402)], 'OUTBOUND');
+    expect(map.markers).toHaveLength(3);
+  });
+
+  test('refreshing the same stop group preserves physical markers and replaces stale callbacks', () => {
+    const previous = jest.fn();
+    const latest = jest.fn();
+    renderer.renderStopMarkers('61C', [stop()], 'INBOUND', previous);
+    renderer.renderStopMarkers('61C', [stop()], 'INBOUND', latest);
+    expect(map.markers).toHaveLength(1);
+    expect(map.markers[0].marker.remove).not.toHaveBeenCalled();
+    map.markers[0].marker.onClick.mock.calls[0][0]();
+    expect(previous).not.toHaveBeenCalled();
+    expect(latest).toHaveBeenCalledTimes(1);
+  });
+
+  test('overview hides ordinary stops, while the selected platform remains visible with a halo', () => {
+    renderer.renderStopMarkers('61C', [stop('s1'), stop('s2')], 'INBOUND');
+    map.zoomTo(13);
+    map.markers.forEach(({ marker }) =>
+      expect(marker.setVisible).toHaveBeenLastCalledWith(false)
+    );
+    renderer.setFocusedStop('s1');
+    expect(map.markers[0].marker.setVisible).toHaveBeenLastCalledWith(true);
+    expect(map.markers[0].marker.setIcon).toHaveBeenLastCalledWith(
+      createStopIcon('#c41230', 13, { shared: false, selected: true })
+    );
+    expect(map.markers[1].marker.setVisible).toHaveBeenLastCalledWith(false);
+    renderer.setFocusedStop(null);
+    expect(map.markers[0].marker.setVisible).toHaveBeenLastCalledWith(false);
+    map.zoomTo(14);
+    map.markers.forEach(({ marker }) =>
+      expect(marker.setVisible).toHaveBeenLastCalledWith(true)
+    );
+  });
+
+  test('shared stop visibility follows its remaining visible route and direction owners', () => {
+    const hiddenClick = jest.fn();
+    const visibleClick = jest.fn();
+    renderer.renderStopMarkers('61C', [stop()], 'INBOUND', hiddenClick);
+    renderer.renderStopMarkers('61D', [stop()], 'OUTBOUND', visibleClick);
+    const marker = map.markers[0].marker;
+    renderer.hideRoute('61C');
+    expect(marker.setVisible).not.toHaveBeenCalledWith(false);
+    marker.onClick.mock.calls[0][0]();
+    expect(hiddenClick).not.toHaveBeenCalled();
+    expect(visibleClick).toHaveBeenCalledTimes(1);
+    renderer.hideDirectionPolylines('61D', 'OUTBOUND');
+    expect(marker.setVisible).toHaveBeenLastCalledWith(false);
+    renderer.showRoute('61C');
+    expect(marker.setVisible).toHaveBeenLastCalledWith(true);
+    expect(marker.setTitle).toHaveBeenLastCalledWith('Stop s1 · 61C');
+  });
+
+  test('route focus emphasizes the chosen path and restores the network when cleared', () => {
+    renderer.renderRouteGeometry('61C', geometry(), '#123456');
+    renderer.renderRouteGeometry('61D', geometry(), '#abcdef');
+    renderer.setFocusedRoute('61C');
+    expect(map.lines[1].line.setStyle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ weight: 4.5, opacity: 1, zIndex: 25 })
+    );
+    expect(map.lines[3].line.setStyle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ weight: 1.75, opacity: 0.23 })
+    );
+    renderer.setFocusedRoute(null);
+    expect(map.lines[3].line.setStyle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ weight: 2.75, opacity: 0.82 })
+    );
+    map.zoomTo(12);
+    expect(map.lines[1].line.setStyle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ weight: 2, opacity: 0.62 })
+    );
+  });
+
+  test('route hit testing scales with zoom and keeps both visible strokes under one selection identity', () => {
+    renderer.renderRouteGeometry('61C', geometry(), '#123456');
+    expect(map.lines[0].options.selection).toEqual(
+      map.lines[1].options.selection
+    );
+    const near = { lat: 40.4405, lng: -79.94 };
+    expect(renderer.getRoutesAtPosition(near)).toEqual(['61C']);
+    map.zoomTo(19);
+    expect(renderer.getRoutesAtPosition(near)).toEqual([]);
   });
 
   test('zoom changes resize visible dots only across size bands and retain their anchor', () => {
@@ -197,8 +316,20 @@ describe('route and stop rendering', () => {
     renderer.setRouteClickCallback(clicked);
     renderer.renderRouteGeometry('61C', geometry(), '#123456');
     expect(map.lines.map(({ options }) => options)).toEqual([
-      { path, color: '#ffffff', weight: 6, opacity: 0.95, zIndex: 10 },
-      { path, color: '#123456', weight: 3.5, opacity: 1, zIndex: 11 }
+      expect.objectContaining({
+        path,
+        color: '#ffffff',
+        weight: 4.75,
+        opacity: 0.85,
+        zIndex: 10
+      }),
+      expect.objectContaining({
+        path,
+        color: '#123456',
+        weight: 2.75,
+        opacity: 0.82,
+        zIndex: 11
+      })
     ]);
     const position = { lat: 40.44, lng: -79.94 };
     map.lines.forEach(({ line }) => line.onClick.mock.calls[0][0](position));
@@ -255,7 +386,7 @@ describe('route and stop rendering', () => {
     renderer.hideDirectionPolylines('61C', 'INBOUND');
     renderer.renderDetourGeometry('61C', detour());
     expect(map.lines[2].options).toEqual(
-      expect.objectContaining({ weight: 7, zIndex: 20 })
+      expect.objectContaining({ weight: 6.5, zIndex: 20 })
     );
     expect(map.lines[3].options).toEqual(
       expect.objectContaining({ weight: 4.5, color: '#e9462f', zIndex: 21 })

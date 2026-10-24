@@ -2,6 +2,24 @@
 
 ScottyGo combines Pittsburgh Regional Transit (PRT) buses and CMU shuttles in one map. The current personal deployment is [scottygo-ningrui.onrender.com](https://scottygo-ningrui.onrender.com/). This guide describes the implemented app; [ARCHITECTURE.md](ARCHITECTURE.md) covers development and operations, and [API.md](API.md) describes its interfaces.
 
+## Five-iteration rider experience release
+
+This release is developed and accepted in five rounds. Each row contains five independently usable additions. Acceptance includes behavior tests and browser checks at phone and desktop sizes; release evidence is recorded below as rounds ship.
+
+| Round | Rider goal and features | Acceptance target |
+| --- | --- | --- |
+| 1 — Read and select the map | Unified bus/stop/route overlap chooser; shared-stop deduplication; zoom-aware stop density; route emphasis; selected-stop halo | Every overlapping object can be selected; hidden objects are excluded; the same stop is drawn once; selected context stays visible. |
+| 2 — Find a place to board | Nearby stop list; search the map area; 5/10/15-minute walking range; current-route filter; next-arrival comparison | Distance-sorted stops respect range and route; area search preserves GPS; independent prediction failures remain recoverable. |
+| 3 — Explore a route | Route stop browser; current-bus list; nearest boarding stop; explicit bus follow mode; full-route overview | Direction and search work together; lists open the right map object; dragging pauses follow; overview respects visible geometry. |
+| 4 — Repeat a journey | Saved stops; named planning places; recently viewed routes/stops; named filter presets; share a stop | Browser-local items survive reload, are account-scoped, and reopen current data; shared stop links survive sign-in. |
+| 5 — Read relevant updates | Saved-route alert scope; read/unread tracking; priority/newest sorting; route grouping; share update summaries | Filters compose without losing updates; changed notices become unread again; shared text contains safe public links only. |
+
+### Round 1 — accepted
+
+Shared stops now use one marker with all serving routes; below zoom 14, ordinary stop dots hide while a selected stop retains its halo. Route strokes adapt to zoom and the selected route receives stronger emphasis. Tapping a crowded map point opens **Choose on map**, with separate bus, stop, and route groups. The chooser uses a consistent 24-pixel radius at every zoom and excludes hidden or removed objects.
+
+Acceptance: 547 client tests passed (45 suites), plus lint, TypeScript and production build. A fixed CMU browser fixture at 390 × 760 verified two overlapping buses, one shared stop and two routes; selecting the stop/route invokes the correct action, overview hides ordinary dots, and highlighting retains the stop. Live-map phone acceptance and deployment evidence are recorded with the release commit.
+
 ## Map and route discovery
 
 After signing in, the map starts near your location when permission is available, or near CMU campus otherwise. Search by route number, route name, stop name, or stop ID. Selecting a result opens that route or stop without requiring you to find it manually on the map.

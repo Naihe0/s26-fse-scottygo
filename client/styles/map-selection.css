@@ -1,0 +1,121 @@
+.map-selection-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+  background: rgb(15 23 42 / 20%);
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+  padding: calc(82px + env(safe-area-inset-top, 0px)) 20px 20px;
+}
+
+.map-selection {
+  width: min(390px, 100%);
+  max-height: calc(100dvh - 112px);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  color: #17283c;
+  border: 1px solid #dfe6ed;
+  border-radius: 20px;
+  box-shadow: 0 16px 50px rgb(15 23 42 / 22%);
+  overflow: hidden;
+}
+
+.map-selection__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 16px 12px 12px 20px;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.map-selection__header h2 {
+  margin: 2px 0 5px;
+  font-size: 19px;
+}
+.map-selection__header p {
+  margin: 0;
+  color: #5c6b7d;
+  font-size: 13px;
+}
+.map-selection__close {
+  width: 44px;
+  min-height: 44px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #f1f4f7;
+  color: #334155;
+  font-size: 28px;
+  cursor: pointer;
+}
+
+.map-selection__items {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 12px 14px;
+}
+.map-selection__items h3 {
+  margin: 14px 8px 5px;
+  color: #627085;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.map-selection__choice {
+  width: 100%;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.map-selection__choice:hover {
+  background: #f2f5f8;
+}
+.map-selection__choice:focus-visible,
+.map-selection__close:focus-visible {
+  outline: 3px solid #bf0b30;
+  outline-offset: -3px;
+}
+.map-selection__icon {
+  color: #9c1230;
+  font-size: 23px;
+}
+.map-selection__label {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+.map-selection__label strong {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.map-selection__label > span {
+  color: #637185;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .map-selection-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .map-selection {
+    width: 100%;
+    max-height: min(65dvh, 580px);
+    border-radius: 22px 22px 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}

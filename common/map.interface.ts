@@ -13,6 +13,14 @@ export interface ILatLng {
   lng: number;
 }
 
+/** Human-readable identity used when several map objects share a tap target. */
+export interface IMapSelectionMetadata {
+  id: string;
+  kind: 'bus' | 'stop' | 'route';
+  label: string;
+  detail?: string;
+}
+
 export interface IMapMarkerOptions {
   position: ILatLng;
   title?: string;
@@ -22,6 +30,7 @@ export interface IMapMarkerOptions {
   zIndex?: number;
   draggable?: boolean;
   clickable?: boolean;
+  selection?: IMapSelectionMetadata;
 }
 
 export interface IMapPolylineOptions {
@@ -30,6 +39,7 @@ export interface IMapPolylineOptions {
   weight?: number;
   opacity?: number;
   zIndex?: number;
+  selection?: IMapSelectionMetadata;
 }
 
 export interface IMapMarker {
@@ -47,6 +57,7 @@ export interface IMapMarker {
   ): void;
   setVisible(visible: boolean): void;
   setTitle?(title: string): void;
+  setSelection?(selection: IMapSelectionMetadata): void;
   onClick(callback: () => void): void;
   remove(): void;
 }
@@ -54,6 +65,11 @@ export interface IMapMarker {
 export interface IMapPolyline {
   id: string;
   setVisible(visible: boolean): void;
+  setStyle?(
+    style: Partial<
+      Pick<IMapPolylineOptions, 'color' | 'weight' | 'opacity' | 'zIndex'>
+    >
+  ): void;
   onClick(callback: (position: ILatLng) => void): void;
   remove(): void;
 }

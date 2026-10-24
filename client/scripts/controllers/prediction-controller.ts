@@ -121,6 +121,7 @@ export class PredictionController {
    */
   async handleStopClick(stop: IStop): Promise<void> {
     if (this.directionsController.isActive) return;
+    this.routeRenderer.setFocusedStop?.(stop.stopId);
     const version = ++this.requestVersion;
     this.stopSelectionPending = false;
     if (this.restoreMinimisedPopup(stop)) return;
@@ -508,6 +509,7 @@ export class PredictionController {
     if (closeBtn) {
       closeBtn.addEventListener('click', () => {
         this.stopPolling();
+        this.routeRenderer.setFocusedStop?.(null);
         dismissPopup('stop');
       });
     }

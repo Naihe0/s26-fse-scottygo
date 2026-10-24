@@ -4,9 +4,15 @@ import {
   IMapPolyline,
   IMapMarkerOptions,
   IMapPolylineOptions,
+  IMapSelectionMetadata,
   ILatLng,
   IConfig
 } from '../../../common/map.interface';
+import { findMapHits, MapHitTarget } from '../utils/map-hit-test';
+import {
+  dismissMapSelection,
+  showMapSelection
+} from '../components/map-selection';
 
 // Keep geographic context legible without competing with ScottyGo's overlays.
 // Embedded styles deliberately avoid a map ID or cloud-style configuration.
@@ -60,6 +66,14 @@ interface MarkerAnimation {
   frameId?: number;
 }
 
+interface SelectableOverlay {
+  selection?: IMapSelectionMetadata;
+  visible: boolean;
+  position?: () => ILatLng | undefined;
+  path?: readonly ILatLng[];
+  onClick?: (position: ILatLng) => void;
+}
+
 /**
  * Google Maps implementation of IMapProvider.
  *
@@ -73,6 +87,8 @@ export class GoogleMapProvider implements IMapProvider {
   private markerAnimations = new Map<string, MarkerAnimation>();
   private motionPreference: MediaQueryList | null = null;
   private polylines: Map<string, google.maps.Polyline> = new Map();
+  private selectableOverlays = new Map<string, SelectableOverlay>();
+  private mapClickCallbacks: Array<(position: ILatLng) => void> = [];
   private transitLayer!: google.maps.TransitLayer;
   private trafficLayer!: google.maps.TrafficLayer;
   private bikeLayer!: google.maps.BicyclingLayer;
@@ -95,6 +111,13 @@ export class GoogleMapProvider implements IMapProvider {
       styles: BASE_MAP_STYLES,
       zoomControlOptions: {
         position: google.maps.ControlPosition.RIGHT_BOTTOM
+      }
+    });
+    this.map.addListener('click', (event: google.maps.MapMouseEvent) => {
+      if (!event.latLng) return;
+      const position = { lat: event.latLng.lat(), lng: event.latLng.lng() };
+      if (!this.selectAt(position)) {
+        this.mapClickCallbacks.forEach((callback) => callback(position));
       }
     });
 
@@ -149,6 +172,17 @@ export class GoogleMapProvider implements IMapProvider {
       zIndex: options.zIndex
     });
     this.markers.set(id, marker);
+    const selectable: SelectableOverlay = {
+      selection: options.clickable === false ? undefined : options.selection,
+      visible: true,
+      position: () => {
+        const position = marker.getPosition();
+        return position
+          ? { lat: position.lat(), lng: position.lng() }
+          : undefined;
+      }
+    };
+    this.selectableOverlays.set(id, selectable);
 
     return {
       id,
@@ -210,9 +244,17 @@ export class GoogleMapProvider implements IMapProvider {
         };
         animation.frameId = requestAnimationFrame(step);
       },
-      setVisible: (visible: boolean) => marker.setVisible(visible),
+      setVisible: (visible: boolean) => {
+        selectable.visible = visible;
+        marker.setVisible(visible);
+      },
       setTitle: (title: string) => {
         if (this.markers.get(id) === marker) marker.setTitle(title);
+      },
+      setSelection: (selection: IMapSelectionMetadata) => {
+        if (options.clickable !== false && this.markers.get(id) === marker) {
+          selectable.selection = selection;
+        }
       },
       setIcon: (
         icon:
@@ -234,12 +276,29 @@ export class GoogleMapProvider implements IMapProvider {
         }
       },
       onClick: (callback: () => void) => {
-        google.maps.event.addListener(marker, 'click', callback);
+        selectable.onClick = callback;
+        google.maps.event.addListener(
+          marker,
+          'click',
+          (event: google.maps.MapMouseEvent) => {
+            if (this.markers.get(id) !== marker || !selectable.visible) return;
+            const position = event?.latLng
+              ? { lat: event.latLng.lat(), lng: event.latLng.lng() }
+              : selectable.position?.();
+            if (
+              !position ||
+              !selectable.selection ||
+              !this.selectAt(position, selectable.selection.id)
+            )
+              callback();
+          }
+        );
       },
       remove: () => {
         this.cancelMarkerAnimation(id);
         marker.setMap(null);
         this.markers.delete(id);
+        this.selectableOverlays.delete(id);
       }
     };
   }
@@ -255,23 +314,53 @@ export class GoogleMapProvider implements IMapProvider {
       map: this.map
     });
     this.polylines.set(id, polyline);
+    const selectable: SelectableOverlay = {
+      selection: options.selection,
+      visible: true,
+      path: options.path.map((position) => ({ ...position }))
+    };
+    this.selectableOverlays.set(id, selectable);
 
     return {
       id,
-      setVisible: (visible: boolean) => polyline.setVisible(visible),
+      setVisible: (visible: boolean) => {
+        selectable.visible = visible;
+        polyline.setVisible(visible);
+      },
+      setStyle: (style) => {
+        if (this.polylines.get(id) !== polyline) return;
+        const changes: google.maps.PolylineOptions = {};
+        if (style.color !== undefined) changes.strokeColor = style.color;
+        if (style.weight !== undefined) changes.strokeWeight = style.weight;
+        if (style.opacity !== undefined) changes.strokeOpacity = style.opacity;
+        if (style.zIndex !== undefined) changes.zIndex = style.zIndex;
+        polyline.setOptions(changes);
+      },
       onClick: (callback: (position: ILatLng) => void) => {
+        selectable.onClick = callback;
         google.maps.event.addListener(
           polyline,
           'click',
           (e: google.maps.PolyMouseEvent) => {
-            if (e.latLng)
-              callback({ lat: e.latLng.lat(), lng: e.latLng.lng() });
+            if (
+              this.polylines.get(id) !== polyline ||
+              !selectable.visible ||
+              !e.latLng
+            )
+              return;
+            const position = { lat: e.latLng.lat(), lng: e.latLng.lng() };
+            if (
+              !selectable.selection ||
+              !this.selectAt(position, selectable.selection.id)
+            )
+              callback(position);
           }
         );
       },
       remove: () => {
         polyline.setMap(null);
         this.polylines.delete(id);
+        this.selectableOverlays.delete(id);
       }
     };
   }
@@ -280,13 +369,21 @@ export class GoogleMapProvider implements IMapProvider {
     this.markerAnimations.forEach((_animation, id) => {
       this.cancelMarkerAnimation(id);
     });
-    this.markers.forEach((m) => m.setMap(null));
+    this.markers.forEach((m, id) => {
+      m.setMap(null);
+      this.selectableOverlays.delete(id);
+    });
     this.markers.clear();
+    dismissMapSelection();
   }
 
   clearPolylines(): void {
-    this.polylines.forEach((p) => p.setMap(null));
+    this.polylines.forEach((p, id) => {
+      p.setMap(null);
+      this.selectableOverlays.delete(id);
+    });
     this.polylines.clear();
+    dismissMapSelection();
   }
 
   clearAll(): void {
@@ -312,11 +409,34 @@ export class GoogleMapProvider implements IMapProvider {
   }
 
   onMapClick(callback: (position: ILatLng) => void): void {
-    this.map.addListener('click', (e: google.maps.MapMouseEvent) => {
-      if (e.latLng) {
-        callback({ lat: e.latLng.lat(), lng: e.latLng.lng() });
-      }
-    });
+    this.mapClickCallbacks.push(callback);
+  }
+
+  private selectAt(position: ILatLng, clickedId?: string): boolean {
+    const targets: MapHitTarget[] = [];
+    for (const [id, overlay] of this.selectableOverlays) {
+      if (!overlay.selection || !overlay.visible || !overlay.onClick) continue;
+      targets.push({
+        selection: overlay.selection,
+        position: overlay.position?.(),
+        path: overlay.path,
+        select: () => {
+          // Data can refresh while a choice is open; never activate a removed overlay.
+          if (this.selectableOverlays.get(id) === overlay && overlay.visible)
+            overlay.onClick?.(position);
+        }
+      });
+    }
+    const hits = findMapHits(
+      position,
+      this.map?.getZoom() ?? 14,
+      targets,
+      24,
+      clickedId
+    );
+    if (!hits.length) return false;
+    showMapSelection(hits);
+    return true;
   }
 
   onZoomChanged(callback: (zoom: number) => void): void {

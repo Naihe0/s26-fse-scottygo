@@ -591,6 +591,12 @@ export class VehicleTracker {
         const marker = this.mapProvider!.addMarker({
           position: { lat: vehicle.lat, lng: vehicle.lon },
           title: `Bus ${vehicle.vid}${vehicle.isDetoured ? ' (Detoured)' : ''}`,
+          zIndex: 60,
+          selection: {
+            id: `bus:${vehicle.vid}`, kind: 'bus',
+            label: `Bus ${vehicle.vid}`,
+            detail: `${vehicle.routeId} · ${vehicle.direction || 'Shuttle'}`
+          },
           icon: busIcon.url,
           iconAnchor: busIcon.anchor,
           iconSize: busIcon.size

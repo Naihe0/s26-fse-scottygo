@@ -1580,7 +1580,10 @@ export class FilterController {
     for (const nearbyStop of stops) {
       const routeKey = nearbyStop.routesServingStop[0] ?? 'NEARBY';
       const groupedStops = stopsByRoute.get(routeKey) || [];
-      groupedStops.push(nearbyStop.stop);
+      groupedStops.push({
+        ...nearbyStop.stop,
+        routes: nearbyStop.routesServingStop
+      });
       stopsByRoute.set(routeKey, groupedStops);
     }
 

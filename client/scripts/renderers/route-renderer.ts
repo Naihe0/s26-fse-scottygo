@@ -3,7 +3,8 @@ import type {
   IMapProvider,
   IMapPolyline,
   IMapMarker,
-  ILatLng
+  ILatLng,
+  IMapPolylineOptions
 } from '../../../common/map.interface';
 import type { IStop, IDetour } from '../../../common/transit.interface';
 import { createStopIcon, stopDotSize } from '../utils/stop-icon';
@@ -37,13 +38,29 @@ interface RenderedSegment {
   direction: string | null;
   path: ILatLng[];
   polylines: IMapPolyline[];
+  color: string;
+  detour: boolean;
 }
 
 interface RenderedStops {
-  markers: IMapMarker[];
-  color: string;
-  positions: ILatLng[];
   routeId: string;
+  direction: string;
+  stopKeys: Set<string>;
+}
+
+interface StopOwner {
+  routeId: string;
+  direction: string;
+  stop: IStop;
+  onClick?: (stop: IStop) => void;
+}
+
+interface SharedStop {
+  marker: IMapMarker;
+  position: ILatLng;
+  owners: Map<string, StopOwner>;
+  iconKey: string;
+  visible: boolean;
 }
 
 function isPosition(point: ILatLng): boolean {
@@ -63,11 +80,13 @@ export class RouteRenderer {
   private routePolylines = new Map<string, RenderedSegment[]>();
   private detourPolylines = new Map<string, RenderedSegment[]>();
   private stopMarkers = new Map<string, RenderedStops>();
+  private sharedStops = new Map<string, SharedStop>();
   private routeColors = new Map<string, string>();
   private hiddenRoutes = new Set<string>();
   private hiddenDirections = new Map<string, Set<string>>();
   private zoomProviders = new WeakSet<IMapProvider>();
-  private dotSize = 10;
+  private focusedRoute: string | null = null;
+  private focusedStop: string | null = null;
   private onRouteClickCallback:
     | ((routeIds: string[], position: ILatLng) => void)
     | null = null;
@@ -82,21 +101,28 @@ export class RouteRenderer {
   initialize(mapProvider: IMapProvider): void {
     if (this.mapProvider !== mapProvider) this.clearAllRoutes();
     this.mapProvider = mapProvider;
-    this.dotSize = stopDotSize(mapProvider.getZoom());
     if (this.zoomProviders.has(mapProvider)) return;
     this.zoomProviders.add(mapProvider);
-    mapProvider.onZoomChanged((zoom) => {
-      if (
-        this.mapProvider !== mapProvider ||
-        this.dotSize === stopDotSize(zoom)
-      )
-        return;
-      this.dotSize = stopDotSize(zoom);
-      for (const { markers, color } of this.stopMarkers.values()) {
-        const icon = createStopIcon(color, zoom);
-        markers.forEach((marker) => marker.setIcon(icon));
-      }
+    mapProvider.onZoomChanged(() => {
+      if (this.mapProvider !== mapProvider) return;
+      this.refreshStops();
+      this.refreshRouteStyles();
     });
+  }
+
+  /** Emphasize a selected route without concealing its surrounding network. */
+  setFocusedRoute(routeId: string | null): void {
+    if (this.focusedRoute === routeId) return;
+    this.focusedRoute = routeId;
+    this.refreshRouteStyles();
+    this.refreshStops();
+  }
+
+  /** Keep a selected platform visible while the user zooms out. */
+  setFocusedStop(stopId: string | null): void {
+    if (this.focusedStop === stopId) return;
+    this.focusedStop = stopId;
+    this.refreshStops();
   }
 
   setRouteClickCallback(
@@ -110,11 +136,15 @@ export class RouteRenderer {
   }
 
   /** Include only visible geometry; test complete segments, not just vertices. */
-  getRoutesAtPosition(position: ILatLng): string[] {
+  getRoutesAtPosition(position: ILatLng, radiusPixels = 24): string[] {
     if (!isPosition(position)) return [];
     const hits = new Set<string>();
     const scale = Math.cos((position.lat * Math.PI) / 180);
-    const thresholdSquared = 0.0003 ** 2; // About 33 m, adjusted for longitude.
+    // Match a finger-sized target at the current scale, rather than a fixed
+    // geographic radius that becomes too broad when zoomed into a street.
+    const zoom = this.mapProvider?.getZoom() ?? 14;
+    const thresholdSquared =
+      ((360 * Math.max(0, radiusPixels) * scale) / (256 * 2 ** zoom)) ** 2;
     for (const overlays of [this.routePolylines, this.detourPolylines]) {
       for (const [routeId, segments] of overlays) {
         if (hits.has(routeId)) continue;
@@ -153,6 +183,58 @@ export class RouteRenderer {
     );
   }
 
+  private routeStyles(
+    routeId: string,
+    color: string,
+    detour: boolean
+  ): Array<Omit<IMapPolylineOptions, 'path'>> {
+    const zoom = this.mapProvider?.getZoom() ?? 14;
+    const selected = this.focusedRoute === routeId;
+    const dimmed = this.focusedRoute !== null && !selected;
+    const weight = selected
+      ? 4.5
+      : dimmed
+        ? 1.75
+        : zoom < 14
+          ? 2
+          : zoom < 16
+            ? 2.75
+            : 3.25;
+    const opacity = selected ? 1 : dimmed ? 0.23 : zoom < 14 ? 0.62 : 0.82;
+    const zIndex = selected ? 24 : detour ? 20 : 10;
+    return [
+      {
+        color: '#ffffff',
+        weight: (detour ? Math.max(weight, 4.5) : weight) + 2,
+        opacity: dimmed ? 0.25 : 0.85,
+        zIndex
+      },
+      {
+        color,
+        weight: detour ? Math.max(weight, 4.5) : weight,
+        opacity: detour && !dimmed ? 1 : opacity,
+        zIndex: zIndex + 1
+      }
+    ];
+  }
+
+  private refreshRouteStyles(): void {
+    for (const overlays of [this.routePolylines, this.detourPolylines]) {
+      for (const [routeId, segments] of overlays) {
+        for (const segment of segments) {
+          const styles = this.routeStyles(
+            routeId,
+            segment.color,
+            segment.detour
+          );
+          segment.polylines.forEach((polyline, index) =>
+            polyline.setStyle?.(styles[index])
+          );
+        }
+      }
+    }
+  }
+
   /** Both strokes are clickable, so the casing remains a useful hit area. */
   private renderSegment(
     routeId: string,
@@ -164,31 +246,24 @@ export class RouteRenderer {
     if (!Array.isArray(path) || path.length < 2 || !path.every(isPosition))
       return null;
     const points = path.map((point) => ({ lat: point.lat, lng: point.lng }));
-    const polylines = [
+    const polylines = this.routeStyles(routeId, color, detour).map((style) =>
       this.mapProvider!.addPolyline({
         path: points,
-        color: '#ffffff',
-        weight: detour ? 7 : 6,
-        opacity: 0.95,
-        zIndex: detour ? 20 : 10
-      }),
-      this.mapProvider!.addPolyline({
-        path: points,
-        color,
-        weight: detour ? 4.5 : 3.5,
-        opacity: 1,
-        zIndex: detour ? 21 : 11
+        ...style,
+        selection: {
+          id: `route:${routeId}`,
+          kind: 'route',
+          label: `Route ${routeId}`
+        }
       })
-    ];
+    );
     for (const polyline of polylines) {
       polyline.onClick((position) => {
         if (!this.onRouteClickCallback) return;
-        const overlapping = this.getRoutesAtPosition(position);
-        if (!overlapping.includes(routeId)) overlapping.unshift(routeId);
-        this.onRouteClickCallback(overlapping, position);
+        this.onRouteClickCallback([routeId], position);
       });
     }
-    const segment = { direction, path: points, polylines };
+    const segment = { direction, path: points, polylines, color, detour };
     if (!this.segmentVisible(routeId, segment)) {
       polylines.forEach((polyline) => polyline.setVisible(false));
     }
@@ -204,12 +279,7 @@ export class RouteRenderer {
     // A color/geometry refresh must preserve the user's active visibility.
     this.removeRouteGeometry(routeId);
     this.routeColors.set(routeId, color);
-    for (const stops of this.stopMarkers.values()) {
-      if (stops.routeId !== routeId || stops.color === color) continue;
-      stops.color = color;
-      const icon = createStopIcon(color, this.mapProvider.getZoom());
-      stops.markers.forEach((marker) => marker.setIcon(icon));
-    }
+    this.refreshStops();
     const segments: RenderedSegment[] = [];
     for (const { direction, path } of this.readPaths(routeData)) {
       const segment = this.renderSegment(routeId, direction, path, color);
@@ -313,29 +383,141 @@ export class RouteRenderer {
   ): void {
     if (!this.mapProvider) return;
     const key = `${routeId}_${direction}`;
-    this.clearStopMarkers(key);
-    const color = this.getRouteColor(routeId);
-    const icon = createStopIcon(color, this.mapProvider.getZoom());
-    const markers: IMapMarker[] = [];
-    const positions: ILatLng[] = [];
-    const seen = new Set<string>();
-    for (const stop of stops) {
+    const previous = this.stopMarkers.get(key);
+    const stopKeys = new Set<string>();
+    for (const stop of Array.isArray(stops) ? stops : []) {
+      if (!stop) continue;
       const position = { lat: stop.lat, lng: stop.lon };
-      if (!isPosition(position) || seen.has(stop.stopId)) continue;
-      seen.add(stop.stopId);
-      const marker = this.mapProvider.addMarker({
-        position,
-        title: `${stop.stopName} (Stop #${markers.length + 1})`,
-        icon: icon.url,
-        iconAnchor: icon.anchor,
-        iconSize: icon.size,
-        zIndex: 30
+      if (!isPosition(position)) continue;
+      // Keep opposite platforms separate even when they have the same name.
+      const stopKey = `${stop.stopId}:${stop.lat.toFixed(5)}:${stop.lon.toFixed(5)}`;
+      if (stopKeys.has(stopKey)) continue;
+      stopKeys.add(stopKey);
+      let shared = this.sharedStops.get(stopKey);
+      if (!shared) {
+        const icon = createStopIcon(
+          this.getRouteColor(routeId),
+          this.mapProvider.getZoom()
+        );
+        const marker = this.mapProvider.addMarker({
+          position,
+          title: `${stop.stopName} · ${routeId === 'NEARBY' ? 'Bus stop' : routeId}`,
+          icon: icon.url,
+          iconAnchor: icon.anchor,
+          iconSize: icon.size,
+          zIndex: 30,
+          selection: {
+            id: `stop:${stopKey}`,
+            kind: 'stop',
+            label: stop.stopName,
+            detail: routeId === 'NEARBY' ? 'Bus stop' : routeId
+          }
+        });
+        shared = {
+          marker,
+          position,
+          owners: new Map(),
+          iconKey: `${this.getRouteColor(routeId)}:${stopDotSize(this.mapProvider.getZoom())}:false:false`,
+          visible: true
+        };
+        this.sharedStops.set(stopKey, shared);
+        marker.onClick(() => {
+          const current = this.sharedStops.get(stopKey);
+          if (!current?.visible) return;
+          const owners = this.visibleStopOwners(current);
+          const owner =
+            owners.find(
+              (entry) => entry.routeId === this.focusedRoute && entry.onClick
+            ) ?? owners.find((entry) => entry.onClick);
+          owner?.onClick?.(this.stopWithRoutes(owner.stop, owners));
+        });
+      }
+      shared.owners.set(key, {
+        routeId,
+        direction,
+        stop,
+        onClick: onStopClick
       });
-      if (onStopClick) marker.onClick(() => onStopClick(stop));
-      markers.push(marker);
-      positions.push(position);
     }
-    this.stopMarkers.set(key, { markers, color, positions, routeId });
+    for (const stopKey of previous?.stopKeys ?? []) {
+      if (!stopKeys.has(stopKey)) this.releaseStopOwner(stopKey, key);
+    }
+    this.stopMarkers.set(key, { routeId, direction, stopKeys });
+    this.refreshStops();
+  }
+
+  private visibleStopOwners(shared: SharedStop): StopOwner[] {
+    return [...shared.owners.values()].filter(
+      (owner) =>
+        !this.hiddenRoutes.has(owner.routeId) &&
+        !this.hiddenDirections.get(owner.routeId)?.has(owner.direction)
+    );
+  }
+
+  private routesForOwners(owners: StopOwner[]): string[] {
+    return [
+      ...new Set(
+        owners.flatMap((owner) => [
+          ...(owner.routeId !== 'NEARBY' ? [owner.routeId] : []),
+          ...(owner.direction === 'NEARBY' ? (owner.stop.routes ?? []) : [])
+        ])
+      )
+    ].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }
+
+  private stopWithRoutes(stop: IStop, owners: StopOwner[]): IStop {
+    const routes = this.routesForOwners(owners);
+    return {
+      ...stop,
+      routes: [...new Set([...(stop.routes ?? []), ...routes])]
+    };
+  }
+
+  private refreshStops(): void {
+    if (!this.mapProvider) return;
+    const zoom = this.mapProvider.getZoom();
+    for (const [key, shared] of this.sharedStops) {
+      const owners = this.visibleStopOwners(shared);
+      const owner = owners[0] ?? shared.owners.values().next().value;
+      if (!owner) continue;
+      const routes = this.routesForOwners(owners);
+      const focused = owner.stop.stopId === this.focusedStop;
+      const visible = owners.length > 0 && (zoom >= 14 || focused);
+      if (visible !== shared.visible) {
+        shared.visible = visible;
+        shared.marker.setVisible(visible);
+      }
+      const color =
+        routes.length === 1 ? this.getRouteColor(routes[0]) : '#64748b';
+      const iconKey = `${color}:${stopDotSize(zoom)}:${routes.length > 1}:${focused}`;
+      if (iconKey !== shared.iconKey) {
+        shared.marker.setIcon(
+          createStopIcon(color, zoom, {
+            shared: routes.length > 1,
+            selected: focused
+          })
+        );
+        shared.iconKey = iconKey;
+      }
+      const detail = routes.length ? routes.join(' · ') : 'Bus stop';
+      shared.marker.setTitle?.(`${owner.stop.stopName} · ${detail}`);
+      shared.marker.setSelection?.({
+        id: `stop:${key}`,
+        kind: 'stop',
+        label: owner.stop.stopName,
+        detail
+      });
+    }
+  }
+
+  private releaseStopOwner(stopKey: string, ownerKey: string): void {
+    const shared = this.sharedStops.get(stopKey);
+    if (!shared) return;
+    shared.owners.delete(ownerKey);
+    if (!shared.owners.size) {
+      shared.marker.remove();
+      this.sharedStops.delete(stopKey);
+    }
   }
 
   hideRoute(routeId: string): void {
@@ -367,6 +549,7 @@ export class RouteRenderer {
         segment.polylines.forEach((polyline) => polyline.setVisible(visible));
       }
     }
+    this.refreshStops();
   }
 
   hasRouteGeometry(routeId: string): boolean {
@@ -397,8 +580,11 @@ export class RouteRenderer {
   }
 
   clearStopMarkers(key: string): void {
-    this.stopMarkers.get(key)?.markers.forEach((marker) => marker.remove());
+    for (const stopKey of this.stopMarkers.get(key)?.stopKeys ?? []) {
+      this.releaseStopOwner(stopKey, key);
+    }
     this.stopMarkers.delete(key);
+    this.refreshStops();
   }
 
   clearAllRoutes(): void {
@@ -406,13 +592,14 @@ export class RouteRenderer {
     this.routePolylines.clear();
     this.detourPolylines.forEach((segments) => this.removeSegments(segments));
     this.detourPolylines.clear();
-    this.stopMarkers.forEach(({ markers }) =>
-      markers.forEach((marker) => marker.remove())
-    );
+    this.sharedStops.forEach(({ marker }) => marker.remove());
+    this.sharedStops.clear();
     this.stopMarkers.clear();
     this.routeColors.clear();
     this.hiddenRoutes.clear();
     this.hiddenDirections.clear();
+    this.focusedRoute = null;
+    this.focusedStop = null;
   }
 
   private boundsOf(
@@ -452,5 +639,4 @@ export class RouteRenderer {
     );
     if (bounds) this.mapProvider.fitBounds(bounds);
   }
-
 }

@@ -41,7 +41,7 @@ describe('Google Maps marker movement ownership', () => {
     'matchMedia'
   );
   const mapOptions: google.maps.MapOptions[] = [];
-  const nativeMap = { setMapTypeId: jest.fn() };
+  const nativeMap = { setMapTypeId: jest.fn(), addListener: jest.fn() };
   const polyline = { setMap: jest.fn() };
   const initial = { lat: 40.44, lng: -79.94 };
   const destination = { lat: 40.45, lng: -79.95 };
