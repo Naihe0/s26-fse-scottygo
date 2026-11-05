@@ -452,3 +452,49 @@
     transition: none;
   }
 }
+
+.saved-route-options {
+  margin-block: 0.6rem 1rem;
+  border-block: 1px solid #e0e4e8;
+}
+.saved-route-options summary {
+  min-height: 44px;
+  padding: 0.7rem 0;
+  cursor: pointer;
+  font-weight: 600;
+}
+.saved-route-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+  padding-block: 0.4rem 0.8rem;
+}
+.saved-route-fields label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: #45556a;
+}
+.saved-route-fields select {
+  width: 100%;
+  min-height: 44px;
+  font: inherit;
+  font-size: 1rem;
+  color: #24354a;
+  background: #f7f9fb;
+  border: 1px solid #cdd6df;
+  border-radius: 8px;
+  padding-inline: 0.4rem;
+}
+.sheet-browse .sheet-unsaved {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  align-self: end;
+  min-height: 44px;
+}
+.sheet-unsaved input {
+  width: 18px;
+  height: 18px;
+  accent-color: #86142b;
+}

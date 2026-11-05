@@ -26,6 +26,13 @@
           >Try again</button
         >
       </div>
+      <details class="saved-route-options" id="saved-route-options" hidden>
+        <summary>Filter and sort routes</summary>
+        <div class="saved-route-fields">
+          <label>Alerts<select id="saved-alert-scope"><option value="all">All saved routes</option><option value="muted">Muted routes</option><option value="enabled">Alerts enabled</option></select></label>
+          <label>Order<select id="saved-route-order"><option value="saved">Saved order</option><option value="route">Route number</option><option value="recent">Latest rider report</option></select></label>
+        </div>
+      </details>
       <ul class="subscription-list" id="subscription-list"></ul>
       <button class="add-route-btn" id="add-route-btn" disabled>
         <span>+ Add route</span>
@@ -73,6 +80,10 @@
           aria-label="Search routes to subscribe"
           autocomplete="off"
         />
+      </div>
+      <div class="saved-route-fields sheet-browse">
+        <label>Transit system<select id="sheet-system"><option value="all">All systems</option><option value="PRT">PRT buses</option><option value="CMU">CMU shuttles</option></select></label>
+        <label class="sheet-unsaved"><input type="checkbox" id="sheet-unsaved" /> Hide saved routes</label>
       </div>
       <p id="sheet-status" class="sheet-status" role="status"></p>
       <button id="routes-retry" class="state-retry" hidden>Try again</button>

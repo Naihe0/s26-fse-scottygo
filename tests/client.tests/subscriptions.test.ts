@@ -67,6 +67,27 @@ describe('saved routes interactions and recovery', () => {
     jest.useRealTimers();
   });
 
+  test('combines agency and unsaved filters including after a successful save', async () => {
+    routes.push(
+      { id: 'CMU-1', name: 'Campus Shuttle', system: 'CMU' },
+      { id: 'CMU-2', name: 'East Shuttle', system: 'CMU' }
+    );
+    savedRoutes = [{ routeId: 'cmu-1', createdAt: new Date().toISOString() }];
+    await boot();
+    openSheet();
+    const system = el<HTMLSelectElement>('sheet-system');
+    system.value = 'CMU';
+    system.dispatchEvent(new Event('change'));
+    const unsaved = el<HTMLInputElement>('sheet-unsaved');
+    unsaved.click();
+    expect(el('sheet-results').querySelectorAll('li')).toHaveLength(1);
+    expect(el('sheet-results').textContent).toContain('East Shuttle');
+    el('sheet-results').querySelector('button')!.click();
+    await flush();
+    expect(el('sheet-results').children).toHaveLength(0);
+    expect(el('sheet-status').textContent).toContain('No routes match');
+    expect(document.querySelectorAll('.subscription-card')).toHaveLength(2);
+  });
   test('loading does not present an empty account or allow premature saving', async () => {
     let finish!: (value: ReturnType<typeof result>) => void;
     mockFetch.mockImplementationOnce(
@@ -272,8 +293,9 @@ describe('saved routes interactions and recovery', () => {
         input.dispatchEvent(new Event('input'));
       }
       expect(el('routes-retry').hidden).toBe(true);
-      input.focus();
-      input.dispatchEvent(
+      const last = el<HTMLInputElement>('sheet-unsaved');
+      last.focus();
+      last.dispatchEvent(
         new KeyboardEvent('keydown', {
           key: 'Tab',
           bubbles: true,
@@ -289,7 +311,7 @@ describe('saved routes interactions and recovery', () => {
           cancelable: true
         })
       );
-      expect(document.activeElement).toBe(input);
+      expect(document.activeElement).toBe(last);
       finish?.(result(routes));
       await flush();
     }

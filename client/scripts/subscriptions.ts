@@ -38,6 +38,34 @@ let routesState: LoadState = 'loading';
 let pendingRouteId: string | null = null;
 /** Most recent notification createdAt per routeId (from last 30 min). */
 const latestNotifTime = new Map<string, string>();
+const alertScope =
+  document.querySelector<HTMLSelectElement>('#saved-alert-scope')!;
+const savedOrder =
+  document.querySelector<HTMLSelectElement>('#saved-route-order')!;
+const sheetSystem = document.querySelector<HTMLSelectElement>('#sheet-system')!;
+const hideSaved = document.querySelector<HTMLInputElement>('#sheet-unsaved')!;
+
+function routeSystem(route: IRouteDisplayMeta): string {
+  return (
+    route.system ??
+    (normalizeRouteId(route.id).startsWith('cmu-') ? 'CMU' : 'PRT')
+  );
+}
+
+function routeSubtitle(
+  route: IRouteDisplayMeta | undefined,
+  fallback: string
+): string {
+  if (
+    route &&
+    routeSystem(route) === 'PRT' &&
+    route.name &&
+    !routeIdsEqual(route.name, route.id) &&
+    !routeIdsEqual(route.name, 'Route ' + route.id)
+  )
+    return route.name;
+  return fallback;
+}
 
 // ── API helpers ────────────────────────────────────────────────────────────────
 
@@ -183,7 +211,7 @@ function createCard(sub: Subscription): HTMLLIElement {
     <div class="card-icon-circle" aria-hidden="true">${busIconSVG}</div>
     <div class="card-info">
       <h2 class="card-route-title">${escapeHtml(display.title)}</h2>
-      <div class="card-last-updated">${escapeHtml(display.subtitle)}</div>
+      <div class="card-last-updated">${escapeHtml(routeSubtitle(route, display.subtitle))}</div>
       ${updatedText ? `<div class="card-last-updated">${updatedText}</div>` : ''}
     </div>
     <div class="card-actions">
@@ -264,6 +292,10 @@ function createCard(sub: Subscription): HTMLLIElement {
     );
     bellBtn.setAttribute('aria-pressed', String(nowMuted));
     showToast(`${display.title} alerts ${nowMuted ? 'muted' : 'unmuted'}.`);
+    if (alertScope.value !== 'all') {
+      renderList();
+      if (!li.isConnected) alertScope.focus({ preventScroll: true });
+    }
   });
 
   return li;
@@ -301,7 +333,24 @@ function renderList(): void {
   const content = document.querySelector<HTMLElement>('main')!;
   const scrollTop = content.scrollTop;
   list.innerHTML = '';
-  subscriptions.forEach((sub) => list.appendChild(createCard(sub)));
+  const visible = subscriptions.filter(
+    (sub) =>
+      alertScope.value === 'all' ||
+      isRouteMuted(sub.routeId) === (alertScope.value === 'muted')
+  );
+  if (savedOrder.value === 'route' || savedOrder.value === 'recent') {
+    const time = (id: string) => Date.parse(latestNotifTime.get(id) || '') || 0;
+    visible.sort(
+      (a, b) =>
+        (savedOrder.value === 'recent'
+          ? time(b.routeId) - time(a.routeId)
+          : 0) ||
+        a.routeId.localeCompare(b.routeId, undefined, { numeric: true })
+    );
+  }
+  visible.forEach((sub) => list.appendChild(createCard(sub)));
+  document.getElementById('saved-route-options')!.hidden =
+    !subscriptions.length;
   updateCount();
   renderEmptyState();
   const status = document.getElementById('subscription-status')!;
@@ -310,7 +359,9 @@ function renderList(): void {
       ? 'Loading your saved routes…'
       : subscriptionsState === 'error'
         ? 'Your saved routes could not be loaded.'
-        : '';
+        : !visible.length && subscriptions.length
+          ? 'No saved routes match this alert setting.'
+          : '';
   list.setAttribute('aria-busy', String(subscriptionsState === 'loading'));
   document.getElementById('subscriptions-retry')!.hidden =
     subscriptionsState !== 'error';
@@ -325,12 +376,14 @@ function renderList(): void {
 
 function getFilteredRoutes(query: string): IRouteDisplayMeta[] {
   const lowerQ = query.toLowerCase();
-  if (!query) return allRoutes;
-
   return allRoutes.filter(
     (route) =>
-      route.id.toLowerCase().includes(lowerQ) ||
-      route.name.toLowerCase().includes(lowerQ)
+      (sheetSystem.value === 'all' ||
+        routeSystem(route) === sheetSystem.value) &&
+      (!hideSaved.checked ||
+        !subscriptions.some((sub) => routeIdsEqual(sub.routeId, route.id))) &&
+      (route.id.toLowerCase().includes(lowerQ) ||
+        route.name.toLowerCase().includes(lowerQ))
   );
 }
 
@@ -424,7 +477,9 @@ function updateSheetStatus(): void {
         : count === 0
           ? query
             ? `No routes match “${query}”. Try a route number or name.`
-            : 'No routes are available yet. Try again shortly.'
+            : allRoutes.length
+              ? 'No routes match these filters.'
+              : 'No routes are available yet. Try again shortly.'
           : subscriptions.length >= MAX_SUBSCRIPTIONS_PER_USER
             ? '10 routes saved. Remove a route from your saved list to add another.'
             : `${count} ${count === 1 ? 'route' : 'routes'} · ${subscriptions.length} of ${MAX_SUBSCRIPTIONS_PER_USER} saved`;
@@ -451,7 +506,7 @@ function renderSheetResults(query: string): void {
       <div class="result-icon-circle">${busIconSVG}</div>
       <div class="result-info">
         <div class="result-name">${escapeHtml(display.title)}</div>
-        <div class="result-destination">${escapeHtml(display.subtitle)}</div>
+        <div class="result-destination">${escapeHtml(routeSubtitle(route, display.subtitle))}</div>
       </div>
       <button class="result-add-btn" type="button"></button>
     `;
@@ -481,7 +536,17 @@ function renderSheetResults(query: string): void {
         mutationPending = false;
         pendingRouteId = null;
         renderList();
-        updateMutationControls();
+        if (
+          hideSaved.checked &&
+          subscriptions.some((sub) => routeIdsEqual(sub.routeId, route.id))
+        ) {
+          const restoreFocus = document.activeElement === addBtn;
+          renderSheetResults(currentQuery());
+          if (restoreFocus)
+            document
+              .getElementById('route-search-input')
+              ?.focus({ preventScroll: true });
+        } else updateMutationControls();
       }
     });
 
@@ -504,6 +569,8 @@ function initSheet(): void {
     overlay.classList.add('is-active');
     sheet.classList.add('is-active');
     sheet.removeAttribute('inert');
+    sheetSystem.value = 'all';
+    hideSaved.checked = false;
     renderSheetResults('');
     setSheetFeedback('');
     input.focus();
@@ -534,7 +601,7 @@ function initSheet(): void {
     } else if (event.key === 'Tab') {
       const focusable = Array.from(
         sheet.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), a[href]'
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href]'
         )
       ).filter((element) => !element.closest('[hidden], [inert]'));
       const first = focusable[0];
@@ -552,6 +619,10 @@ function initSheet(): void {
     setSheetFeedback('');
     renderSheetResults(input.value.trim());
   });
+  for (const field of [sheetSystem, hideSaved])
+    field.addEventListener('change', () => renderSheetResults(currentQuery()));
+  for (const field of [alertScope, savedOrder])
+    field.addEventListener('change', renderList);
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────────
