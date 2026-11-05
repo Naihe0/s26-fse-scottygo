@@ -87,6 +87,7 @@ describe('prediction refresh contents', () => {
     await controller.handleStopClick(stop);
     expect(document.querySelector<HTMLElement>('.map-popup__empty')!.hidden).toBe(true);
     const retry = document.querySelector<HTMLButtonElement>('.arrival-recovery button')!;
+    retry.focus();
     retry.click();
     retry.click();
     window.dispatchEvent(new Event('online'));
@@ -94,6 +95,7 @@ describe('prediction refresh contents', () => {
     finish([first]);
     await jest.advanceTimersByTimeAsync(1);
     expect(document.querySelector('.map-popup__arrival')).not.toBeNull();
+    expect(document.activeElement).toBe(document.querySelector('.map-popup__arrival'));
     expect(document.querySelector<HTMLElement>('.arrival-recovery')!.hidden).toBe(true);
   });
 

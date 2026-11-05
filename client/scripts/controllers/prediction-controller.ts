@@ -494,7 +494,7 @@ export class PredictionController {
       if (status.textContent !== label) status.textContent = label;
       const empty = popup.querySelector<HTMLElement>('.map-popup__empty');
       if (empty) empty.hidden = ctx.unavailable;
-      this.tickPredictionCountdowns(ctx.unavailable);
+      this.tickPredictionCountdowns(popup, ctx.unavailable);
     };
     updateNotice();
 
@@ -504,7 +504,7 @@ export class PredictionController {
         this.stopPolling();
         return;
       }
-      if (!document.hidden && !ctx.unavailable) this.tickPredictionCountdowns(false);
+      if (!document.hidden && !ctx.unavailable) this.tickPredictionCountdowns(popup, false);
     }, 1000);
 
     // 30-second full refresh from server
@@ -520,7 +520,9 @@ export class PredictionController {
         return;
       }
       fetching = true;
-      retry.disabled = true;
+      // aria-disabled retains keyboard focus while the pending request is
+      // coalesced above. A disabled native button would drop focus to the page.
+      retry.setAttribute('aria-disabled', 'true');
       try {
         const fresh = await this.fetchPredictions(
           ctx.stop.stopId,
@@ -528,15 +530,19 @@ export class PredictionController {
           events.signal
         );
         if (version !== this.requestVersion || !popup.isConnected) return;
+        const retryFocused = document.activeElement === retry;
         ctx.unavailable = fresh === null || !navigator.onLine;
         if (!ctx.unavailable && fresh) this.refreshPredictionList(fresh.slice(0, 8), ctx);
         updateNotice();
+        if (retryFocused && !ctx.unavailable)
+          popup.querySelector<HTMLElement>('.map-popup__arrival, .map-popup__directions-btn')?.focus();
       } finally {
         fetching = false;
-        retry.disabled = false;
+        retry.removeAttribute('aria-disabled');
       }
     };
     retry.disabled = false;
+    retry.removeAttribute('aria-disabled');
     retry.addEventListener('click', refresh, { signal: events.signal });
     window.addEventListener('online', refresh, { signal: events.signal });
     window.addEventListener('offline', () => {
@@ -547,9 +553,7 @@ export class PredictionController {
     this.predictionPollInterval = window.setInterval(refresh, 30_000);
   }
 
-  private tickPredictionCountdowns(unavailable: boolean): void {
-    const popup = document.getElementById(MAP_POPUP_ID);
-    if (!popup) return;
+  private tickPredictionCountdowns(popup: HTMLElement, unavailable: boolean): void {
     const items = popup.querySelectorAll<HTMLElement>('.map-popup__arrival');
     items.forEach((li) => {
       const arrival = Number(li.dataset.arrival);
@@ -595,6 +599,8 @@ export class PredictionController {
         .filter((_, index) => selectedIndices.has(index))
         .map(key)
     );
+    const row = document.activeElement?.closest<HTMLElement>('.map-popup__arrival');
+    const focused = row && popup.contains(row) ? displayPredictions[Number(row.dataset.predIndex)] : null;
     selectedIndices.clear();
     freshPreds.forEach((prediction, index) => {
       if (selected.has(key(prediction))) selectedIndices.add(index);
@@ -610,6 +616,10 @@ export class PredictionController {
       popup.insertBefore(element, directionsBtn)
     );
     this.updateDirectionsBtnLabel(directionsBtn, selectedIndices.size);
+    if (focused) {
+      const newIndex = freshPreds.findIndex(prediction => key(prediction) === key(focused));
+      (popup.querySelector<HTMLElement>(`[data-pred-index="${newIndex}"]`) ?? directionsBtn).focus({ preventScroll: true });
+    }
   }
 
   private bindMinimizeButton(popup: Element, ctx: StopPopupContext): void {
