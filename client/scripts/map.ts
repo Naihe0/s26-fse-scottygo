@@ -576,9 +576,11 @@ const handlePanelToggle = (panelName: PanelName): void => {
 
 const registerTransitSearchEvents = (): void => {
   document.addEventListener('search', (e: Event) => {
-    const customEvent = e as CustomEvent<{ query?: string }>;
-    const query = customEvent.detail?.query?.trim() ?? '';
-    if (!query) {
+    // WebKit/Chromium also emit a native "search" for type=search inputs in
+    // other sheets. Only the transit search component owns route clearing.
+    if (!(e instanceof CustomEvent) || typeof e.detail?.query !== 'string' ||
+        !(e.target instanceof HTMLElement) || !e.target.closest('transit-search')) return;
+    if (!e.detail.query.trim()) {
       selectRoute(null);
     }
   });
