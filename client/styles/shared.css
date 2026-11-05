@@ -198,13 +198,6 @@ body {
   margin: 0;
 }
 
-.dropdown-header p {
-  margin-top: 4px;
-  color: var(--app-muted);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
 .dropdown-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

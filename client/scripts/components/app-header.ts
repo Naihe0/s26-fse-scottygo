@@ -3,12 +3,63 @@
  * Renders the top navigation bar with optional back button and hamburger menu.
  *
  * Attributes:
- *   back  - Boolean attribute. If present, shows a back button that navigates to the previous page.
+ *   back  - Return to the previous ScottyGo page or offer a link to the map.
  */
-import { getToken, signOut } from '../services/session';
+import { getSessionUserId, getToken, signOut } from '../services/session';
+import { sanitizeMapViewHash } from '../utils/map-auth-return';
+
+function mapStorageKey(): string | null {
+  const user = getSessionUserId(getToken());
+  return user ? `scottygo:last-map:${user}` : null;
+}
+
+function lastMapPath(): string {
+  try {
+    const key = mapStorageKey();
+    const hash = key && sanitizeMapViewHash(sessionStorage.getItem(key) || '');
+    return hash ? `/${hash}` : '/';
+  } catch {
+    return '/';
+  }
+}
+
+function hasPreviousAppPage(): boolean {
+  if (!document.referrer || window.history.length < 2) return false;
+  const previous = new URL(document.referrer);
+  return (
+    previous.origin === window.location.origin &&
+    /^\/(?:map|subscriptions|notifications|account)?\/?$/.test(
+      previous.pathname
+    )
+  );
+}
 
 export class AppHeader extends HTMLElement {
   private menuOpen = false;
+  private mapOwnerKey: string | null = null;
+  // Capture at departure. The map updates its hash with replaceState as the
+  // rider changes filters, so reading it only on initial render loses edits.
+  private readonly rememberMap = (): void => {
+    if (!this.mapOwnerKey) return;
+    try {
+      const key = mapStorageKey();
+      if (!key || key !== this.mapOwnerKey) return;
+      const hash = sanitizeMapViewHash(window.location.hash);
+      if (hash && hash !== '#/map') sessionStorage.setItem(key, hash);
+      else sessionStorage.removeItem(key);
+    } catch {
+      // Storage may be disabled. Ordinary links still work.
+    }
+  };
+
+  private readonly refreshMapLinks = (): void => {
+    const href = lastMapPath();
+    this.querySelectorAll<HTMLAnchorElement>('[data-map-return]').forEach(
+      (link) => {
+        link.setAttribute('href', href);
+      }
+    );
+  };
 
   private readonly onOutsideClick = (event: MouseEvent): void => {
     if (!this.contains(event.target as Node)) this.setMenuOpen(false);
@@ -35,6 +86,7 @@ export class AppHeader extends HTMLElement {
     const menu = this.querySelector<HTMLElement>('#dropdown-menu');
     const focusWasInside = menu?.contains(document.activeElement);
     this.menuOpen = open;
+    if (open) this.rememberMap();
     button?.classList.toggle('is-active', open);
     button?.setAttribute('aria-expanded', String(open));
     button?.setAttribute(
@@ -47,6 +99,9 @@ export class AppHeader extends HTMLElement {
   }
 
   disconnectedCallback(): void {
+    this.mapOwnerKey = null;
+    window.removeEventListener('pagehide', this.rememberMap);
+    window.removeEventListener('pageshow', this.refreshMapLinks);
     document.removeEventListener('click', this.onOutsideClick);
     this.removeEventListener('keydown', this.onKeyDown);
     this.removeEventListener('focusout', this.onFocusOut);
@@ -57,7 +112,6 @@ export class AppHeader extends HTMLElement {
     this.setAttribute('role', 'banner');
     this.menuOpen = false;
 
-    const showBack = this.hasAttribute('back');
     const page = window.location.pathname.replace(/\/$/, '') || '/';
     const pageLabels: Record<string, string> = {
       '/': 'Map',
@@ -73,18 +127,21 @@ export class AppHeader extends HTMLElement {
         ? ' aria-current="page"'
         : '';
     const signedIn = Boolean(getToken());
-
-    const backButton = showBack
-      ? `<button type="button" class="back-icon" id="back-icon" aria-label="Go back">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-            <path d="M20 11H7.83L13.42 5.41L12 4L4 12L12 20L13.41 18.59L7.83 13H20V11Z" fill="white"/>
-          </svg>
-        </button>`
-      : '';
+    const showBack = this.hasAttribute('back') && (page !== '/auth' || signedIn);
+    const onMap = page === '/' || page === '/map';
+    const backArrow = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M20 11H7.83L13.42 5.41L12 4L4 12L12 20L13.41 18.59L7.83 13H20V11Z" fill="currentColor"/>
+    </svg>`;
+    let backButton = '';
+    if (showBack && hasPreviousAppPage()) {
+      backButton = `<button type="button" class="back-icon" id="back-icon" aria-label="Go back">${backArrow}</button>`;
+    } else if (showBack) {
+      backButton = `<a href="/" data-map-return class="back-icon" aria-label="Return to map">${backArrow}</a>`;
+    }
 
     this.innerHTML = `
       ${backButton}
-      <a href="/" class="app-brand" aria-label="ScottyGo map">
+      <a href="/" data-map-return class="app-brand" aria-label="ScottyGo map">
         <svg class="app-brand-mark" width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true">
           <path d="M6 20V9a5 5 0 0 1 5-5h9M6 14h9a5 5 0 0 0 5-5V4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
           <circle cx="6" cy="20" r="3" fill="currentColor"/>
@@ -100,11 +157,10 @@ export class AppHeader extends HTMLElement {
       </button>
       <nav class="dropdown-menu" id="dropdown-menu" aria-label="Main navigation" inert>
         <div class="dropdown-header">
-          <h2>Explore ScottyGo</h2>
-          <p>Get where you need to go.</p>
+          <h2>Navigation</h2>
         </div>
         <div class="dropdown-grid">
-          <a href="/" class="dropdown-item"${current('/')}>
+          <a href="/" data-map-return class="dropdown-item"${current('/')}>
             <div class="icon-circle">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6zM9 3v15M15 6v15"/>
@@ -164,6 +220,13 @@ export class AppHeader extends HTMLElement {
     this.addEventListener('keydown', this.onKeyDown);
     this.addEventListener('focusout', this.onFocusOut);
     document.addEventListener('click', this.onOutsideClick);
+    if (onMap) {
+      this.mapOwnerKey = mapStorageKey();
+      window.addEventListener('pagehide', this.rememberMap);
+    } else {
+      this.refreshMapLinks();
+      window.addEventListener('pageshow', this.refreshMapLinks);
+    }
 
     backIcon?.addEventListener('click', (e) => {
       e.preventDefault();

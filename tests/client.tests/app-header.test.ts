@@ -2,9 +2,10 @@
 
 import '../../client/scripts/components/app-header';
 
-function mount(path = '/'): HTMLElement {
+function mount(path = '/', back = false): HTMLElement {
   window.history.replaceState({}, '', path);
   const header = document.createElement('app-header');
+  if (back) header.setAttribute('back', '');
   document.body.appendChild(header);
   return header;
 }
@@ -16,6 +17,7 @@ function menuButton(header: HTMLElement): HTMLButtonElement {
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
+  sessionStorage.clear();
   window.history.replaceState({}, '', '/');
   jest.restoreAllMocks();
 });
@@ -123,15 +125,86 @@ test('reconnecting the header starts closed and never focuses a discarded menu b
   expect(document.activeElement).toBe(button);
 });
 
-test('the optional back action is a button and follows browser history', () => {
+test('the back action follows an existing ScottyGo visit', () => {
+  jest
+    .spyOn(document, 'referrer', 'get')
+    .mockReturnValue(window.location.origin + '/subscriptions');
+  jest.spyOn(window.history, 'length', 'get').mockReturnValue(2);
   const back = jest
     .spyOn(window.history, 'back')
     .mockImplementation(() => undefined);
-  const header = document.createElement('app-header');
-  header.setAttribute('back', '');
-  document.body.appendChild(header);
+  const header = mount('/account', true);
   const button = header.querySelector<HTMLButtonElement>('#back-icon')!;
   expect(button.tagName).toBe('BUTTON');
   button.click();
   expect(back).toHaveBeenCalledTimes(1);
+});
+
+const sessionFor = (userId: string) =>
+  localStorage.setItem(
+    'token',
+    `test.${btoa(JSON.stringify({ userId }))}.fixture`
+  );
+
+test('returning from alerts restores the last public route, stop and filters captured on departure', () => {
+  sessionFor('first-rider');
+  const map = mount('/#/map?r=old');
+  window.history.replaceState(
+    {},
+    '',
+    '/#/map?r=61C&stop=123&s=PRT&dir=IB&lat=40.4&token=private'
+  );
+  window.dispatchEvent(new Event('pagehide'));
+  map.remove();
+  const alerts = mount('/notifications', true);
+  const destinations = alerts.querySelectorAll('[data-map-return]');
+  expect(destinations).toHaveLength(3);
+  for (const link of destinations) {
+    expect(link.getAttribute('href')).toBe(
+      '/#/map?r=61C&stop=123&s=PRT&dir=IB'
+    );
+  }
+  expect(alerts.querySelector('a[aria-label="Return to map"]')).not.toBeNull();
+});
+
+test('a previous account’s map does not carry over, including a session change before departure', () => {
+  sessionFor('first-rider');
+  const map = mount('/#/map?r=61C');
+  menuButton(map).click();
+  sessionFor('second-rider');
+  window.dispatchEvent(new Event('pagehide'));
+  map.remove();
+  const header = mount('/subscriptions');
+  expect(header.querySelector('.app-brand')!.getAttribute('href')).toBe('/');
+});
+
+test('a cleared map and a storage failure both lead back to the main map', () => {
+  sessionFor('rider');
+  const map = mount('/#/map?r=61C');
+  menuButton(map).click();
+  window.history.replaceState({}, '', '/#/map');
+  window.dispatchEvent(new Event('pagehide'));
+  map.remove();
+  const header = mount('/account');
+  expect(header.querySelector('.app-brand')!.getAttribute('href')).toBe('/');
+  jest.spyOn(Storage.prototype, 'getItem').mockImplementation(function (
+    this: Storage
+  ) {
+    if (this === sessionStorage) throw new Error('Unavailable');
+    return `test.${btoa(JSON.stringify({ userId: 'rider' }))}.fixture`;
+  });
+  window.dispatchEvent(new Event('pageshow'));
+  expect(header.querySelector('.app-brand')!.getAttribute('href')).toBe('/');
+});
+
+test('a direct signed-out sign-in has no dead Back button; an external referral keeps the rider in the app', () => {
+  const auth = mount('/auth', true);
+  expect(auth.querySelector('.back-icon')).toBeNull();
+  auth.remove();
+  jest
+    .spyOn(document, 'referrer', 'get')
+    .mockReturnValue('https://outside.example/article');
+  jest.spyOn(window.history, 'length', 'get').mockReturnValue(3);
+  const header = mount('/subscriptions', true);
+  expect(header.querySelector('.back-icon')!.getAttribute('href')).toBe('/');
 });
