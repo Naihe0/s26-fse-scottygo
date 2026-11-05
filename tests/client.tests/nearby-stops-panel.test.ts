@@ -288,6 +288,24 @@ describe('Nearby stop discovery and arrival comparisons', () => {
     );
   });
 
+  test('filtering to a farther stop by route previews it without fetching nearby stops again', async () => {
+    const entries = Array.from({ length: 7 }, (_, i) => stop(String(i), 30 + i));
+    entries[6].routesServingStop = ['P1'];
+    nearby.mockResolvedValue(payload(entries));
+    await open();
+    expect(arrivals).toHaveBeenCalledTimes(5);
+    const input = panel.querySelector('input')!;
+    input.value = 'p1';
+    input.dispatchEvent(new Event('input'));
+    jest.advanceTimersByTime(250);
+    await flush();
+    expect(nearby).toHaveBeenCalledTimes(1);
+    expect(panel.querySelectorAll('[data-stop-id]')).toHaveLength(1);
+    expect(arrivals.mock.lastCall?.[0]).toBe('6');
+    expect(panel.querySelector('[data-stop-id="6"]')?.textContent).toContain('Stop 6');
+    expect(panel.querySelector('[data-checked]')?.textContent).toMatch(/^Checked/);
+  });
+
   test('scheduled and delayed predictions are labeled, expired arrivals are excluded', async () => {
     arrivals.mockResolvedValue([
       prediction({ predictedArrivalTime: Date.now() - 60_000 }),

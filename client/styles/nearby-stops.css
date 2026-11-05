@@ -218,3 +218,55 @@ nearby-stops-panel button:focus-visible {
     border-radius: 22px;
   }
 }
+
+.nearby-stops__settings {
+  margin: 8px 0;
+  border-block: 1px solid #dbe6e9;
+}
+.nearby-stops__settings summary,
+.nearby-stops__transfers summary {
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 12px 4px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.nearby-stops__settings summary .nearby-stops__origin,
+.nearby-stops__settings summary [data-settings-summary] {
+  color: #4d646e;
+  font-size: 12px;
+  font-weight: 400;
+}
+.nearby-stops__settings summary .nearby-stops__origin {
+  margin-left: 4px;
+}
+.nearby-stops__tools {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.nearby-stops__tools input,
+.nearby-stops__tools button {
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid #c4d6db;
+  border-radius: 10px;
+  padding: 6px 8px;
+  font-family: inherit;
+}
+.nearby-stops__tools input {
+  flex: 1;
+  width: 100%;
+  font-size: 16px;
+}
+.nearby-stops__tools button {
+  color: #205466;
+  background: #f5f9fa;
+}
+.nearby-stops__transfers {
+  padding-inline: 12px;
+  color: #205466;
+}
+.nearby-stops__transfers p {
+  margin: 0 0 10px;
+}

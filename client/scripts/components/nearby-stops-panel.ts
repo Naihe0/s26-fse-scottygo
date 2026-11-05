@@ -45,6 +45,8 @@ export class NearbyStopsPanel extends HTMLElement {
   private minutes = 10;
   private routeOnly = false;
   private stops: INearbyStop[] = [];
+  private matchingStops: INearbyStop[] = [];
+  private filterTimer: number | null = null;
   private version = 0;
   private request: AbortController | null = null;
   private arrivalRequest: AbortController | null = null;
@@ -78,15 +80,16 @@ export class NearbyStopsPanel extends HTMLElement {
       </button>
       <dialog id="nearby-stops-sheet" class="nearby-stops__sheet" aria-labelledby="nearby-stops-title">
         <header class="nearby-stops__header"><div><p class="nearby-stops__eyebrow">EXPLORE</p><h2 id="nearby-stops-title">Nearby stops</h2></div><button type="button" class="nearby-stops__close" aria-label="Close nearby stops">×</button></header>
-        <p class="nearby-stops__origin"></p>
+        <details class="nearby-stops__settings"><summary>Search settings <span class="nearby-stops__origin"></span><span data-settings-summary></span></summary>
         <div class="nearby-stops__area-actions"><button type="button" data-action="area">Search this area</button><button type="button" data-action="origin">Use my starting point</button></div>
         <fieldset class="nearby-stops__range"><legend>Walking range estimate</legend><div>${[5, 10, 15].map((minutes) => `<button type="button" data-range="${minutes}" aria-pressed="${minutes === 10}">${minutes} min</button>`).join('')}</div></fieldset>
         <div class="nearby-stops__scope" role="group" aria-label="Routes serving nearby stops"><button type="button" data-scope="all" aria-pressed="true">All routes</button><button type="button" data-scope="route" aria-pressed="false" hidden></button></div>
-        <p class="nearby-stops__note">Distances are straight-line estimates. Map transit systems apply.</p>
+        <p class="nearby-stops__note">Distances are straight-line estimates. Map transit systems apply.</p></details>
+        <div class="nearby-stops__tools" hidden><input type="search" aria-label="Filter nearby stops" placeholder="Street, stop number or route" autocomplete="off"><button type="button" data-refresh>Refresh arrivals</button></div>
         <p class="nearby-stops__status" role="status" aria-live="polite"></p>
         <button type="button" class="nearby-stops__retry" hidden>Try again</button>
         <ol class="nearby-stops__list" aria-label="Nearby stops ordered by distance"></ol>
-        <p class="nearby-stops__comparison">Next arrivals at the nearest 5 stops refresh every 30 seconds while this list is open.</p>
+        <p class="nearby-stops__comparison" hidden>Arrival previews refresh every 30 seconds for the first 5 matching stops. <span data-checked></span></p>
       </dialog>`;
     this.querySelector('.nearby-stops__launch')?.addEventListener(
       'click',
@@ -136,6 +139,20 @@ export class NearbyStopsPanel extends HTMLElement {
       'click',
       () => void this.loadStops()
     );
+    this.querySelector('[data-refresh]')!.addEventListener(
+      'click',
+      () => void this.refreshArrivals()
+    );
+    this.querySelector('input')!.addEventListener('input', () => {
+      this.arrivalRequest?.abort();
+      this.arrivalRequest = null;
+      this.renderStops();
+      if (this.filterTimer !== null) window.clearTimeout(this.filterTimer);
+      this.filterTimer = window.setTimeout(
+        () => void this.refreshArrivals(),
+        250
+      );
+    });
     this.filterSignature = this.currentFilterSignature();
     this.unsubscribe = this.state.subscribe(() => {
       const signature = this.currentFilterSignature();
@@ -159,6 +176,7 @@ export class NearbyStopsPanel extends HTMLElement {
   open(): void {
     if (this.opened || !this.isConnected) return;
     this.opened = true;
+    this.querySelector('input')!.value = '';
     this.useStartingPoint();
     this.routeOnly = !!this.state.getState().selectedRouteId;
     const sheet = this.querySelector<HTMLDialogElement>(
@@ -214,6 +232,8 @@ export class NearbyStopsPanel extends HTMLElement {
   }
 
   private cancelRequests(): void {
+    if (this.filterTimer !== null) window.clearTimeout(this.filterTimer);
+    this.filterTimer = null;
     this.version++;
     this.request?.abort();
     this.arrivalRequest?.abort();
@@ -241,6 +261,11 @@ export class NearbyStopsPanel extends HTMLElement {
     selectedRoute.hidden = !routeId;
     selectedRoute.textContent = routeId ? this.routeTitle(routeId) : '';
     selectedRoute.setAttribute('aria-pressed', String(this.routeOnly));
+    this.querySelector('[data-settings-summary]')!.textContent =
+      ' · ' +
+      this.minutes +
+      ' min · ' +
+      (this.routeOnly && routeId ? this.routeTitle(routeId) : 'All routes');
   }
 
   private routeTitle(routeId: string): string {
@@ -259,6 +284,9 @@ export class NearbyStopsPanel extends HTMLElement {
     )!;
     list.replaceChildren();
     this.stops = [];
+    this.matchingStops = [];
+    this.querySelector<HTMLElement>('.nearby-stops__tools')!.hidden = true;
+    this.querySelector<HTMLElement>('.nearby-stops__comparison')!.hidden = true;
     retry.hidden = true;
     const { selectedSystems, selectedRouteId } = this.state.getState();
     if (!selectedSystems.prt && !selectedSystems.cmu) {
@@ -315,9 +343,6 @@ export class NearbyStopsPanel extends HTMLElement {
             a.distanceMeters - b.distanceMeters ||
             a.stop.stopName.localeCompare(b.stop.stopName)
         );
-      status.textContent = this.stops.length
-        ? `${this.stops.length} ${this.stops.length === 1 ? 'stop' : 'stops'} within about ${this.minutes} minutes’ walk`
-        : 'No stops in this range. Try 15 min, All routes, or Search this area.';
       this.renderStops();
       void this.refreshArrivals();
     } catch {
@@ -336,7 +361,29 @@ export class NearbyStopsPanel extends HTMLElement {
 
   private renderStops(): void {
     const list = this.querySelector('.nearby-stops__list')!;
-    this.stops.forEach((item, index) => {
+    const query = this.querySelector('input')!.value.trim().toLowerCase();
+    this.matchingStops = this.stops.filter(({ stop, routesServingStop }) =>
+      [
+        stop.stopId,
+        stop.stopName,
+        ...(routesServingStop ?? stop.routes ?? [])
+      ].some((value) => value.toLowerCase().includes(query))
+    );
+    this.querySelector<HTMLElement>('.nearby-stops__tools')!.hidden =
+      !this.stops.length;
+    this.querySelector<HTMLElement>('.nearby-stops__comparison')!.hidden =
+      !this.matchingStops.length;
+    this.querySelector<HTMLButtonElement>('[data-refresh]')!.disabled =
+      !this.matchingStops.length;
+    this.querySelector('[data-checked]')!.textContent = '';
+    this.querySelector('.nearby-stops__status')!.textContent = !this.stops
+      .length
+      ? 'No stops in this range. Open Search settings to widen your search.'
+      : query
+        ? `${this.matchingStops.length} of ${this.stops.length} stops match`
+        : `${this.stops.length} ${this.stops.length === 1 ? 'stop' : 'stops'} within about ${this.minutes} minutes’ walk`;
+    list.replaceChildren();
+    this.matchingStops.forEach((item, index) => {
       const li = document.createElement('li');
       const button = document.createElement('button');
       button.type = 'button';
@@ -350,6 +397,7 @@ export class NearbyStopsPanel extends HTMLElement {
       distance.textContent = walking
         ? `${Math.round(item.distanceMeters)} m · ~${walking} min walk`
         : 'At the starting point';
+      distance.textContent = `Stop ${item.stop.stopId} · ${distance.textContent}`;
       const routes = document.createElement('span');
       routes.className = 'nearby-stops__routes';
       const suppliedRoutes = item.routesServingStop ?? item.stop.routes ?? [];
@@ -365,11 +413,6 @@ export class NearbyStopsPanel extends HTMLElement {
         badge.textContent = this.routeTitle(id);
         routes.append(badge);
       });
-      if (routeIds.length > 5) {
-        const more = document.createElement('span');
-        more.textContent = `+${routeIds.length - 5} more`;
-        routes.append(more);
-      }
       const arrival = document.createElement('span');
       arrival.className = 'nearby-stops__arrival';
       arrival.dataset.arrivalStop = item.stop.stopId;
@@ -383,6 +426,18 @@ export class NearbyStopsPanel extends HTMLElement {
           .catch(() => showToast('Could not open this stop. Try again.'));
       });
       li.append(button);
+      if (routeIds.length > 5) {
+        const details = document.createElement('details');
+        details.className = 'nearby-stops__transfers';
+        const summary = document.createElement('summary');
+        summary.textContent = `All ${routeIds.length} routes`;
+        const names = document.createElement('p');
+        names.textContent = routeIds
+          .map((id) => this.routeTitle(id))
+          .join(' · ');
+        details.append(summary, names);
+        li.append(details);
+      }
       list.append(li);
     });
   }
@@ -391,14 +446,14 @@ export class NearbyStopsPanel extends HTMLElement {
     if (
       !this.opened ||
       document.hidden ||
-      !this.stops.length ||
+      !this.matchingStops.length ||
       this.arrivalRequest
     )
       return;
     const version = this.version;
     const request = new AbortController();
     this.arrivalRequest = request;
-    const candidates = this.stops.slice(0, ARRIVAL_LIMIT);
+    const candidates = this.matchingStops.slice(0, ARRIVAL_LIMIT);
     const routeId = this.routeOnly
       ? (this.state.getState().selectedRouteId ?? undefined)
       : undefined;
@@ -437,7 +492,15 @@ export class NearbyStopsPanel extends HTMLElement {
         () => worker()
       )
     );
-    if (this.arrivalRequest === request) this.arrivalRequest = null;
+    if (this.arrivalRequest === request) {
+      this.arrivalRequest = null;
+      this.querySelector('[data-checked]')!.textContent =
+        'Checked ' +
+        new Date().toLocaleTimeString([], {
+          hour: 'numeric',
+          minute: '2-digit'
+        });
+    }
   }
 
   private renderArrival(
