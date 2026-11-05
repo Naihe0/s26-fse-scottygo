@@ -24,7 +24,7 @@ export type RecentShortcut =
   | { id: string; kind: 'route'; routeId: string; label: string }
   | { id: string; kind: 'stop'; stop: SavedStop };
 export interface RiderShortcuts {
-  stops: SavedStop[];
+  stops: Array<SavedStop & { nickname?: string }>;
   places: SavedPlace[];
   views: SavedView[];
   recent: RecentShortcut[];
@@ -172,9 +172,12 @@ function clean(value: unknown): RiderShortcuts {
   const result = blank();
   if (Array.isArray(value.stops))
     result.stops = unique(
-      value.stops
-        .map(cleanStop)
-        .filter((stop): stop is SavedStop => stop !== null),
+      value.stops.flatMap((item) => {
+        const stop = cleanStop(item);
+        if (!stop) return [];
+        const nickname = record(item) && text(item.nickname, 60);
+        return [nickname ? { ...stop, nickname } : stop];
+      }),
       (stop) => stop.stopId,
       SHORTCUT_LIMITS.stops
     );
@@ -386,18 +389,30 @@ export function saveFilterView(
 }
 
 export function renameShortcut(
-  kind: 'place' | 'view',
+  kind: 'stop' | 'place' | 'view',
   id: string,
   name: string
 ): ShortcutResult {
-  if (!text(name, 60)) return { ok: false, message: 'Enter a name.' };
   const data = getRiderShortcuts();
+  const label = text(name, 60);
+  if (kind === 'stop') {
+    const stop = data.stops.find((entry) => entry.stopId === id);
+    if (!stop) return { ok: false, message: 'This stop is no longer saved.' };
+    if (label) stop.nickname = label;
+    else delete stop.nickname;
+    write(data);
+    return {
+      ok: true,
+      message: label ? 'Stop nickname saved.' : 'Official stop name restored.'
+    };
+  }
+  if (!label) return { ok: false, message: 'Enter a name.' };
   const item = (kind === 'place' ? data.places : data.views).find(
     (entry) => entry.id === id
   );
   if (!item)
     return { ok: false, message: 'This shortcut is no longer available.' };
-  item.name = text(name, 60);
+  item.name = label;
   write(data);
   return { ok: true, message: 'Name updated.' };
 }

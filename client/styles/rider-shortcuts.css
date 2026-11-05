@@ -155,6 +155,18 @@ rider-shortcuts {
 .rider-shortcuts__text-action:hover {
   background: #fbf0f3;
 }
+.rider-shortcuts__more {
+  min-width: 48px;
+  background: #f2f5f8;
+  color: #344456;
+}
+.rider-shortcuts__stop-actions:not([hidden]) {
+  display: flex;
+  flex-basis: 100%;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
 .rider-shortcuts__empty {
   padding: 22px 6px;
   text-align: center;

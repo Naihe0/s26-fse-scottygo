@@ -198,6 +198,13 @@ export class RiderShortcuts extends HTMLElement {
       '.rider-shortcuts__panel'
     )!;
     const scrollTop = panel.scrollTop;
+    const openActions = new Set(
+      [
+        ...panel.querySelectorAll<HTMLElement>(
+          '.rider-shortcuts__more[aria-expanded="true"]'
+        )
+      ].map((item) => item.getAttribute('aria-controls'))
+    );
     panel.replaceChildren();
     panel.setAttribute(
       'aria-labelledby',
@@ -212,12 +219,32 @@ export class RiderShortcuts extends HTMLElement {
           'Keep a stop close',
           'Open any stop on the map and tap Save stop.'
         );
-      data.stops.forEach((stop) => {
+      data.stops.forEach(({ nickname, ...stop }) => {
+        const label = nickname || stop.stopName;
+        const service = stop.routes.length
+          ? stop.routes.join(' · ')
+          : `Stop ${stop.stopId}`;
         const row = this.row(
-          stop.stopName,
-          stop.routes.length ? stop.routes.join(' · ') : `Stop ${stop.stopId}`,
+          label,
+          nickname ? `${stop.stopName} · ${service}` : service,
           () => this.select(() => this.context?.onSelectStop(stop))
         );
+        const actions = document.createElement('div');
+        actions.id = `rider-stop-actions-${stop.stopId}`;
+        actions.className = 'rider-shortcuts__stop-actions';
+        actions.hidden = !openActions.has(actions.id);
+        const more = button(
+          'More',
+          () => {
+            actions.hidden = !actions.hidden;
+            more.setAttribute('aria-expanded', String(!actions.hidden));
+            if (actions.hidden) actions.querySelector('form')?.remove();
+          },
+          'rider-shortcuts__more rider-shortcuts__secondary'
+        );
+        more.setAttribute('aria-controls', actions.id);
+        more.setAttribute('aria-expanded', String(!actions.hidden));
+        more.setAttribute('aria-label', `More actions for ${label}`);
         const share = button(
           'Share',
           () => {
@@ -228,10 +255,12 @@ export class RiderShortcuts extends HTMLElement {
           'rider-shortcuts__secondary'
         );
         share.setAttribute('aria-label', `Share ${stop.stopName}`);
-        row.append(
+        actions.append(
+          this.rename('stop', stop.stopId, nickname || '', actions),
           share,
           this.removeButton('stop', stop.stopId, stop.stopName)
         );
+        row.append(more, actions);
         panel.append(row);
       });
     } else if (this.activeTab === 'places') {
@@ -401,22 +430,24 @@ export class RiderShortcuts extends HTMLElement {
   }
 
   private rename(
-    kind: 'place' | 'view',
+    kind: 'stop' | 'place' | 'view',
     id: string,
     name: string,
     row: HTMLElement
   ): HTMLButtonElement {
-    return button(
-      'Rename',
+    const trigger = button(
+      kind === 'stop' ? (name ? 'Edit nickname' : 'Add nickname') : 'Rename',
       () => {
         if (row.querySelector('form')) return;
         const form = this.nameForm(
-          `Rename ${name}`,
+          kind === 'stop' ? 'Stop nickname' : `Rename ${name}`,
           'Save name',
-          '',
+          kind === 'stop' ? 'Leave blank to use the official stop name.' : '',
           (value) => {
             return renameShortcut(kind, id, value);
-          }
+          },
+          false,
+          kind === 'stop'
         );
         const input = form.querySelector('input')!;
         input.value = name;
@@ -425,7 +456,7 @@ export class RiderShortcuts extends HTMLElement {
             'Cancel',
             () => {
               form.remove();
-              row.querySelector<HTMLElement>('button')?.focus();
+              trigger.focus();
             },
             'rider-shortcuts__secondary'
           )
@@ -436,6 +467,7 @@ export class RiderShortcuts extends HTMLElement {
       },
       'rider-shortcuts__secondary'
     );
+    return trigger;
   }
 
   private nameForm(
@@ -443,7 +475,8 @@ export class RiderShortcuts extends HTMLElement {
     action: string,
     description: string,
     save: (name: string) => ShortcutResult,
-    disabled = false
+    disabled = false,
+    allowEmpty = false
   ): HTMLFormElement {
     const form = document.createElement('form');
     form.className = 'rider-shortcuts__form';
@@ -451,7 +484,7 @@ export class RiderShortcuts extends HTMLElement {
     fieldLabel.textContent = label;
     const input = document.createElement('input');
     input.type = 'text';
-    input.required = true;
+    input.required = !allowEmpty;
     input.maxLength = 60;
     input.disabled = disabled;
     input.autocomplete = 'off';
@@ -471,7 +504,7 @@ export class RiderShortcuts extends HTMLElement {
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       if (disabled) return;
-      if (!input.value.trim()) {
+      if (!allowEmpty && !input.value.trim()) {
         input.setCustomValidity('Enter a name.');
         input.reportValidity();
         return;

@@ -120,6 +120,8 @@ describe('My places rider shortcut interactions', () => {
     toggleSavedStop(stop);
     element.open();
     const row = element.querySelector('.rider-shortcuts__row')!;
+    const more = click(`More actions for ${stop.stopName}`, row);
+    expect(more.getAttribute('aria-expanded')).toBe('true');
     click(`Share ${stop.stopName}`, row);
     expect(copyStopLink).toHaveBeenCalledWith(
       '123',
@@ -135,6 +137,46 @@ describe('My places rider shortcut interactions', () => {
     expect(element.querySelector('[role="status"]')!.textContent).toContain(
       'removed'
     );
+  });
+
+  test('lets a rider nickname a saved stop and restore its official name without changing the map or sharing ID', () => {
+    toggleSavedStop(stop);
+    element.open();
+    const more = element.querySelector<HTMLButtonElement>(
+      '.rider-shortcuts__more'
+    )!;
+    const actions = document.getElementById(
+      more.getAttribute('aria-controls')!
+    )!;
+    expect(actions.hidden).toBe(true);
+    more.click();
+    click('Add nickname', actions);
+    submit('Ride home', actions);
+    let primary = element.querySelector<HTMLButtonElement>(
+      '.rider-shortcuts__primary'
+    )!;
+    expect(primary.querySelector('strong')!.textContent).toBe('Ride home');
+    expect(primary.querySelector('span')!.textContent).toContain(stop.stopName);
+    expect(getRiderShortcuts().stops[0].nickname).toBe('Ride home');
+    click(`Share ${stop.stopName}`);
+    expect(copyStopLink).toHaveBeenCalledWith(
+      stop.stopId,
+      expect.any(HTMLButtonElement),
+      expect.any(Function)
+    );
+    primary.click();
+    expect(context.onSelectStop).toHaveBeenCalledWith(stop);
+    element.open();
+    const edit = click('Edit nickname');
+    click('Cancel');
+    expect(document.activeElement).toBe(edit);
+    edit.click();
+    submit('');
+    primary = element.querySelector<HTMLButtonElement>(
+      '.rider-shortcuts__primary'
+    )!;
+    expect(primary.querySelector('strong')!.textContent).toBe(stop.stopName);
+    expect(getRiderShortcuts().stops[0].nickname).toBeUndefined();
   });
 
   test('saves a named planning location, renames it, and reuses its chosen coordinates', () => {
