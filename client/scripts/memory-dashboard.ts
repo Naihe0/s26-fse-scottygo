@@ -326,7 +326,9 @@ async function fetchPayload<T>(path: string): Promise<T> {
   return ((await response.json()) as { payload: T }).payload;
 }
 
+let loadRevision = 0;
 async function reload(): Promise<void> {
+  const revision = ++loadRevision;
   errorEl.textContent = '';
   statusEl.textContent = 'Loading...';
   const limit = clampInput(limitInput, 10, 2000);
@@ -335,11 +337,13 @@ async function reload(): Promise<void> {
       fetchPayload<MemorySample[]>(`/transit/memory/samples?limit=${limit}`),
       fetchPayload<MemorySummary>(`/transit/memory/summary?limit=${limit}`)
     ]);
+    if (revision !== loadRevision) return;
     samples = Array.isArray(newestFirst) ? [...newestFirst].reverse() : [];
     drawChart(samples);
     renderMetrics(summary ?? {});
     statusEl.textContent = `Updated ${new Date().toISOString()}`;
   } catch (error) {
+    if (revision !== loadRevision) return;
     statusEl.textContent = 'Failed';
     drawChart([]);
     renderMetrics({});

@@ -15,6 +15,7 @@ try {
   const { revision, overall } = await health.json();
   await page.goto(new URL('/transit/memory/dashboard', origin).href);
   await page.getByRole('heading', { name: 'ScottyGo Memory Dashboard' }).waitFor();
+  await page.getByRole('status').filter({ hasText: 'Updated' }).waitFor();
   const limit = page.getByRole('spinbutton', { name: 'Sample limit' });
   await limit.fill('10');
   await page.getByRole('spinbutton', { name: 'Auto-refresh seconds' }).fill('120');
