@@ -180,9 +180,8 @@ export class StopArrivalBoard {
       more.addEventListener('click', () => {
         this.limit += PAGE_SIZE;
         this.render();
-        list
-          .querySelectorAll<HTMLButtonElement>('[data-key]')
-          [visible.length]?.focus();
+        const rows = list.querySelectorAll<HTMLButtonElement>('[data-key]');
+        rows[visible.length]?.focus();
       });
       item.append(more);
       list.append(item);
