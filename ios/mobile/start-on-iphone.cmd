@@ -6,8 +6,12 @@ if not exist node_modules\.bin\expo.cmd (
 )
 call node_modules\.bin\expo.cmd whoami >nul 2>&1
 if errorlevel 1 (
-  echo Sign in to Expo in your browser. Use the same Expo account in Expo Go on your iPhone.
+  echo Open the complete Expo login link printed below in your signed-in browser on this PC.
+  echo Keep this window open until the QR code appears.
+  setlocal
+  set "BROWSER=none"
   call node_modules\.bin\expo.cmd login --browser || goto :failed
+  endlocal
 )
 echo Connect the iPhone and PC to the same local network. Scan the QR code with the iPhone camera.
 call npm.cmd start
