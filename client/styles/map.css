@@ -1742,6 +1742,9 @@ bus-report-form.is-open .bus-report-backdrop {
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
   font-size: 14px;
   color: #1f2937;
+  max-height: calc(100% - 100px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   animation: mapPopupSlideUp 0.25s ease-out;
 }
 
@@ -1752,7 +1755,8 @@ bus-report-form.is-open .bus-report-backdrop {
 }
 
 .directions-panel__icon {
-  font-size: 22px;
+  width: 22px;
+  height: 22px;
   color: #4285f4;
   flex-shrink: 0;
 }
@@ -1761,9 +1765,7 @@ bus-report-form.is-open .bus-report-backdrop {
   font-size: 15px;
   font-weight: 600;
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .directions-panel__close {
@@ -1775,6 +1777,8 @@ bus-report-form.is-open .bus-report-backdrop {
   cursor: pointer;
   color: #6b7280;
   padding: 0 2px;
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .directions-panel__close:hover {
@@ -1783,10 +1787,33 @@ bus-report-form.is-open .bus-report-backdrop {
 
 .directions-panel__info {
   display: flex;
-  gap: 16px;
-  margin-top: 6px;
-  padding-left: 28px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
 }
+
+.directions-panel__compact {
+  margin-left: auto;
+  min-height: 44px;
+  padding: 0 8px;
+  color: #751934;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+}
+.directions-panel__body summary {
+  min-height: 44px;
+  padding: 12px 0;
+  box-sizing: border-box;
+  font-weight: 600;
+  cursor: pointer;
+}
+.directions-panel__body ol { padding-inline-start: 24px; margin: 0; }
+.directions-panel__body ol li { padding: 5px 0; overflow-wrap: anywhere; }
+.directions-panel__body ol small, .directions-panel__distance { color: #435166; }
+.directions-panel__body[hidden] { display: none; }
 
 .directions-panel__duration {
   font-size: 16px;
@@ -1832,9 +1859,15 @@ bus-report-form.is-open .bus-report-backdrop {
 .directions-panel__bus {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 3px 8px;
   padding: 4px 0;
 }
+.directions-panel__connection {
+  flex-basis: 100%;
+  color: #3c5663;
+}
+.directions-panel__connection[data-tight="true"] { color: #884720; }
 
 .directions-panel__bus-badge {
   display: inline-flex;

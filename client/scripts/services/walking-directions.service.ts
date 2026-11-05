@@ -5,6 +5,12 @@ export interface IDirectionsResult {
   durationSeconds: number;
   distanceMeters: number;
   warnings?: string[];
+  steps?: IWalkStep[];
+}
+
+export interface IWalkStep {
+  instruction: string;
+  distanceMeters?: number;
 }
 
 // The installed Maps type definitions predate the Routes API's Route class.
@@ -22,6 +28,9 @@ interface WalkingRoutesLibrary {
         durationMillis?: number;
         distanceMeters?: number;
         warnings?: string[];
+        legs?: {
+          steps?: { instructions?: string; distanceMeters?: number }[];
+        }[];
       }[];
     }>;
   };
@@ -81,7 +90,7 @@ export function requestWalkingDirections(
         origin,
         destination,
         travelMode: 'WALKING',
-        fields: ['path', 'durationMillis', 'distanceMeters', 'warnings']
+        fields: ['path', 'durationMillis', 'distanceMeters', 'warnings', 'legs']
       });
       const route = routes?.[0];
       if (
@@ -98,6 +107,24 @@ export function requestWalkingDirections(
       ) {
         throw new Error('No walking route was found for this stop.');
       }
+      const steps = (route.legs ?? []).flatMap((leg) =>
+        (leg.steps ?? []).flatMap((step) => {
+          const instruction = step.instructions?.trim();
+          if (!instruction) return [];
+          const distance = step.distanceMeters;
+          return [
+            {
+              instruction,
+              distanceMeters:
+                typeof distance === 'number' &&
+                Number.isFinite(distance) &&
+                distance >= 0
+                  ? distance
+                  : undefined
+            }
+          ];
+        })
+      );
       return {
         polyline: route.path.map((point) => ({
           lat: point.lat,
@@ -105,7 +132,8 @@ export function requestWalkingDirections(
         })),
         durationSeconds: route.durationMillis / 1000,
         distanceMeters: route.distanceMeters,
-        warnings: route.warnings ?? []
+        warnings: route.warnings ?? [],
+        ...(steps.length ? { steps } : {})
       };
     };
 

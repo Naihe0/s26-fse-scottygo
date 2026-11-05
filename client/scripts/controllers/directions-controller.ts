@@ -15,7 +15,10 @@ import type { IStop, IPrediction } from '../../../common/transit.interface';
 import { RouteRenderer } from '../renderers/route-renderer';
 import { VehicleTracker } from '../trackers/vehicle-tracker';
 import { closeMapPopup } from '../utils/map-popup';
-import { requestWalkingDirections } from '../services/walking-directions.service';
+import {
+  requestWalkingDirections,
+  type IWalkStep
+} from '../services/walking-directions.service';
 import { haversineMeters } from '../../../common/geo';
 export type { IDirectionsResult } from '../services/walking-directions.service';
 
@@ -29,6 +32,22 @@ const DEVIATION_THRESHOLD_M = 50;
 const ARRIVAL_THRESHOLD_M = 20;
 /** Tap debounce for Directions button (R1) */
 const TAP_DEBOUNCE_MS = 500;
+
+export interface IWalkingSummary {
+  durationMin: number;
+  eta: string;
+  arrivalTime: number;
+  distanceMeters: number;
+  steps: IWalkStep[];
+  predictions: IPrediction[];
+  warnings: string[];
+}
+
+const pittsburghClock = new Intl.DateTimeFormat(undefined, {
+  hour: 'numeric',
+  minute: '2-digit',
+  timeZone: 'America/New_York'
+});
 
 export class DirectionsController {
   private static instance: DirectionsController;
@@ -59,16 +78,8 @@ export class DirectionsController {
   private toastCallback: ((message: string) => void) | null = null;
   private loadingCallback: ((loading: boolean) => void) | null = null;
   // Callback to update the directions info panel
-  private infoPanelCallback:
-    | ((
-        info: {
-          durationMin: number;
-          eta: string;
-          predictions: IPrediction[];
-          warnings?: string[];
-        } | null
-      ) => void)
-    | null = null;
+  private infoPanelCallback: ((info: IWalkingSummary | null) => void) | null =
+    null;
   // Callback executed when exiting directions mode
   private exitCallback: (() => void) | null = null;
 
@@ -99,16 +110,7 @@ export class DirectionsController {
   }
 
   /** Register a callback for directions info updates (duration + ETA + selected bus predictions) */
-  setInfoPanelCallback(
-    cb: (
-      info: {
-        durationMin: number;
-        eta: string;
-        predictions: IPrediction[];
-        warnings?: string[];
-      } | null
-    ) => void
-  ): void {
+  setInfoPanelCallback(cb: (info: IWalkingSummary | null) => void): void {
     this.infoPanelCallback = cb;
   }
 
@@ -315,16 +317,15 @@ export class DirectionsController {
 
       // Update info panel with duration + ETA
       const durationMin = Math.ceil(result.durationSeconds / 60);
-      const eta = new Date(Date.now() + result.durationSeconds * 1000);
-      const etaStr = eta.toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit'
-      });
+      const arrivalTime = Date.now() + result.durationSeconds * 1000;
       this.loadingCallback?.(false);
       if (!isCurrent()) return false;
       this.infoPanelCallback?.({
         durationMin,
-        eta: etaStr,
+        eta: pittsburghClock.format(arrivalTime),
+        arrivalTime,
+        distanceMeters: result.distanceMeters,
+        steps: result.steps ?? [],
         predictions: this._selectedPredictions,
         warnings: result.warnings ?? []
       });

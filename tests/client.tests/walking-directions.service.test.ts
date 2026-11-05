@@ -72,12 +72,26 @@ describe('walking directions Routes adapter', () => {
       origin,
       destination,
       travelMode: 'WALKING',
-      fields: ['path', 'durationMillis', 'distanceMeters', 'warnings']
+      fields: ['path', 'durationMillis', 'distanceMeters', 'warnings', 'legs']
     });
     expect(removeAbortListener).toHaveBeenCalledWith(
       'abort',
       expect.any(Function)
     );
+  });
+
+  test('keeps ordered walking instructions, ignores missing text and drops invalid step distances', async () => {
+    computeRoutes.mockResolvedValue({ routes: [{
+      ...validRoute, legs: [
+        { steps: [{ instructions: ' Turn onto Forbes ', distanceMeters: 35 }, { distanceMeters: 10 }] },
+        { steps: [{ instructions: 'Cross Craig', distanceMeters: NaN }] }
+      ]
+    }] });
+    const result = await requestWalkingDirections(origin, destination, controller.signal);
+    expect(result.steps).toEqual([
+      { instruction: 'Turn onto Forbes', distanceMeters: 35 },
+      { instruction: 'Cross Craig', distanceMeters: undefined }
+    ]);
   });
 
   test('uses the first route and defaults omitted warnings to an empty list', async () => {

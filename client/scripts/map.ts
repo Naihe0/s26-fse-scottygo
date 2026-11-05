@@ -66,7 +66,8 @@ import { synchronizeMapFilterControls } from './state/map-filter-controls';
 import { mapSignInPath } from './utils/map-auth-return';
 import { FilterController } from './controllers/filter-controller';
 import { PredictionController } from './controllers/prediction-controller';
-import { DirectionsController } from './controllers/directions-controller';
+import { fillWalkingDetails } from './components/walking-summary';
+import { DirectionsController, type IWalkingSummary } from './controllers/directions-controller';
 import { RouteRenderer } from './renderers/route-renderer';
 import { VehicleTracker } from './trackers/vehicle-tracker';
 import { getRouteTitle } from './utils/route-display';
@@ -322,12 +323,7 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
     directionsController.setInfoPanelCallback(updateDirectionsPanel);
     directionsController.setLoadingCallback((loading) => {
       if (loading) {
-        updateDirectionsPanel({
-          durationMin: 0,
-          eta: '',
-          predictions: [],
-          loading: true
-        });
+          updateDirectionsPanel('loading');
       } else if (
         document.getElementById('directions-panel')?.dataset.loading === 'true'
       ) {
@@ -1190,7 +1186,7 @@ function getRouteBadgeColor(routeId: string): string {
 }
 
 /** Feed-supplied route and vehicle IDs are rendered as text, never markup. */
-function createArrivalItem(prediction: IPrediction): HTMLLIElement {
+function createArrivalItem(prediction: IPrediction, walkArrival: number): HTMLLIElement {
   const item = document.createElement('li');
   item.className = 'directions-panel__bus';
   item.dataset.arrival = String(prediction.predictedArrivalTime);
@@ -1211,19 +1207,29 @@ function createArrivalItem(prediction: IPrediction): HTMLLIElement {
     vehicle.textContent = `Bus ${prediction.vid}`;
     item.append(vehicle);
   }
+  if (Number.isFinite(prediction.predictedArrivalTime)) {
+    const margin = Math.floor((prediction.predictedArrivalTime - walkArrival) / 60_000);
+    const connection = document.createElement('small');
+    connection.className = 'directions-panel__connection';
+    connection.textContent = margin < 0 ? 'May leave before you arrive'
+      : margin < 2 ? 'Tight connection' : `About ${margin} min to spare`;
+    connection.dataset.tight = String(margin < 2);
+    item.append(connection);
+  }
   return item;
 }
 
 function updateDirectionsPanel(
-  info: {
-    durationMin: number;
-    eta: string;
-    predictions: IPrediction[];
-    warnings?: string[];
-    loading?: boolean;
-  } | null
+  info: IWalkingSummary | 'loading' | null
 ): void {
-  // Remove existing panel
+  const previous = document.querySelector<HTMLElement>('#directions-panel');
+  const sameWalk = previous?.dataset.session === String(directionsController.sessionVersion);
+  const collapsed = sameWalk && previous?.dataset.compact === 'true';
+  const readingSteps = sameWalk && previous?.querySelector('details')?.open;
+  const focusedAction = sameWalk && previous?.contains(document.activeElement)
+    ? (document.activeElement as HTMLElement)?.dataset.walkAction
+    : undefined;
+  const scroll = sameWalk ? previous?.scrollTop ?? 0 : 0;
   removeDirectionsPanel();
 
   if (!info) {
@@ -1234,57 +1240,48 @@ function updateDirectionsPanel(
   // Disable side filters while viewing walking directions
   disableFilterControls();
 
-  const panel = document.createElement('div');
+  const panel = document.createElement('section');
   panel.id = 'directions-panel';
   panel.className = 'directions-panel';
-  panel.dataset.loading = String(Boolean(info.loading));
+  panel.dataset.loading = String(info === 'loading');
+  panel.dataset.session = String(directionsController.sessionVersion);
+  panel.setAttribute('aria-label','Walking directions');
 
   const stopName = directionsController.targetStop?.stopName ?? 'Selected Stop';
 
   panel.innerHTML = `
     <div class="directions-panel__header">
-      <span class="material-icons-outlined directions-panel__icon">directions_walk</span>
+      <svg class="directions-panel__icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="14" cy="4" r="2"/><path d="m5 13 3-5 4-1 3 5 4 1M12 8l-2 7 4 3 1 4M10 15l-4 7"/></svg>
       <strong class="directions-panel__title"></strong>
-      <button class="directions-panel__close" aria-label="Exit directions">&times;</button>
+      <button type="button" class="directions-panel__close" data-walk-action="exit" aria-label="Exit directions">&times;</button>
     </div>
     <div class="directions-panel__info">
       ${
-        info.loading
+        info === 'loading'
           ? '<span role="status">Finding a walking route…</span>'
           : `<span class="directions-panel__duration">${info.durationMin} min walk</span>
-           <span class="directions-panel__eta"></span>`
+           <span class="directions-panel__distance"></span>`
       }
     </div>
   `;
 
   panel.querySelector('.directions-panel__title')!.textContent =
     `Walking to ${stopName}`;
-  const eta = panel.querySelector('.directions-panel__eta');
-  if (eta) eta.textContent = `ETA ${info.eta}`;
-
-  if (info.predictions.length > 0) {
-    const buses = document.createElement('div');
-    buses.className = 'directions-panel__buses';
-    buses.innerHTML =
-      '<span class="directions-panel__buses-label">Selected buses arriving:</span>' +
-      '<ul class="directions-panel__bus-list"></ul>';
-    buses
-      .querySelector('ul')!
-      .append(...info.predictions.map(createArrivalItem));
-    panel.appendChild(buses);
-  }
-  for (const warning of info.warnings ?? []) {
-    const text = document.createElement('p');
-    text.className = 'directions-panel__warning';
-    text.textContent = warning;
-    panel.appendChild(text);
+  if (info !== 'loading') {
+    fillWalkingDetails(
+      panel, info, directionsController.targetStop?.stopId ?? '',
+      info.predictions.map(p => createArrivalItem(p, info.arrivalTime)),
+      Boolean(collapsed), Boolean(readingSteps)
+    );
   }
 
   const container = document.querySelector('.map-container');
   if (container) container.appendChild(panel);
 
   // Start countdown ticker for bus arrival times
-  if (info.predictions.length > 0) startDirectionsBusTicker();
+  if (info !== 'loading' && info.predictions.length > 0) startDirectionsBusTicker();
+  if (focusedAction) panel.querySelector<HTMLElement>(`[data-walk-action="${focusedAction}"]`)?.focus({preventScroll:true});
+  panel.scrollTop = scroll;
 
   // Close button: exit directions mode (A4)
   const closeBtn = panel.querySelector('.directions-panel__close');
