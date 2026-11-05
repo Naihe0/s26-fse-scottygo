@@ -228,7 +228,7 @@ function showMissingPasswordRules(): void {
     !/\d/.test(value) && 'a number',
     ![...value].some(char => symbols.includes(char)) && `a symbol from ${symbols}`
   ].filter(Boolean);
-  passwordGuide.textContent = /[^a-zA-Z0-9$%#@!*&~^+\-]/.test(value)
+  passwordGuide.textContent = /[^a-zA-Z0-9$%#@!*&~^+-]/.test(value)
     ? `Use only letters, numbers and these symbols: ${symbols}`
     : missing.length ? `Still needed: ${missing.join(', ')}.` : 'Password format is complete.';
 }
