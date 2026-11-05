@@ -99,7 +99,10 @@ async function activateFilter(selector) {
   try {
     await item.click({ timeout: 700 });
   } catch (error) {
-    if (!String(error.message).includes('intercepts pointer events'))
+    if (
+      !process.argv.includes('--allow-known-overlap') ||
+      !String(error.message).includes('intercepts pointer events')
+    )
       throw error;
     console.log('OBS blocked filter touch, used keyboard', selector);
     await item.press('Enter');

@@ -248,6 +248,8 @@ Render provides `PORT`; leave `BIND_ADDRESS` unset there. Encode reserved charac
 
 ## Verification and release
 
+For the rider use cases in [FEATURES.md](FEATURES.md#use-case-inventory-and-acceptance-checklist), build the accepted revision, then run `node tools/rider-rehearsal/round.mjs round-02-before --desktop`. Set `PLAYWRIGHT_MODULE` to an installed Playwright package if it is outside the project's dependencies. The command runs the phone and desktop journeys against built pages with isolated data, the mapped alternate-path and iOS host checks, and a read-only production dashboard check. Use `--published` to walk published assets with the same fixtures. Use `--with-db` to include account and report writes against the local test database while no other integration suites are running. Per-stage logs and hashes are saved under the ignored `private/rider-rehearsals/` directory.
+
 ```text
 npm run lint
 npm run typecheck
