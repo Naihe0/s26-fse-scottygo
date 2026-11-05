@@ -106,7 +106,7 @@ Transit and diagnostic endpoints are currently public. They read cached provider
 | `GET /transit/routes/:id` | Route ID | `PathGenerated`: `IPattern[]`. |
 | `GET /transit/routes/:routeId/schedule` | Route ID | `RouteScheduleRetrieved`: `IRouteSchedule`. |
 | `GET /transit/vehicles/:routeId` | Route ID | `VehiclesLocated`: measured `IVehicle[]`, with top-level `feed` health; an inactive/unknown route can return an empty list. |
-| `GET /transit/stops/:routeId` | Required `dir=INBOUND` or `OUTBOUND`, case-normalized | `StopsRetrieved`: `IStop[]`. |
+| `GET /transit/stops/:routeId` | Required `dir=INBOUND` or `OUTBOUND`, case-normalized | `StopsRetrieved`: `IStop[]`. PRT stops resolved from the loaded GTFS index include the IDs of routes serving that exact stop in `routes`. Clients accept omitted connection data. |
 | `GET /transit/stops/nearbystops` | See nearby-stop parameters below | `NearbyStopsRetrieved`: `INearbyStopsPayload`. |
 | `GET /transit/stops/:stopId/predictions` | Optional exact `routeId` filter | `PredictionsRetrieved`: `IPrediction[]`. |
 | `GET /transit/detours/:routeId` | Route ID | `DetoursRetrieved`: `IDetour[]`. |

@@ -2,6 +2,29 @@
 
 ScottyGo combines Pittsburgh Regional Transit (PRT) buses and CMU shuttles in one map. The current personal deployment is [scottygo-ningrui.onrender.com](https://scottygo-ningrui.onrender.com/). This guide describes the implemented app; [ARCHITECTURE.md](ARCHITECTURE.md) covers development and operations, and [API.md](API.md) describes its interfaces.
 
+## Ten rider walkthroughs and fifty improvements
+
+Each round started with a rider using the previous interface in a browser. The checks below describe how to try the five changes in the shared iPhone and web interface.
+
+| Round and rider task | What happened during the walkthrough | Five changes to try |
+| --- | --- | --- |
+| 1. Find the right platform | Two Forbes/Craig results had the same name. Route 45 appeared by name alone. | ① Highlight the matched name or ID. ② See numeric route IDs beside names. ③ Compare straight-line distance from the planning origin when available. ④ Find exact stop or route IDs first. ⑤ Keep the chosen Routes or Stops scope while refining mixed results. |
+| 2. Compare nearby stops | Two platforms were difficult to distinguish, only five of eight transfer routes were named, and settings took up the first screen. | ① Filter loaded stops by street, number or serving route. ② Identify platforms by stop ID. ③ Expand the complete serving-route list. ④ Refresh arrival previews and see when they were checked. ⑤ Collapse the search settings while keeping the area, range and scope visible. |
+| 3. Plan a transfer on a route | Route stops appeared alphabetically. The list gave little help finding an interchange or a vehicle going the right way. | ① Sort stops by distance from the planning origin. ② Read known connecting routes at a stop. ③ Search stops by connecting route. ④ Filter the vehicle list by direction. ⑤ Read reported vehicle movement or detour status when the operator supplies it. |
+| 4. Read relevant alerts | Marking a filtered inbox as read left an empty screen. It took several actions to get back. | ① Choose an exact affected route. ② Restrict agency alerts to warnings and severe notices. ③ See counts on the source tabs. ④ Clear the active filters together. ⑤ Undo the last batch marked read. |
+| 5. Maintain saved routes | Muted routes were hard to find. The add sheet mixed operators and included routes already saved. | ① Read PRT route names. ② Filter saved routes by alert setting. ③ Sort by route number or most recent rider report. ④ Browse available routes by operator. ⑤ Hide routes already saved in the add sheet. |
+| 6. Return to a familiar stop | Finding a stop meant scanning lists. Reopening My places returned to the first section. | ① Search saved stops by official name, nickname or stop ID. ② Put the nearest saved stops first when an origin is available. ③ Filter Recent to routes or stops. ④ Save a stop directly from Recent. ⑤ Reopen the section last used in the current session. |
+| 7. Register on a phone | It was hard to see which field was blocking registration or check the account details before submitting. | ① Complete an Andrew campus email with one tap. ② See the remaining password rules while typing. ③ Jump to the next incomplete field. ④ Review the username and email together. ⑤ Read the terms and return to the form with its values intact. |
+| 8. Find map help a second time | The introductory walkthrough went forward one screen at a time. Returning to an earlier topic was difficult. | ① Replay the tour from Map key. ② Jump to a named topic. ③ Go back one step. ④ See progress based on the controls currently visible. ⑤ Keep the guide in view on rotation and return focus to its opener when closing. |
+| 9. Send a bus report deliberately | Skipping the comment at the end sent the earlier answers immediately in the test flow. | ① Jump to a report category. ② Identify and clear a selected answer. ③ Skip an answer without sending the report. ④ Review and edit answers before explicitly sending. ⑤ Choose how to handle a draft when closing. |
+| 10. Choose a departure at a busy stop | The old card showed eight of fourteen supplied arrivals. The empty card at stop 7117 offered no immediate refresh. | ① Filter arrivals by route. ② Reveal later departures beyond the first eight. ③ Switch between countdowns and Pittsburgh clock time. ④ Refresh on demand and see the last successful check time. ⑤ Clear selected buses together, including selections hidden by a route filter. |
+
+Phone-sized WebKit and desktop Chrome exercised all ten rounds with controlled data. The same fourteen-arrival fixture showed eight rows in the original card, then all fourteen on demand in the new card. A 61C inbox fixture went from three notices to two route matches to one warning, then zero unread and back to one after Undo. The report walkthrough checked the event at the submission boundary: Skip and Review sent nothing, and explicit submission sent one report to the test handler.
+
+![Mobile operator picker with saved routes hidden, using test data](wireframes/current/operator-filter-phone.png)
+
+![Bus report review before submission, using a test bus](wireframes/current/bus-report-review-phone.png)
+
 ## iPhone and web rider improvements
 
 The iPhone app loads the same ScottyGo pages as the browser. The first ten improvements below work on both. Personal settings stay in the browser or app where they were created.
