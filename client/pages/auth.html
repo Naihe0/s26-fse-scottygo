@@ -37,14 +37,27 @@
 
           <div class="form-group">
             <label for="login-password">Password</label>
-            <input
-              type="password"
-              id="login-password"
-              name="password"
-              autocomplete="current-password"
-              class="form-input"
-              placeholder="Your password"
-            />
+            <div class="password-entry">
+              <input
+                type="password"
+                id="login-password"
+                name="password"
+                autocomplete="current-password"
+                autocapitalize="none"
+                autocorrect="off"
+                spellcheck="false"
+                class="form-input"
+                placeholder="Your password"
+              />
+              <button
+                type="button"
+                class="password-toggle"
+                aria-controls="login-password"
+                data-field-label="password"
+                hidden
+                >Show</button
+              >
+            </div>
           </div>
 
           <button type="submit" class="submit-btn" id="login-btn">Login</button>
@@ -88,27 +101,53 @@
 
           <div class="form-group">
             <label for="reg-password">Password</label>
-            <input
-              type="password"
-              id="reg-password"
-              name="password"
-              autocomplete="new-password"
-              class="form-input"
-              placeholder="Str0ng*Passw0rd!"
-            />
+            <div class="password-entry">
+              <input
+                type="password"
+                id="reg-password"
+                name="password"
+                autocomplete="new-password"
+                autocapitalize="none"
+                autocorrect="off"
+                spellcheck="false"
+                class="form-input"
+                placeholder="Str0ng*Passw0rd!"
+              />
+              <button
+                type="button"
+                class="password-toggle"
+                aria-controls="reg-password"
+                data-field-label="password"
+                hidden
+                >Show</button
+              >
+            </div>
             <span class="field-hint" id="reg-password-hint"></span>
           </div>
 
           <div class="form-group">
             <label for="reg-confirm-password">Confirm Password</label>
-            <input
-              type="password"
-              id="reg-confirm-password"
-              name="confirm-password"
-              autocomplete="new-password"
-              class="form-input"
-              placeholder="Re-enter password"
-            />
+            <div class="password-entry">
+              <input
+                type="password"
+                id="reg-confirm-password"
+                name="confirm-password"
+                autocomplete="new-password"
+                autocapitalize="none"
+                autocorrect="off"
+                spellcheck="false"
+                class="form-input"
+                placeholder="Re-enter password"
+              />
+              <button
+                type="button"
+                class="password-toggle"
+                aria-controls="reg-confirm-password"
+                data-field-label="confirmation password"
+                hidden
+                >Show</button
+              >
+            </div>
             <span class="field-hint" id="reg-confirm-hint"></span>
           </div>
 

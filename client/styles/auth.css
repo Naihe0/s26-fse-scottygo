@@ -71,6 +71,36 @@ body {
   box-shadow: 0 0 0 3px rgba(196, 18, 48, 0.1);
 }
 
+.password-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.password-entry input {
+  flex: 1;
+  min-width: 0;
+}
+
+.password-toggle {
+  flex: 0 0 auto;
+  min-width: 52px;
+  min-height: 46px;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  padding: 0 8px;
+  background: var(--app-surface);
+  color: var(--app-brand-strong);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.password-toggle:hover {
+  background: var(--app-brand-soft);
+}
+
 .form-input--error {
   border-color: var(--app-brand);
   border-width: 2px;

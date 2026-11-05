@@ -1,5 +1,12 @@
 /** @jest-environment jsdom */
 
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+
+const authPage = readFileSync(
+  resolve(__dirname, '../../client/pages/auth.html'),
+  'utf8'
+);
 const mockPost = jest.fn();
 const mockRequest = jest.fn();
 jest.mock('axios', () => ({ post: mockPost, request: mockRequest }));
@@ -22,19 +29,66 @@ describe('registration validation and agreement recovery', () => {
     mockPost.mockReset().mockResolvedValue({ status: 200 });
     mockRequest.mockReset();
     localStorage.clear();
-    document.body.innerHTML = `
-      <form id="login-form"><input id="login-username"><input id="login-password"><button id="login-btn">Login</button></form>
-      <form id="register-form" hidden><input id="reg-username"><input id="reg-email"><input id="reg-password"><input id="reg-confirm-password"><input id="tos" type="checkbox"><button id="register-btn" disabled>Register</button></form>
-      <button id="show-register-btn"></button><button id="show-login-btn"></button>
-      <span id="reg-username-hint"></span><span id="reg-email-hint"></span><span id="reg-password-hint"></span><span id="reg-confirm-hint"></span><p id="status"></p>
-      <div id="confirm-modal" inert><button id="confirm-yes"></button><button id="confirm-no"></button></div>
-      <div id="terms-modal" inert><button id="terms-accept">Accept</button><button id="terms-decline"></button></div>`;
+    document.body.innerHTML = new DOMParser().parseFromString(
+      authPage,
+      'text/html'
+    ).body.innerHTML;
     await import('../../client/scripts/auth');
   });
 
   afterEach(() => {
     jest.clearAllTimers();
     jest.useRealTimers();
+  });
+
+  test('revealing a password keeps its value, selection and autofill role; hiding the app masks it', () => {
+    const field = document.querySelector<HTMLInputElement>('#login-password')!;
+    const toggle = document.querySelector<HTMLButtonElement>(
+      '[aria-controls="login-password"]'
+    )!;
+    field.value = 'an-example';
+    field.focus();
+    field.setSelectionRange(2, 5);
+    toggle.click();
+    expect(field.type).toBe('text');
+    expect(field.value).toBe('an-example');
+    expect([field.selectionStart, field.selectionEnd]).toEqual([2, 5]);
+    expect(field.autocomplete).toBe('current-password');
+    expect(toggle.getAttribute('aria-label')).toBe('Hide password');
+    expect(mockRequest).not.toHaveBeenCalled();
+    window.dispatchEvent(new Event('pagehide'));
+    expect(field.type).toBe('password');
+    expect(toggle.getAttribute('aria-label')).toBe('Show password');
+  });
+
+  test('temporarily returning to login masks the registration draft and preserves field validation', async () => {
+    document.getElementById('show-register-btn')!.click();
+    input('reg-username', 'validuser');
+    input('reg-email', 'valid@cmu.edu');
+    input('reg-password', 'Password123!');
+    input('reg-confirm-password', 'Password123!');
+    const tos = document.getElementById('tos') as HTMLInputElement;
+    tos.checked = true;
+    tos.dispatchEvent(new Event('change'));
+    document
+      .querySelector<HTMLButtonElement>(
+        '[aria-controls="reg-confirm-password"]'
+      )!
+      .click();
+    expect(
+      document.querySelector<HTMLInputElement>('#reg-confirm-password')!.type
+    ).toBe('text');
+    document.getElementById('show-login-btn')!.click();
+    await jest.advanceTimersByTimeAsync(300);
+    document.getElementById('show-register-btn')!.click();
+    const confirmation = document.querySelector<HTMLInputElement>(
+      '#reg-confirm-password'
+    )!;
+    expect(confirmation.type).toBe('password');
+    expect(confirmation.value).toBe('Password123!');
+    expect(
+      document.querySelector<HTMLButtonElement>('#register-btn')!.disabled
+    ).toBe(false);
   });
 
   test('editing a previously valid field immediately disables registration', async () => {

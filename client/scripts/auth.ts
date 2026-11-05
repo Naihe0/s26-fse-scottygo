@@ -172,13 +172,7 @@ let pendingRedirectToHome = false;
 let agreementSubmitting = false;
 let registrationSubmitting = false;
 
-// Track which fields have been touched for validation
-const touched: Record<string, boolean> = {
-  username: false,
-  email: false,
-  password: false,
-  confirm: false
-};
+let confirmTouched = false;
 
 // Track per-field validation state
 const fieldValid: Record<string, boolean> = {
@@ -246,27 +240,52 @@ const setInputError = (errorName: string): void => {
 
 // ── View Switching ──────────────────────────────────────────────────
 
+const maskPasswords: Array<() => void> = [];
+for (const button of document.querySelectorAll<HTMLButtonElement>(
+  '.password-toggle'
+)) {
+  const input = document.getElementById(
+    button.getAttribute('aria-controls') || ''
+  );
+  if (!(input instanceof HTMLInputElement) || input.type !== 'password')
+    continue;
+  const reveal = (visible: boolean): void => {
+    const action = visible ? 'Hide' : 'Show';
+    const start = input.selectionStart;
+    const end = input.selectionEnd;
+    input.type = visible ? 'text' : 'password';
+    if (start !== null && end !== null) input.setSelectionRange(start, end);
+    button.textContent = action;
+    button.setAttribute('aria-label', `${action} ${button.dataset.fieldLabel}`);
+  };
+  reveal(false);
+  button.hidden = false;
+  button.addEventListener('pointerdown', (event) => {
+    if (document.activeElement === input && event.button === 0)
+      event.preventDefault();
+  });
+  button.addEventListener('click', () => reveal(input.type === 'password'));
+  maskPasswords.push(() => {
+    if (input.type === 'text') reveal(false);
+  });
+}
+
+const hidePasswords = (): void => maskPasswords.forEach((mask) => mask());
+window.addEventListener('pagehide', hidePasswords);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) hidePasswords();
+});
+
 const switchToRegister = (): void => {
+  hidePasswords();
   if (loginForm) loginForm.hidden = true;
   if (registerForm) registerForm.hidden = false;
   setStatus('');
-  // Reset touched state and hints
-  Object.keys(touched).forEach((k) => {
-    touched[k] = false;
-  });
-  Object.keys(fieldValid).forEach((k) => {
-    fieldValid[k] = false;
-    validationVersions[k] = (validationVersions[k] ?? 0) + 1;
-    clearTimeout(validateTimers[k]);
-  });
-  clearHint(usernameHint);
-  clearHint(emailHint);
-  clearHint(passwordHint);
-  clearHint(confirmHint);
   updateRegisterButton();
 };
 
 const switchToLogin = (): void => {
+  hidePasswords();
   if (registerForm) registerForm.hidden = true;
   if (loginForm) loginForm.hidden = false;
   setStatus('');
@@ -326,7 +345,7 @@ const validateFieldDebounced = (
 };
 
 const validateConfirmPassword = (): void => {
-  if (!touched.confirm) return;
+  if (!confirmTouched) return;
   const pw = regPassword?.value ?? '';
   const cpw = regConfirm?.value ?? '';
   if (!cpw) {
@@ -356,7 +375,6 @@ const updateRegisterButton = (): void => {
 
 // Wire up validation listeners
 regUsername?.addEventListener('input', () => {
-  touched.username = true;
   validateFieldDebounced(
     'username',
     regUsername.value.trim(),
@@ -365,7 +383,6 @@ regUsername?.addEventListener('input', () => {
   );
 });
 regUsername?.addEventListener('blur', () => {
-  touched.username = true;
   validateFieldDebounced(
     'username',
     regUsername.value.trim(),
@@ -375,7 +392,6 @@ regUsername?.addEventListener('blur', () => {
 });
 
 regEmail?.addEventListener('input', () => {
-  touched.email = true;
   validateFieldDebounced(
     'email',
     regEmail.value.trim(),
@@ -384,7 +400,6 @@ regEmail?.addEventListener('input', () => {
   );
 });
 regEmail?.addEventListener('blur', () => {
-  touched.email = true;
   validateFieldDebounced(
     'email',
     regEmail.value.trim(),
@@ -394,7 +409,6 @@ regEmail?.addEventListener('blur', () => {
 });
 
 regPassword?.addEventListener('input', () => {
-  touched.password = true;
   validateFieldDebounced(
     'password',
     regPassword.value,
@@ -404,7 +418,6 @@ regPassword?.addEventListener('input', () => {
   validateConfirmPassword(); // re-check confirm match
 });
 regPassword?.addEventListener('blur', () => {
-  touched.password = true;
   validateFieldDebounced(
     'password',
     regPassword.value,
@@ -414,11 +427,11 @@ regPassword?.addEventListener('blur', () => {
 });
 
 regConfirm?.addEventListener('input', () => {
-  touched.confirm = true;
+  confirmTouched = true;
   validateConfirmPassword();
 });
 regConfirm?.addEventListener('blur', () => {
-  touched.confirm = true;
+  confirmTouched = true;
   validateConfirmPassword();
 });
 
@@ -521,6 +534,7 @@ const agreeAndRefreshSession = async (
 
 const openModal = (modal: HTMLDivElement | null): void => {
   if (!modal) return;
+  hidePasswords();
   modal.classList.add('is-open');
   modal.removeAttribute('inert');
 };
@@ -556,6 +570,7 @@ const setSubmitting = (
 
 loginForm?.addEventListener('submit', async (event: SubmitEvent) => {
   event.preventDefault();
+  hidePasswords();
   setStatus('');
 
   const username = loginUsername?.value.trim() ?? '';
