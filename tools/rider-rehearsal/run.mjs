@@ -191,12 +191,34 @@ try {
     await page.locator('.route-search-input').press('Enter');
     await page.waitForURL(/r=61C/);
   });
-  await step('UC06 Tap overlapping map objects and dismiss', async () => {
+  await step('UC06 Find an overlapping platform, line or bus and zoom here', async () => {
+    // Opening the route after the keyboard Go action must keep its selection.
+    await page.getByRole('button', {name:'Explore stops and buses'}).click();
+    const explorer = page.locator('route-explorer dialog[open]');
+    await explorer.getByRole('tab', { name: /Buses/ }).click();
+    await explorer.locator('[data-buses] button').first().waitFor();
+    await explorer.getByRole('tab', { name: /Stops/ }).click();
+    await explorer.getByRole('button', { name: 'Close route explorer' }).click();
+    const routeCard = page.locator('#map-popup .map-popup__close');
+    if (await routeCard.isVisible()) await routeCard.click();
     await page.locator('#map').click({ position: { x: 170, y: 160 } });
     const choices = page.locator('.map-selection');
     await choices.waitFor();
     assert.ok((await choices.locator('.map-selection__choice').count()) >= 2);
-    await page.keyboard.press('Escape');
+    const find = choices.getByRole('searchbox');
+    const visible = choices.locator('.map-selection__choice:visible');
+    await choices.getByRole('button',{name:'Stops',exact:true}).click();
+    await find.fill('7117');
+    assert.equal(await visible.count(), 1);
+    assert.match(await visible.innerText(), /Stop #7117/);
+    await find.fill('McKeesport');
+    assert.equal(await visible.count(), 0);
+    await choices.getByRole('button',{name:'Routes',exact:true}).click();
+    assert.match(await visible.innerText(), /Route 61C[\s\S]*McKeesport/i);
+    const zoom = Number(await page.locator('#map').getAttribute('data-zoom'));
+    await choices.getByRole('button',{name:'Zoom in here'}).click();
+    await choices.waitFor({state:'hidden'});
+    assert.equal(Number(await page.locator('#map').getAttribute('data-zoom')),Math.min(21,zoom+2));
   });
   await step('UC07 Search and open a platform', async () => {
     await page.locator('#transit-search-input').fill('7117');

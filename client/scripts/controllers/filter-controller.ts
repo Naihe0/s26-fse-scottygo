@@ -475,7 +475,7 @@ export class FilterController {
     }
 
     const color = this.resolveRouteColor(routeId, selectedRoute);
-    this.routeRenderer.renderRouteGeometry(routeId, geometry, color);
+    this.routeRenderer.renderRouteGeometry(routeId, geometry, color, selectedRoute?.name);
     this.routeRenderer.fitToRouteData(geometry);
   }
 
@@ -858,7 +858,7 @@ export class FilterController {
       const geometry = await this.fetchRouteGeometry(route.id);
       if (!isCurrent()) return false;
       if (geometry) {
-        this.routeRenderer.renderRouteGeometry(route.id, geometry, route.color);
+        this.routeRenderer.renderRouteGeometry(route.id, geometry, route.color, route.name);
       } else {
         console.warn(`No geometry data available for route ${route.id}`);
       }
@@ -1561,7 +1561,7 @@ export class FilterController {
         route?.color ||
         this.routeColorCache.get(routeId) ||
         this.getFallbackRouteColor(routeId);
-      this.routeRenderer.renderRouteGeometry(routeId, geometry, color);
+      this.routeRenderer.renderRouteGeometry(routeId, geometry, color, route?.name);
     } catch (error: unknown) {
       // Nearby stops should still render even if one route has no geometry.
       const err = error as Record<string, unknown>;
@@ -1979,7 +1979,8 @@ export class FilterController {
           this.routeRenderer.renderRouteGeometry(
             route.id,
             patterns,
-            route.color
+            route.color,
+            route.name
           );
         }
       }

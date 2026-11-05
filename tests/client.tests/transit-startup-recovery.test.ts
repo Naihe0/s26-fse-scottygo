@@ -239,7 +239,8 @@ describe('Transit readiness recovery', () => {
     expect(mockRenderer.renderRouteGeometry).toHaveBeenCalledWith(
       route.id,
       geometry,
-      route.color
+      route.color,
+      route.name
     );
     expect(mockRenderer.renderStopMarkers).toHaveBeenCalledWith(
       route.id,

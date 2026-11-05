@@ -528,7 +528,7 @@ export class PredictionController {
       if (geometry) {
         const route = state.availableRoutes.find((r) => r.id === routeId);
         const color = route?.color || this.getRouteColor(routeId);
-        this.routeRenderer.renderRouteGeometry(routeId, geometry, color);
+        this.routeRenderer.renderRouteGeometry(routeId, geometry, color, route?.name);
       }
 
       for (const direction of ['INBOUND', 'OUTBOUND']) {

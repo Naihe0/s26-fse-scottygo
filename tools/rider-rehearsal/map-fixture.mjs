@@ -22,6 +22,8 @@ export function installMapFixture() {
       super();
       this.center = center;
       this.zoom = zoom;
+      this.element = element;
+      element.dataset.zoom = String(zoom);
       element.dataset.ready = 'true';
       element.addEventListener('click', () =>
         this.emit('click', { latLng: point({ lat: 40.443, lng: -79.944 }) })
@@ -29,6 +31,7 @@ export function installMapFixture() {
     }
     setZoom(zoom) {
       this.zoom = zoom;
+      this.element.dataset.zoom = String(zoom);
       this.emit('zoom_changed');
     }
     getZoom() {

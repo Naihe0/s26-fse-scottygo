@@ -265,7 +265,8 @@ export class RouteRenderer {
     direction: string | null,
     path: ILatLng[],
     color: string,
-    detour = false
+    detour = false,
+    routeName?: string
   ): RenderedSegment | null {
     if (!Array.isArray(path) || path.length < 2 || !path.every(isPosition))
       return null;
@@ -277,7 +278,8 @@ export class RouteRenderer {
         selection: {
           id: `route:${routeId}`,
           kind: 'route',
-          label: `Route ${routeId}`
+          label: `Route ${routeId}`,
+          detail: routeName && routeName !== routeId ? routeName : undefined
         }
       })
     );
@@ -297,7 +299,8 @@ export class RouteRenderer {
   renderRouteGeometry(
     routeId: string,
     routeData: RouteData,
-    color: string
+    color: string,
+    routeName?: string
   ): void {
     if (!this.mapProvider) return;
     // A color/geometry refresh must preserve the user's active visibility.
@@ -306,7 +309,7 @@ export class RouteRenderer {
     this.refreshStops();
     const segments: RenderedSegment[] = [];
     for (const { direction, path } of this.readPaths(routeData)) {
-      const segment = this.renderSegment(routeId, direction, path, color);
+      const segment = this.renderSegment(routeId, direction, path, color, false, routeName);
       if (segment) segments.push(segment);
     }
     if (segments.length) this.routePolylines.set(routeId, segments);
@@ -439,7 +442,7 @@ export class RouteRenderer {
             id: `stop:${stopKey}`,
             kind: 'stop',
             label: stop.stopName,
-            detail
+            detail: `Stop #${stop.stopId} · ${detail}`
           }
         });
         shared = {
@@ -541,7 +544,7 @@ export class RouteRenderer {
         id: `stop:${key}`,
         kind: 'stop',
         label: owner.stop.stopName,
-        detail
+        detail: `Stop #${owner.stop.stopId} · ${detail}`
       });
     }
   }

@@ -435,7 +435,11 @@ export class GoogleMapProvider implements IMapProvider {
       clickedId
     );
     if (!hits.length) return false;
-    showMapSelection(hits);
+    const zoom = this.getZoom();
+    showMapSelection(hits, zoom < 21 ? () => {
+      this.setCenter(position);
+      this.setZoom(Math.min(zoom + 2, 21));
+    } : undefined);
     return true;
   }
 
