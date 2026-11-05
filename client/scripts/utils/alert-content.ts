@@ -59,8 +59,10 @@ export function appendLinkedText(container: HTMLElement, text: string): void {
   container.append(document.createTextNode(text.slice(offset)));
 }
 
-export function routeMapUrl(routeId: string): string {
-  return `/#/map?${new URLSearchParams({ r: routeId })}`;
+export function routeMapUrl(routeId: string, system?: 'PRT' | 'CMU'): string {
+  const params = new URLSearchParams({ r: routeId });
+  if (system === 'CMU') params.set('s', system);
+  return `/#/map?${params}`;
 }
 
 export function formatNotificationTime(

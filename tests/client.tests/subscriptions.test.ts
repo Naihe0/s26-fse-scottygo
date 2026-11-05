@@ -104,6 +104,28 @@ describe('saved routes interactions and recovery', () => {
     expect(document.activeElement).toBe(opener);
   });
 
+  test('saved routes link separately to the live map and their own updates, including the shuttle system', async () => {
+    routes.push({ id: 'CMU-7', name: 'Oakland Shuttle', system: 'CMU' });
+    savedRoutes = ['61D', 'cmu-7'].map((routeId) => ({
+      routeId,
+      createdAt: new Date().toISOString()
+    }));
+    await boot();
+    const cards = document.querySelectorAll('.subscription-card');
+    expect(
+      cards[0].querySelector('.card-route-link')?.getAttribute('href')
+    ).toBe('/#/map?r=61D');
+    expect(
+      cards[1].querySelector('.card-route-link')?.getAttribute('href')
+    ).toBe('/#/map?r=CMU-7&s=CMU');
+    expect(
+      cards[1].querySelector('.card-route-link')?.getAttribute('aria-label')
+    ).toContain('Oakland Shuttle');
+    expect(
+      cards[1].querySelector('.card-updates-link')?.getAttribute('href')
+    ).toBe('/notifications?route=CMU-7');
+  });
+
   test('saving updates the same control without losing focus or scroll, and cannot remove a route', async () => {
     await boot();
     const button = openSheet();

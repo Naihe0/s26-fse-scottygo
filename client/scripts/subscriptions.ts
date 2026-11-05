@@ -4,6 +4,7 @@
 import './components/app-header';
 import './components/live-notifications';
 import { escapeHtml } from './utils/html';
+import { routeMapUrl } from './utils/alert-content';
 import { showToast } from './utils/toast';
 import { isRouteMuted } from './utils/muted-routes';
 import {
@@ -126,11 +127,6 @@ const bellOffSVG = `
     <line x1="1" y1="1" x2="23" y2="23"></line>
   </svg>`;
 
-const chevronSVG = `
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-    <polyline points="9 18 15 12 9 6"></polyline>
-  </svg>`;
-
 const removeSVG = `
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"></path>
@@ -167,6 +163,11 @@ function formatAgo(isoTimestamp: string): string {
 function createCard(sub: Subscription): HTMLLIElement {
   const muted = isRouteMuted(sub.routeId);
   const display = getRouteDisplay(sub.routeId, routeDisplayById);
+  const route = routeDisplayById.get(normalizeRouteId(sub.routeId));
+  const routeId = route?.id ?? sub.routeId;
+  const system =
+    route?.system ??
+    (normalizeRouteId(routeId).startsWith('cmu-') ? 'CMU' : 'PRT');
   const li = document.createElement('li');
   li.classList.add('subscription-card');
   li.dataset.routeId = sub.routeId;
@@ -179,11 +180,9 @@ function createCard(sub: Subscription): HTMLLIElement {
       : '';
 
   li.innerHTML = `
-    <div class="card-icon-circle">${busIconSVG}</div>
+    <div class="card-icon-circle" aria-hidden="true">${busIconSVG}</div>
     <div class="card-info">
-      <a class="card-route-link" href="/notifications?route=${encodeURIComponent(sub.routeId)}">
-        ${escapeHtml(display.title)} ${chevronSVG}
-      </a>
+      <h2 class="card-route-title">${escapeHtml(display.title)}</h2>
       <div class="card-last-updated">${escapeHtml(display.subtitle)}</div>
       ${updatedText ? `<div class="card-last-updated">${updatedText}</div>` : ''}
     </div>
@@ -192,6 +191,10 @@ function createCard(sub: Subscription): HTMLLIElement {
         ${muted ? bellOffSVG : bellOnSVG}
       </button>
       <button class="card-remove" title="Remove saved route" aria-label="Remove ${escapeHtml(display.title)} from saved routes">${removeSVG}</button>
+    </div>
+    <div class="card-destinations">
+      <a class="card-route-link" href="${escapeHtml(routeMapUrl(routeId, system))}" aria-label="View ${escapeHtml(display.title)} on the live map">Live map</a>
+      <a class="card-updates-link" href="/notifications?route=${encodeURIComponent(routeId)}" aria-label="View updates for ${escapeHtml(display.title)}">Route updates</a>
     </div>
   `;
 
@@ -289,11 +292,12 @@ function renderList(): void {
   const focusedRoute = list.contains(active)
     ? active?.closest<HTMLElement>('.subscription-card')?.dataset.routeId
     : undefined;
-  const focusedClass = active?.classList.contains('card-remove')
-    ? 'card-remove'
-    : active?.classList.contains('card-bell')
-      ? 'card-bell'
-      : 'card-route-link';
+  const focusedClass = [
+    'card-remove',
+    'card-bell',
+    'card-updates-link',
+    'card-route-link'
+  ].find((name) => active?.classList.contains(name));
   const content = document.querySelector<HTMLElement>('main')!;
   const scrollTop = content.scrollTop;
   list.innerHTML = '';
@@ -310,7 +314,7 @@ function renderList(): void {
   list.setAttribute('aria-busy', String(subscriptionsState === 'loading'));
   document.getElementById('subscriptions-retry')!.hidden =
     subscriptionsState !== 'error';
-  if (focusedRoute) {
+  if (focusedRoute && focusedClass) {
     Array.from(list.querySelectorAll<HTMLElement>('.subscription-card'))
       .find((card) => card.dataset.routeId === focusedRoute)
       ?.querySelector<HTMLElement>(`.${focusedClass}`)
