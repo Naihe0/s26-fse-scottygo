@@ -5,6 +5,43 @@ transit-search .search-dropdown {
   padding: 6px;
 }
 
+transit-search .search-type-filter:not([hidden]) {
+  display: flex;
+  gap: 4px;
+  padding: 2px;
+  background: #f0f3f6;
+  border-radius: 12px;
+}
+
+transit-search .search-type-filter button {
+  flex: 1;
+  min-height: 44px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #465366;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+transit-search .search-type-filter [aria-pressed='true'] {
+  background: white;
+  color: #9c1028;
+  box-shadow: 0 1px 4px #25304426;
+}
+
+transit-search .search-type-filter button:focus-visible {
+  outline: 2px solid #145da8;
+  outline-offset: -3px;
+}
+
+transit-search #search-clear-btn {
+  width: 44px;
+  height: 44px;
+}
+
 transit-search .search-group-title {
   display: flex;
   align-items: center;

@@ -171,6 +171,62 @@ describe('transit search feedback and keyboard navigation', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
+  test('filters mixed results in place and opens the visible stop from the keyboard', async () => {
+    mockFetch.mockResolvedValue(mixedResponse());
+    const onSelect = jest.fn();
+    component.addEventListener('searchSelectStop', onSelect);
+    await search('Forbes');
+    press('Tab');
+    expect(dropdown.hidden).toBe(false);
+    const filter = component.querySelector<HTMLButtonElement>(
+      '[data-search-type="Stops"]'
+    )!;
+    filter.focus();
+    filter.click();
+    expect(filter.getAttribute('aria-pressed')).toBe('true');
+    expect(
+      component.querySelector<HTMLElement>('[data-type="Routes"]')!.hidden
+    ).toBe(true);
+    expect(
+      component.querySelector('.search-announcement')!.textContent
+    ).toContain('1 result.');
+    filter.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })
+    );
+    expect(document.activeElement).toBe(input);
+    expect(
+      component
+        .querySelector('[aria-selected="true"]')
+        ?.getAttribute('data-stop-id')
+    ).toBe('123');
+    press('Enter');
+    expect(onSelect.mock.calls[0][0].detail.stop.stopId).toBe('123');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('can show all options again and omits filters for a single category', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mixedResponse())
+      .mockResolvedValueOnce(response('Murray'));
+    await search('Forbes');
+    component
+      .querySelector<HTMLButtonElement>('[data-search-type="Routes"]')!
+      .click();
+    component
+      .querySelector<HTMLButtonElement>('[data-search-type="All"]')!
+      .click();
+    expect(
+      component.querySelectorAll('[data-type]:not([hidden]) [role="option"]')
+    ).toHaveLength(2);
+    await search('61D');
+    expect(
+      component.querySelector<HTMLElement>('.search-type-filter')!.hidden
+    ).toBe(true);
+    expect(
+      component.querySelector('.search-announcement')!.textContent
+    ).toContain('1 result.');
+  });
+
   test('ArrowUp starts at the last option and wraps without moving the caret', async () => {
     mockFetch.mockResolvedValue(mixedResponse());
     await search('Forbes');

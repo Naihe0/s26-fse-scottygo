@@ -159,6 +159,7 @@ export class TransitSearch extends HTMLElement {
 
   private showFeedback(message: string, hint = ''): void {
     this.resetActiveOption();
+    this.querySelector<HTMLElement>('.search-type-filter')!.hidden = true;
     if (this.results) {
       this.results.replaceChildren();
       this.results.hidden = true;
@@ -188,9 +189,13 @@ export class TransitSearch extends HTMLElement {
       this.feedback.hidden = true;
       this.feedback.replaceChildren();
     }
-    const group = (label: string, count: number, content: string) =>
+    const group = (
+      label: 'Routes' | 'Stops',
+      count: number,
+      content: string
+    ) =>
       count
-        ? `<div role="group" aria-label="${label}"><div class="search-group-title" aria-hidden="true">${label}<span>${count}</span></div>${content}</div>`
+        ? `<div role="group" data-type="${label}" aria-label="${label}"><div class="search-group-title" aria-hidden="true">${label}<span>${count}</span></div>${content}</div>`
         : '';
     this.results.innerHTML =
       group(
@@ -206,12 +211,31 @@ export class TransitSearch extends HTMLElement {
           .join('')
       );
     this.results.hidden = false;
-    if (this.announcement) {
-      const count = routes.length + stops.length;
-      this.announcement.textContent = `${count} ${count === 1 ? 'result' : 'results'}. Use the arrow keys to choose.`;
-    }
+    this.querySelector<HTMLElement>('.search-type-filter')!.hidden = !(
+      routes.length && stops.length
+    );
+    this.filterResults('All');
     this.attachResultListeners(stops);
     this.showDropdown();
+  }
+
+  private filterResults(type: string): void {
+    this.resetActiveOption();
+    this.results
+      ?.querySelectorAll<HTMLElement>('[data-type]')
+      .forEach((group) => {
+        group.hidden = type !== 'All' && type !== group.dataset.type;
+      });
+    this.querySelectorAll<HTMLButtonElement>('[data-search-type]').forEach(
+      (button) =>
+        button.setAttribute(
+          'aria-pressed',
+          String(button.dataset.searchType === type)
+        )
+    );
+    const count = this.getOptions().length;
+    if (this.announcement)
+      this.announcement.textContent = `${count} ${count === 1 ? 'result' : 'results'}. Use the arrow keys to choose.`;
   }
 
   private buildRouteItemHTML(route: IRoute, index: number): string {
@@ -245,7 +269,7 @@ export class TransitSearch extends HTMLElement {
       .join('');
     return `<div id="search-option-${index}" class="search-result-item search-result-stop" data-stop-id="${escapeHtml(stop.stopId)}" role="option" aria-selected="false">
       <span class="material-icons-outlined search-result-icon" aria-hidden="true">place</span>
-      <span class="search-result-content"><span class="search-result-name">${escapeHtml(stop.stopName)}</span>${badges ? `<span class="search-result-badges">${badges}</span>` : ''}</span>
+      <span class="search-result-content"><span class="search-result-name">${escapeHtml(stop.stopName)}</span><span class="search-result-meta">Stop ${escapeHtml(stop.stopId)}</span>${badges ? `<span class="search-result-badges">${badges}</span>` : ''}</span>
       <span class="material-icons-outlined search-result-arrow" aria-hidden="true">chevron_right</span>
     </div>`;
   }
@@ -281,7 +305,9 @@ export class TransitSearch extends HTMLElement {
 
   private getOptions(): HTMLElement[] {
     return Array.from(
-      this.results?.querySelectorAll<HTMLElement>('[role="option"]') ?? []
+      this.results?.querySelectorAll<HTMLElement>(
+        '[role="group"]:not([hidden]) [role="option"]'
+      ) ?? []
     );
   }
 
@@ -345,6 +371,9 @@ export class TransitSearch extends HTMLElement {
           <button type="button" class="search-clear-btn" id="search-clear-btn" aria-label="Clear search"><span class="material-icons-outlined" aria-hidden="true">close</span></button>
         </div>
         <div class="search-dropdown" id="search-dropdown" hidden>
+          <div class="search-type-filter" role="group" aria-label="Filter search results" hidden>
+            ${['All', 'Routes', 'Stops'].map((type) => `<button type="button" data-search-type="${type}" aria-controls="search-results" aria-pressed="${type === 'All'}">${type}</button>`).join('')}
+          </div>
           <div class="search-feedback" hidden></div>
           <div id="search-results" role="listbox" aria-label="Routes and stops" hidden></div>
           <p class="search-announcement" aria-live="polite" aria-atomic="true"></p>
@@ -369,7 +398,8 @@ export class TransitSearch extends HTMLElement {
       if (
         event.key === 'Escape' ||
         (event.key === 'Tab' &&
-          !this.feedback?.querySelector('.search-retry-btn'))
+          !this.feedback?.querySelector('.search-retry-btn') &&
+          this.querySelector<HTMLElement>('.search-type-filter')?.hidden)
       ) {
         this.hideDropdown();
         return;
@@ -390,12 +420,30 @@ export class TransitSearch extends HTMLElement {
     });
     this.searchInput?.addEventListener('focus', () => {
       const query = this.searchInput?.value.trim() ?? '';
+      if (!this.dropdown?.hidden && this.getOptions().length) return;
       if (query) this.scheduleSearch(query, 0);
       else
         this.dispatchEvent(
           new CustomEvent('searchFocusEmpty', { bubbles: true })
         );
     });
+    this.querySelectorAll<HTMLButtonElement>('[data-search-type]').forEach(
+      (button) => {
+        button.addEventListener('click', () =>
+          this.filterResults(button.dataset.searchType!)
+        );
+        button.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') {
+            this.searchInput?.focus();
+            this.hideDropdown();
+          } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            this.searchInput?.focus();
+            this.moveActiveOption(event.key === 'ArrowDown' ? 1 : -1);
+          }
+        });
+      }
+    );
     this.clearBtn?.addEventListener('click', () => this.clearSearch());
     this.querySelector('#layers-btn')?.addEventListener('click', () => {
       this.hideDropdown();
