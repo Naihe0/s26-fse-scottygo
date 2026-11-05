@@ -18,15 +18,11 @@
 
 import type { IStop, IPrediction } from '../../../common/transit.interface';
 
-/** Bundles the mutable state shared across stop-popup lifecycle methods. */
+import { StopArrivalBoard } from '../components/stop-arrival-board';
+
 interface StopPopupContext {
   stop: IStop;
-  /** Original full prediction list (used for minimize/restore). */
-  predictions: IPrediction[];
-  /** Indices of user-selected arrivals. */
-  selectedIndices: Set<number>;
-  /** Mutable display slice (up to 8, updated on each refresh). */
-  displayPredictions: IPrediction[];
+  board: StopArrivalBoard;
   unavailable: boolean;
 }
 import { MapStateManager } from '../state/map-state';
@@ -48,7 +44,8 @@ import {
   dismissPopup,
   minimizePopup,
   prepareForNewPopup,
-  registerActivePopup
+  registerActivePopup,
+  restorePopup
 } from '../utils/map-popup';
 
 export class PredictionController {
@@ -68,10 +65,6 @@ export class PredictionController {
 
   /** Currently minimised stop (for A3 restore). */
   private minimisedStop: IStop | null = null;
-
-  /** Cached predictions for the minimised stop. */
-  private minimisedPredictions: IPrediction[] | null = [];
-  private minimisedUnavailable = false;
 
   /** Stop ID of the currently open prediction popup (for live refresh). */
   private openPopupStopId: string | null = null;
@@ -140,13 +133,12 @@ export class PredictionController {
    */
   async handleStopClick(stop: IStop): Promise<void> {
     if (this.directionsController.isActive) return;
+    if (this.restoreMinimisedPopup(stop)) return;
     this.onSelection(stop);
     this.routeRenderer.setSelectedStop?.(stop, (selected) => {
       void this.handleStopClick(selected);
     });
     const version = ++this.requestVersion;
-    this.stopSelectionPending = false;
-    if (this.restoreMinimisedPopup(stop)) return;
     this.stopSelectionPending = true;
 
     try {
@@ -169,8 +161,11 @@ export class PredictionController {
    * restored — the caller should skip the normal click flow in that case.
    */
   restoreMinimisedPopup(stop: IStop): boolean {
-    if (this.minimisedStop && this.minimisedStop.stopId === stop.stopId) {
-      this.showStopPopup(stop, this.minimisedPredictions, this.minimisedUnavailable);
+    if (
+      this.minimisedStop?.stopId === stop.stopId &&
+      document.querySelector('.map-popup-tab[data-type="stop"]')
+    ) {
+      restorePopup('stop');
       this.minimisedStop = null;
       return true;
     }
@@ -209,17 +204,19 @@ export class PredictionController {
     return transitApiService.getPredictionsResult(stopId, routeId, signal);
   }
 
-  private showStopPopup(stop: IStop, predictions: IPrediction[] | null, unavailable = predictions === null): void {
+  private showStopPopup(stop: IStop, predictions: IPrediction[] | null): void {
     prepareForNewPopup('stop');
     this.stopPolling();
     this.minimisedStop = null;
 
     const ctx: StopPopupContext = {
       stop,
-      predictions: predictions ?? [],
-      selectedIndices: new Set<number>(),
-      displayPredictions: predictions?.slice(0, 8) ?? [],
-      unavailable
+      board: new StopArrivalBoard(
+        predictions ?? [],
+        predictions !== null,
+        this.getRouteColor
+      ),
+      unavailable: predictions === null
     };
 
     const { popup, subheader } = createMapPopup(
@@ -246,11 +243,12 @@ export class PredictionController {
     const directionsBtn = this.buildDirectionsButton();
     const notice = document.createElement('div');
     notice.className = 'arrival-recovery';
-    notice.innerHTML = '<span role="status"></span><button type="button">Retry arrivals</button>';
+    notice.innerHTML =
+      '<span role="status"></span><button type="button">Retry arrivals</button>';
     popup.appendChild(notice);
-    this.buildPredictionListSection(ctx, directionsBtn).forEach((el) =>
-      popup.appendChild(el)
-    );
+    const boardHost = document.createElement('section');
+    boardHost.className = 'stop-arrival-board';
+    popup.appendChild(boardHost);
     popup.appendChild(directionsBtn);
     popup.appendChild(this.buildStopShortcutActions());
 
@@ -260,24 +258,29 @@ export class PredictionController {
       recordRecentStop(stop);
     }
 
+    this.bindStopCard(popup, ctx);
+  }
+
+  private bindStopCard(popup: HTMLElement, ctx: StopPopupContext): void {
+    const directions = popup.querySelector<HTMLButtonElement>(
+      '.map-popup__directions-btn'
+    )!;
+    ctx.board.mount(
+      popup.querySelector<HTMLElement>('.stop-arrival-board')!,
+      directions
+    );
     this.bindMinimizeButton(popup, ctx);
-
-    // Directions button handler (TUC4 Step 5)
-    directionsBtn.addEventListener('click', async () => {
-      const selectedPreds = ctx.displayPredictions.filter((_, idx) =>
-        ctx.selectedIndices.has(idx)
-      );
+    directions.addEventListener('click', async () => {
+      const selected = ctx.board.selectedPredictions;
       const started = await this.directionsController.startDirections(
-        stop,
-        selectedPreds
+        ctx.stop,
+        selected
       );
-      if (started && selectedPreds.length > 0) {
-        await this.renderSelectedBusRoutes(selectedPreds);
-      }
+      if (started && selected.length)
+        await this.renderSelectedBusRoutes(selected);
     });
-
     this.startPredictionPolling(ctx);
-    this.bindStopShortcutActions(popup, stop);
+    this.bindStopShortcutActions(popup, ctx.stop);
   }
 
   private buildStopShortcutActions(): HTMLElement {
@@ -345,128 +348,14 @@ export class PredictionController {
     return walkRow;
   }
 
-  /**
-   * Build the hint + list (or empty-state) nodes for the prediction popup.
-   * Also wires click handlers on each arrival row.
-   */
-  private buildPredictionListSection(
-    ctx: StopPopupContext,
-    directionsBtn: HTMLButtonElement
-  ): HTMLElement[] {
-    const { displayPredictions, selectedIndices } = ctx;
-    const nodes: HTMLElement[] = [];
-
-    if (displayPredictions.length === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'map-popup__empty';
-      empty.textContent = 'No upcoming arrivals';
-      empty.hidden = ctx.unavailable;
-      nodes.push(empty);
-      return nodes;
-    }
-
-    const hint = document.createElement('p');
-    hint.className = 'map-popup__select-hint';
-    hint.textContent = 'Tap buses to include in directions';
-    nodes.push(hint);
-
-    const list = document.createElement('ul');
-    list.className = 'map-popup__list';
-    for (let i = 0; i < displayPredictions.length; i++) {
-      list.appendChild(
-        this.buildArrivalRow(
-          displayPredictions[i],
-          i,
-          selectedIndices,
-          directionsBtn
-        )
-      );
-    }
-    nodes.push(list);
-    return nodes;
-  }
-
-  private buildArrivalRow(
-    p: IPrediction,
-    index: number,
-    selectedIndices: Set<number>,
-    directionsBtn: HTMLButtonElement
-  ): HTMLLIElement {
-    const li = document.createElement('li');
-    li.className = 'map-popup__arrival map-popup__arrival--selectable';
-    li.dataset.predIndex = String(index);
-    li.dataset.arrival = String(p.predictedArrivalTime);
-    li.setAttribute('role', 'button');
-    li.tabIndex = 0;
-    li.classList.toggle(
-      'map-popup__arrival--selected',
-      selectedIndices.has(index)
-    );
-    li.setAttribute('aria-pressed', String(selectedIndices.has(index)));
-    li.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        li.click();
-      }
-    });
-
-    const routeBadge = document.createElement('span');
-    routeBadge.className = 'map-popup__route-badge';
-    routeBadge.style.backgroundColor = this.getRouteColor(p.routeId);
-    routeBadge.textContent = p.routeId;
-
-    const mins = document.createElement('span');
-    mins.className = 'map-popup__minutes';
-    mins.textContent = this.formatCountdown(p.predictedArrivalTime);
-
-    const meta = document.createElement('span');
-    meta.className = 'map-popup__meta';
-    const parts: string[] = [];
-    if (p.vid) parts.push(p.vid === 'Scheduled' ? 'Scheduled' : `Bus ${p.vid}`);
-    if (p.isDelayed) parts.push('Delayed');
-    meta.textContent = parts.join(' · ');
-
-    li.appendChild(routeBadge);
-    li.appendChild(mins);
-    li.appendChild(meta);
-
-    li.addEventListener('click', () => {
-      if (selectedIndices.has(index)) {
-        selectedIndices.delete(index);
-        li.classList.remove('map-popup__arrival--selected');
-      } else {
-        selectedIndices.add(index);
-        li.classList.add('map-popup__arrival--selected');
-      }
-      li.setAttribute('aria-pressed', String(selectedIndices.has(index)));
-      this.updateDirectionsBtnLabel(directionsBtn, selectedIndices.size);
-    });
-
-    return li;
-  }
-
   private buildDirectionsButton(): HTMLButtonElement {
     const btn = document.createElement('button');
     btn.className = 'map-popup__directions-btn';
     btn.innerHTML = `
-      <span class="material-icons-outlined">directions_walk</span>
-      Directions
+      <span class="material-icons-outlined" aria-hidden="true">directions_walk</span>
+      <span data-directions-label>Directions</span>
     `;
     return btn;
-  }
-
-  private updateDirectionsBtnLabel(
-    btn: HTMLButtonElement,
-    count: number
-  ): void {
-    const label =
-      count > 0
-        ? `Directions (${count} bus${count > 1 ? 'es' : ''})`
-        : 'Directions';
-    btn.innerHTML = `
-      <span class="material-icons-outlined">directions_walk</span>
-      ${label}
-    `;
   }
 
   // -------------------------------------------------------------------------
@@ -484,17 +373,18 @@ export class PredictionController {
     this.pollingEvents = events;
     const notice = popup.querySelector<HTMLElement>('.arrival-recovery')!;
     const retry = notice.querySelector('button')!;
+    const refreshButton =
+      popup.querySelector<HTMLButtonElement>('[data-refresh]')!;
     let fetching = false;
     const updateNotice = () => {
       notice.hidden = !ctx.unavailable;
-      const label = ctx.displayPredictions.length
+      const label = ctx.board.hasPredictions
         ? 'Updates paused. Showing last known arrival times.'
         : 'Arrival times are unavailable.';
       const status = notice.querySelector('span')!;
       if (status.textContent !== label) status.textContent = label;
-      const empty = popup.querySelector<HTMLElement>('.map-popup__empty');
-      if (empty) empty.hidden = ctx.unavailable;
-      this.tickPredictionCountdowns(popup, ctx.unavailable);
+      refreshButton.hidden = ctx.unavailable;
+      ctx.board.setUnavailable(ctx.unavailable);
     };
     updateNotice();
 
@@ -504,7 +394,7 @@ export class PredictionController {
         this.stopPolling();
         return;
       }
-      if (!document.hidden && !ctx.unavailable) this.tickPredictionCountdowns(popup, false);
+      if (!document.hidden && !ctx.unavailable) ctx.board.tick();
     }, 1000);
 
     // 30-second full refresh from server
@@ -513,7 +403,8 @@ export class PredictionController {
         this.stopPolling();
         return;
       }
-      if (version !== this.requestVersion || fetching || document.hidden) return;
+      if (version !== this.requestVersion || fetching || document.hidden)
+        return;
       if (navigator.onLine === false) {
         ctx.unavailable = true;
         updateNotice();
@@ -523,6 +414,7 @@ export class PredictionController {
       // aria-disabled retains keyboard focus while the pending request is
       // coalesced above. A disabled native button would drop focus to the page.
       retry.setAttribute('aria-disabled', 'true');
+      refreshButton.setAttribute('aria-disabled', 'true');
       try {
         const fresh = await this.fetchPredictions(
           ctx.stop.stopId,
@@ -532,94 +424,37 @@ export class PredictionController {
         if (version !== this.requestVersion || !popup.isConnected) return;
         const retryFocused = document.activeElement === retry;
         ctx.unavailable = fresh === null || !navigator.onLine;
-        if (!ctx.unavailable && fresh) this.refreshPredictionList(fresh.slice(0, 8), ctx);
+        if (!ctx.unavailable && fresh) ctx.board.refresh(fresh);
         updateNotice();
         if (retryFocused && !ctx.unavailable)
-          popup.querySelector<HTMLElement>('.map-popup__arrival, .map-popup__directions-btn')?.focus();
+          popup
+            .querySelector<HTMLElement>(
+              '.map-popup__arrival, .map-popup__directions-btn'
+            )
+            ?.focus();
       } finally {
         fetching = false;
         retry.removeAttribute('aria-disabled');
+        refreshButton.removeAttribute('aria-disabled');
       }
     };
     retry.disabled = false;
     retry.removeAttribute('aria-disabled');
+    refreshButton.addEventListener('click', refresh, { signal: events.signal });
     retry.addEventListener('click', refresh, { signal: events.signal });
     window.addEventListener('online', refresh, { signal: events.signal });
-    window.addEventListener('offline', () => {
-      ctx.unavailable = true;
-      updateNotice();
-    }, { signal: events.signal });
-    document.addEventListener('visibilitychange', refresh, { signal: events.signal });
+    window.addEventListener(
+      'offline',
+      () => {
+        ctx.unavailable = true;
+        updateNotice();
+      },
+      { signal: events.signal }
+    );
+    document.addEventListener('visibilitychange', refresh, {
+      signal: events.signal
+    });
     this.predictionPollInterval = window.setInterval(refresh, 30_000);
-  }
-
-  private tickPredictionCountdowns(popup: HTMLElement, unavailable: boolean): void {
-    const items = popup.querySelectorAll<HTMLElement>('.map-popup__arrival');
-    items.forEach((li) => {
-      const arrival = Number(li.dataset.arrival);
-      if (!arrival) return;
-      const minsEl = li.querySelector('.map-popup__minutes');
-      if (minsEl) minsEl.textContent = unavailable
-        ? new Date(arrival).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-        : this.formatCountdown(arrival);
-    });
-  }
-
-  private formatCountdown(arrivalTimestamp: number): string {
-    const secsLeft = Math.round((arrivalTimestamp - Date.now()) / 1000);
-    if (secsLeft <= 0) return 'NOW';
-    if (secsLeft < 60) return `${secsLeft}s`;
-    return `${Math.ceil(secsLeft / 60)} min`;
-  }
-
-  private refreshPredictionList(
-    freshPreds: IPrediction[],
-    ctx: StopPopupContext
-  ): void {
-    const { selectedIndices, displayPredictions } = ctx;
-    const popup = document.getElementById(MAP_POPUP_ID);
-    if (!popup) return;
-
-    const directionsBtn = popup.querySelector<HTMLButtonElement>(
-      '.map-popup__directions-btn'
-    );
-    if (!directionsBtn) return;
-    // Preserve selection by vehicle identity, not by the previous row index.
-    // Scheduled rows have no vehicle identity, so use their scheduled arrival.
-    const key = (prediction: IPrediction): string =>
-      JSON.stringify([
-        prediction.stopId,
-        prediction.routeId,
-        prediction.vid && prediction.vid !== 'Scheduled'
-          ? prediction.vid
-          : prediction.predictedArrivalTime
-      ]);
-    const selected = new Set(
-      displayPredictions
-        .filter((_, index) => selectedIndices.has(index))
-        .map(key)
-    );
-    const row = document.activeElement?.closest<HTMLElement>('.map-popup__arrival');
-    const focused = row && popup.contains(row) ? displayPredictions[Number(row.dataset.predIndex)] : null;
-    selectedIndices.clear();
-    freshPreds.forEach((prediction, index) => {
-      if (selected.has(key(prediction))) selectedIndices.add(index);
-    });
-    displayPredictions.splice(0, displayPredictions.length, ...freshPreds);
-    ctx.predictions = freshPreds;
-    popup
-      .querySelectorAll(
-        '.map-popup__list, .map-popup__select-hint, .map-popup__empty'
-      )
-      .forEach((element) => element.remove());
-    this.buildPredictionListSection(ctx, directionsBtn).forEach((element) =>
-      popup.insertBefore(element, directionsBtn)
-    );
-    this.updateDirectionsBtnLabel(directionsBtn, selectedIndices.size);
-    if (focused) {
-      const newIndex = freshPreds.findIndex(prediction => key(prediction) === key(focused));
-      (popup.querySelector<HTMLElement>(`[data-pred-index="${newIndex}"]`) ?? directionsBtn).focus({ preventScroll: true });
-    }
   }
 
   private bindMinimizeButton(popup: Element, ctx: StopPopupContext): void {
@@ -631,8 +466,6 @@ export class PredictionController {
     const onRestore = () => this.rebindStopPopupEvents(ctx);
     minBtn.addEventListener('click', () => {
       this.minimisedStop = ctx.stop;
-      this.minimisedPredictions = ctx.predictions;
-      this.minimisedUnavailable = ctx.unavailable;
       this.stopPolling();
       minimizePopup(
         'stop',
@@ -661,7 +494,7 @@ export class PredictionController {
   }
 
   private rebindStopPopupEvents(ctx: StopPopupContext): void {
-    const { stop, displayPredictions, selectedIndices } = ctx;
+    const { stop } = ctx;
     const popup = document.getElementById(MAP_POPUP_ID);
     if (!popup) return;
     this.minimisedStop = null;
@@ -670,54 +503,7 @@ export class PredictionController {
       void this.handleStopClick(selected);
     });
 
-    this.bindMinimizeButton(popup, ctx);
-
-    const items = popup.querySelectorAll('.map-popup__arrival--selectable');
-    const directionsBtn = popup.querySelector(
-      '.map-popup__directions-btn'
-    ) as HTMLButtonElement | null;
-    items.forEach((li) => {
-      const idx = parseInt((li as HTMLElement).dataset.predIndex ?? '-1', 10);
-      if (idx < 0) return;
-      li.addEventListener('click', () => {
-        if (selectedIndices.has(idx)) {
-          selectedIndices.delete(idx);
-          li.classList.remove('map-popup__arrival--selected');
-        } else {
-          selectedIndices.add(idx);
-          li.classList.add('map-popup__arrival--selected');
-        }
-        li.setAttribute('aria-pressed', String(selectedIndices.has(idx)));
-        if (directionsBtn) {
-          this.updateDirectionsBtnLabel(directionsBtn, selectedIndices.size);
-        }
-      });
-      li.addEventListener('keydown', (event) => {
-        const keyboardEvent = event as KeyboardEvent;
-        if (keyboardEvent.key === 'Enter' || keyboardEvent.key === ' ') {
-          keyboardEvent.preventDefault();
-          (li as HTMLElement).click();
-        }
-      });
-    });
-
-    if (directionsBtn) {
-      directionsBtn.addEventListener('click', async () => {
-        const selectedPreds = displayPredictions.filter((_, i) =>
-          selectedIndices.has(i)
-        );
-        const started = await this.directionsController.startDirections(
-          stop,
-          selectedPreds
-        );
-        if (started && selectedPreds.length > 0) {
-          await this.renderSelectedBusRoutes(selectedPreds);
-        }
-      });
-    }
-
-    this.startPredictionPolling(ctx);
-    this.bindStopShortcutActions(popup, stop);
+    this.bindStopCard(popup, ctx);
   }
 
   // -------------------------------------------------------------------------

@@ -1113,6 +1113,65 @@ input:checked + .slider:before {
 
 /* ── Stop-specific content ─── */
 
+.map-popup:has(.stop-arrival-board) {
+  max-height: min(68dvh, 600px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.stop-arrival-board { flex: 0 0 auto; min-width: 0; }
+.arrival-board__bar, .arrival-board__hint {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+.arrival-board__bar summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+}
+.arrival-board__bar summary::-webkit-details-marker { display: none; }
+.arrival-board__bar details[open] { flex-basis: 100%; }
+.arrival-board__bar details[open] summary span { transform: rotate(180deg); }
+.arrival-board__bar button, .arrival-board__hint button, .arrival-board__more {
+  min-height: 44px;
+  background: transparent;
+  color: var(--primary, #861535);
+  border: 0;
+  padding: 0 6px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+.arrival-board__bar [data-refresh] { font-size: 12px; }
+.arrival-board__bar [data-refresh] span:last-child { font-size: 17px; margin-left: 5px; }
+.arrival-board__options {
+  border-block: 1px solid #d6dae0;
+  padding: 4px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+}
+.arrival-board__options label:not([hidden]) { display: inline-flex; gap: 6px; align-items: center; min-height: 44px; }
+.arrival-board__options select { font-size: 16px; min-height: 44px; max-width: 13em; }
+.arrival-board__hint { color: #4b5563; font-size: 12px; align-items: center; }
+.arrival-board__hint[hidden] { display: none; }
+.stop-arrival-board .map-popup__list { max-height: min(26dvh, 220px); overflow-y: auto; }
+.stop-arrival-board .map-popup__arrival {
+  width: 100%; min-height: 44px; font: inherit; color: inherit;
+  text-align: start; border: none; border-bottom: 1px solid #e1e5e9;
+  background: transparent;
+}
+.stop-arrival-board .map-popup__arrival[aria-pressed="true"] {
+  background: #f7e8ed;
+  box-shadow: inset 3px 0 var(--primary, #861535);
+}
+.arrival-board__more { width: 100%; text-align: center; }
+
 .arrival-recovery:not([hidden]) {
   display: flex;
   align-items: center;

@@ -68,25 +68,48 @@ describe('prediction refresh contents', () => {
   });
 
   test('failed refresh keeps the selected bus and displays a last-known time until reconnection', async () => {
-    mockPredictions.mockResolvedValueOnce([first]).mockResolvedValueOnce(null).mockResolvedValue([]);
+    mockPredictions
+      .mockResolvedValueOnce([first])
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue([]);
     await controller.handleStopClick(stop);
     document.querySelector<HTMLElement>('.map-popup__arrival')!.click();
     await jest.advanceTimersByTimeAsync(30000);
-    expect(document.querySelector<HTMLElement>('.arrival-recovery')!.hidden).toBe(false);
-    expect(document.querySelector('.map-popup__arrival')!.getAttribute('aria-pressed')).toBe('true');
-    expect(document.querySelector('.map-popup__minutes')!.textContent).toMatch(/:/);
+    expect(
+      document.querySelector<HTMLElement>('.arrival-recovery')!.hidden
+    ).toBe(false);
+    expect(
+      document
+        .querySelector('.map-popup__arrival')!
+        .getAttribute('aria-pressed')
+    ).toBe('true');
+    expect(document.querySelector('.map-popup__minutes')!.textContent).toMatch(
+      /:/
+    );
     window.dispatchEvent(new Event('online'));
     await jest.advanceTimersByTimeAsync(1);
-    expect(document.querySelector<HTMLElement>('.arrival-recovery')!.hidden).toBe(true);
-    expect(document.querySelector<HTMLElement>('.map-popup__empty')!.hidden).toBe(false);
+    expect(
+      document.querySelector<HTMLElement>('.arrival-recovery')!.hidden
+    ).toBe(true);
+    expect(
+      document.querySelector<HTMLElement>('.map-popup__empty')!.hidden
+    ).toBe(false);
   });
 
   test('an initial failure offers retry and coalesces a double tap and reconnect', async () => {
     let finish!: (p: IPrediction[]) => void;
-    mockPredictions.mockResolvedValueOnce(null).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    mockPredictions.mockResolvedValueOnce(null).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
     await controller.handleStopClick(stop);
-    expect(document.querySelector<HTMLElement>('.map-popup__empty')!.hidden).toBe(true);
-    const retry = document.querySelector<HTMLButtonElement>('.arrival-recovery button')!;
+    expect(
+      document.querySelector<HTMLElement>('.map-popup__empty')!.hidden
+    ).toBe(true);
+    const retry = document.querySelector<HTMLButtonElement>(
+      '.arrival-recovery button'
+    )!;
     retry.focus();
     retry.click();
     retry.click();
@@ -95,8 +118,12 @@ describe('prediction refresh contents', () => {
     finish([first]);
     await jest.advanceTimersByTimeAsync(1);
     expect(document.querySelector('.map-popup__arrival')).not.toBeNull();
-    expect(document.activeElement).toBe(document.querySelector('.map-popup__arrival'));
-    expect(document.querySelector<HTMLElement>('.arrival-recovery')!.hidden).toBe(true);
+    expect(document.activeElement).toBe(
+      document.querySelector('.map-popup__arrival')
+    );
+    expect(
+      document.querySelector<HTMLElement>('.arrival-recovery')!.hidden
+    ).toBe(true);
   });
 
   test('selected buses remain the same when refreshed arrivals change order', async () => {
@@ -113,6 +140,63 @@ describe('prediction refresh contents', () => {
       .querySelector<HTMLButtonElement>('.map-popup__directions-btn')!
       .click();
     expect(mockStartDirections).toHaveBeenCalledWith(stop, [second]);
+  });
+
+  test('route filtering and paging keep the selected arrivals for directions, including after minimize', async () => {
+    const arrivals = Array.from({ length: 14 }, (_, index) => ({
+      ...first,
+      routeId: index % 2 ? '61C' : '61A',
+      vid: String(index),
+      predictedArrivalTime: Date.now() + (index + 1) * 60000
+    }));
+    mockPredictions.mockResolvedValue(arrivals);
+    await controller.handleStopClick(stop);
+    const rows = () =>
+      Array.from(
+        document.querySelectorAll<HTMLButtonElement>('.map-popup__arrival')
+      );
+    expect(rows()).toHaveLength(8);
+    document.querySelector<HTMLButtonElement>('.arrival-board__more')!.click();
+    rows()[13].click();
+    const route = document.querySelector<HTMLSelectElement>('[data-route]')!;
+    route.value = '61A';
+    route.dispatchEvent(new Event('change'));
+    expect(rows()).toHaveLength(7);
+    rows()[0].click();
+    document.querySelector<HTMLButtonElement>('.map-popup__minimize')!.click();
+    await controller.handleStopClick(stop);
+    expect(
+      document.querySelector<HTMLSelectElement>('[data-route]')!.value
+    ).toBe('61A');
+    const directions = document.querySelector<HTMLButtonElement>(
+      '.map-popup__directions-btn'
+    )!;
+    directions.click();
+    expect(mockStartDirections).toHaveBeenCalledWith(stop, [
+      arrivals[0],
+      arrivals[13]
+    ]);
+    document.querySelector<HTMLButtonElement>('[data-clear]')!.click();
+    directions.click();
+    expect(mockStartDirections).toHaveBeenLastCalledWith(stop, []);
+  });
+
+  test('manual refresh updates the checked time and preserves the Pittsburgh time display', async () => {
+    jest.setSystemTime(new Date('2026-11-05T20:00:00Z'));
+    mockPredictions.mockResolvedValue([
+      { ...first, predictedArrivalTime: Date.now() + 120_000 }
+    ]);
+    await controller.handleStopClick(stop);
+    const stamp = () => document.querySelector('[data-checked]')!.textContent;
+    expect(stamp()).toContain('3:00 PM ET');
+    document.querySelector<HTMLInputElement>('[data-clock]')!.click();
+    expect(document.querySelector('time')!.textContent).toBe('3:02 PM ET');
+    jest.setSystemTime(new Date('2026-11-05T20:01:00Z'));
+    document.querySelector<HTMLButtonElement>('[data-refresh]')!.click();
+    await jest.advanceTimersByTimeAsync(1);
+    expect(mockPredictions).toHaveBeenCalledTimes(2);
+    expect(stamp()).toContain('3:01 PM ET');
+    expect(document.querySelector('time')!.textContent).toBe('3:02 PM ET');
   });
 
   test('restoring a minimized stop revokes another pending selection without leaving it stuck', async () => {
