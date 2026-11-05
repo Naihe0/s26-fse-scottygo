@@ -26,7 +26,7 @@ interface ReadReceipt {
   readAt: number;
 }
 
-const READ_LIMIT = 500;
+export const INBOX_READ_LIMIT = 500;
 const READ_MAX_AGE = 45 * 24 * 60 * 60_000;
 const STORAGE_PREFIX = 'scottygo:notification-inbox:v1:';
 
@@ -147,7 +147,7 @@ export class NotificationReadStore {
       );
       if (!Array.isArray(stored)) return;
       const now = Date.now();
-      for (const item of stored.slice(0, READ_LIMIT)) {
+      for (const item of stored.slice(0, INBOX_READ_LIMIT)) {
         if (
           !item ||
           typeof item.key !== 'string' ||
@@ -182,22 +182,28 @@ export class NotificationReadStore {
   }
 
   setRead(entry: InboxEntry, read: boolean): void {
+    this.setEntriesRead([entry], read);
+  }
+
+  /** A bulk action writes one snapshot, including when storage is slow on a phone. */
+  setEntriesRead(entries: InboxEntry[], read: boolean): void {
     this.synchronize();
-    const key = inboxKey(entry);
-    if (read) {
+    const updated = new Map<string, ReadReceipt>();
+    const now = Date.now();
+    for (const entry of entries) {
+      const key = inboxKey(entry);
       this.records.delete(key);
-      this.records = new Map([
-        [
+      if (read)
+        updated.set(key, {
           key,
-          { key, fingerprint: inboxFingerprint(entry), readAt: Date.now() }
-        ],
-        ...this.records
-      ]);
-    } else this.records.delete(key);
-    const records = [...this.records.values()]
-      .filter((item) => item.readAt >= Date.now() - READ_MAX_AGE)
+          fingerprint: inboxFingerprint(entry),
+          readAt: now
+        });
+    }
+    const records = [...updated.values(), ...this.records.values()]
+      .filter((item) => item.readAt >= now - READ_MAX_AGE)
       .sort((a, b) => b.readAt - a.readAt)
-      .slice(0, READ_LIMIT);
+      .slice(0, INBOX_READ_LIMIT);
     this.records = new Map(records.map((item) => [item.key, item]));
     if (!this.account) return;
     try {

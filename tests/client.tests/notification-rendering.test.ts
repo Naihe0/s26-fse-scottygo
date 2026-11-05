@@ -587,6 +587,45 @@ describe('notification center rendering and refresh ownership', () => {
     ).toBe('false');
   });
 
+  test('bulk read applies only to displayed matches and leaves new arrivals unread', async () => {
+    document.body.insertAdjacentHTML(
+      'beforeend',
+      '<button id="notif-mark-shown-read" hidden></button>'
+    );
+    const reports = [rider('match', '61C')];
+    useSnapshots([service('match', '61C'), service('other', '71C')], reports);
+    await import('../../client/scripts/notification');
+    await flush();
+    document.getElementById('notif-unread-only')!.click();
+    changeSearch('61C');
+    const bulk = document.querySelector<HTMLButtonElement>(
+      '#notif-mark-shown-read'
+    )!;
+    expect(bulk.hidden).toBe(false);
+    bulk.focus();
+    bulk.click();
+    expect(bulk.hidden).toBe(true);
+    expect(document.activeElement).toBe(
+      document.getElementById('notif-unread-only')
+    );
+    expect(document.querySelectorAll('.notif-card')).toHaveLength(0);
+    expect(
+      document.getElementById('notif-inbox-announcement')!.textContent
+    ).toBe('Marked 2 shown updates as read.');
+    changeSearch('');
+    expect(
+      document.querySelector('.notif-card')?.getAttribute('data-key')
+    ).toBe('alert:other');
+    useSnapshots(
+      [service('match', '61C'), service('other', '71C'), service('new', '61C')],
+      reports
+    );
+    document.getElementById('notif-refresh')!.click();
+    await flush();
+    expect(document.querySelectorAll('.notif-card')).toHaveLength(2);
+    expect(document.querySelector('[data-key="alert:new"]')).not.toBeNull();
+  });
+
   test('priority and newest order can be switched without another feed request', async () => {
     useSnapshots(
       [

@@ -24,6 +24,7 @@ import { formatNotificationTime } from './utils/alert-content';
 import { authHeaders, getToken, isSameSession } from './services/session';
 import { showToast } from './utils/toast';
 import {
+  INBOX_READ_LIMIT,
   NotificationReadStore,
   buildInboxShare,
   groupInbox,
@@ -54,6 +55,9 @@ const filters = [
 ];
 const savedOnlyBtn = document.getElementById('notif-saved-only');
 const unreadOnlyBtn = document.getElementById('notif-unread-only');
+const markShownRead = document.querySelector<HTMLButtonElement>(
+  '#notif-mark-shown-read'
+);
 const sortSelect = document.getElementById(
   'notif-sort'
 ) as HTMLSelectElement | null;
@@ -67,6 +71,7 @@ let savedOnly = false;
 let unreadOnly = false;
 let sort: InboxSort = 'priority';
 let grouped = false;
+let shownUnread: InboxEntry[] = [];
 let savedRoutes: Snapshot<string> = { items: [], loaded: false, failed: false };
 let savedRequest: AbortController | null = null;
 let savedRequestVersion = 0;
@@ -269,7 +274,17 @@ function render(): void {
   renderCards(entries);
 
   const count = entries.length;
-  const unread = entries.filter((entry) => !readStore.isRead(entry)).length;
+  shownUnread = entries.filter((entry) => !readStore.isRead(entry));
+  const unread = shownUnread.length;
+  if (markShownRead) {
+    const restoreFocus = document.activeElement === markShownRead && !unread;
+    markShownRead.hidden = unread === 0;
+    markShownRead.disabled = entries.length > INBOX_READ_LIMIT;
+    markShownRead.textContent = markShownRead.disabled
+      ? 'Narrow filters to mark shown updates as read'
+      : 'Mark shown as read';
+    if (restoreFocus) unreadOnlyBtn?.focus({ preventScroll: true });
+  }
   countEl.textContent = `${count} ${count === 1 ? 'update' : 'updates'}${query ? ' found' : ''} · ${unread} unread`;
   savedOnlyBtn?.setAttribute('aria-pressed', String(savedOnly));
   unreadOnlyBtn?.setAttribute('aria-pressed', String(unreadOnly));
@@ -495,6 +510,15 @@ function init(): void {
   refreshBtn.addEventListener('click', () => {
     void refresh();
     void loadSavedRoutes();
+  });
+  markShownRead?.addEventListener('click', () => {
+    if (reloadChangedSession() || !shownUnread.length || markShownRead.disabled)
+      return;
+    const count = shownUnread.length;
+    readStore.setEntriesRead(shownUnread, true);
+    render();
+    if (inboxAnnouncement)
+      inboxAnnouncement.textContent = `Marked ${count} shown ${count === 1 ? 'update' : 'updates'} as read.`;
   });
   savedOnlyBtn?.addEventListener('click', () => {
     savedOnly = !savedOnly;

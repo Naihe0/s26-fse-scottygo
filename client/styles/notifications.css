@@ -390,6 +390,28 @@
   }
 }
 
+.notif-result-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.notif-result-actions button {
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: #eaf4f6;
+  color: #235a6c;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.notif-result-actions button:focus-visible {
+  outline: 3px solid #376ab0;
+  outline-offset: 2px;
+}
 .notif-results-meta {
   display: flex;
   align-items: baseline;
