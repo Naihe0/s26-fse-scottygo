@@ -130,6 +130,34 @@ describe('bounded streaming GTFS startup', () => {
     expect(spawnMock).toHaveBeenCalledTimes(7);
   });
 
+  test('shares transfer membership between search and route details without inflating bulk map stops', async () => {
+    const additions: Record<string, string> = {
+      'routes.txt': '61D,61D,Transfer route,333333\n',
+      'trips.txt': 'other,61D,daily,0,shape,Oakland\n',
+      'stop_times.txt': 'other,09:00:00,2\nother,09:05:00,2\n'
+    };
+    spawnMock.mockImplementation((_command, args) => {
+      const file = args![2];
+      return unzipChild(
+        tables[file] + (additions[file] ?? '')
+      ) as unknown as ReturnType<typeof spawn>;
+    });
+    const service = new GTFSService();
+    await service.load();
+    const detail = service.getStopsByDirection('61C', 'OUTBOUND', true);
+    expect(detail.find((stop) => stop.stopId === '2')?.routes).toEqual([
+      '61C',
+      '61D'
+    ]);
+    expect(detail.find((stop) => stop.stopId === '1')?.routes).toEqual(['61C']);
+    expect(
+      service.getAllStops().find((stop) => stop.stopId === '2')?.routes
+    ).toEqual(['61C', '61D']);
+    expect(
+      service.getStopsByDirection('61C', 'OUTBOUND')[1].routes
+    ).toBeUndefined();
+  });
+
   test('retries a failed HTTP download and then loads normally', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response('unavailable', { status: 503 })

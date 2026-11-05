@@ -384,6 +384,54 @@ test('bus rows use reported timestamps, keep delayed buses, and dispatch the sel
   expect(explorer.querySelector('dialog')!.open).toBe(false);
 });
 
+test('finds a transfer on the correct platform and ranks stops by distance', async () => {
+  getStops.mockResolvedValue([
+    { ...stop('far', 'Alpha', 40.442), routes: ['61C'] },
+    { ...stop('near', 'Zulu'), routes: ['61C', '71A'] }
+  ]);
+  await open();
+  const sort = explorer.querySelector<HTMLSelectElement>(
+    '[data-stop-sort] select'
+  )!;
+  sort.value = 'distance';
+  sort.dispatchEvent(new Event('change'));
+  expect(explorer.querySelector('[data-stops] button')?.textContent).toContain(
+    'ZuluStop near · 0 mTransfer to 71A'
+  );
+  const input = explorer.querySelector('input')!;
+  input.value = '71a';
+  input.dispatchEvent(new Event('input'));
+  expect(explorer.querySelectorAll('[data-stops] li')).toHaveLength(1);
+  explorer.querySelector<HTMLButtonElement>('[data-stops] button')!.click();
+  expect(selectedStop.mock.calls[0][0].stopId).toBe('near');
+});
+
+test('a local bus-direction filter retains the map vehicles and exposes detours and stop status', async () => {
+  await open();
+  state.setActiveVehicles([
+    vehicle('a'),
+    {
+      ...vehicle('b', 'OUTBOUND'),
+      isDetoured: true,
+      currentStatus: 'STOPPED_AT'
+    }
+  ]);
+  const filter = explorer.querySelector<HTMLSelectElement>(
+    '[data-bus-filter] select'
+  )!;
+  filter.value = 'OUTBOUND';
+  filter.dispatchEvent(new Event('change'));
+  expect(explorer.querySelectorAll('[data-buses] li')).toHaveLength(1);
+  expect(explorer.querySelector('[data-buses]')?.textContent).toContain(
+    'Bus b · Outbound · Detour · Stopped at a stop'
+  );
+  expect(explorer.querySelector('[data-bus-count]')?.textContent).toBe('(2)');
+  expect(state.getState().selectedDirections).toEqual({
+    inbound: true,
+    outbound: true
+  });
+});
+
 test('full-route overview emits the selected route and dismisses the panel', async () => {
   await open();
   const listener = jest.fn();

@@ -46,6 +46,7 @@ export class RouteExplorer extends HTMLElement {
   private stopRequest: AbortController | null = null;
   private resolveCancelledRequest: (() => void) | null = null;
   private nearestKey = '';
+  private stopListOrigin = '';
   private isLoading = false;
   private hasError = false;
   private loaded = false;
@@ -119,8 +120,9 @@ export class RouteExplorer extends HTMLElement {
           <section class="route-explorer__nearest" aria-label="Nearest boarding stop"></section>
           <section aria-labelledby="${this.panelId}-stops">
             <h3 id="${this.panelId}-stops">Stops</h3>
-            <label class="route-explorer__field route-explorer__search"><span class="route-explorer__sr-only">Search route stops</span><input type="search" placeholder="Find a stop on this route" aria-label="Search route stops" autocomplete="off" /></label>
-            <p class="route-explorer__note">Stops are listed alphabetically, not in travel order.</p>
+            <label class="route-explorer__field route-explorer__search"><span class="route-explorer__sr-only">Search route stops</span><input type="search" placeholder="Street, stop number or transfer route" aria-label="Search route stops" autocomplete="off" /></label>
+            <label class="route-explorer__field" data-stop-sort>Order stops<select aria-label="Order stops"><option value="name">Stop name (A–Z)</option><option value="distance">Nearest first</option></select></label>
+            <p class="route-explorer__note" data-order-note></p>
             <p data-status role="status"></p>
             <button type="button" data-retry hidden>Retry loading stops</button>
             <ul data-stops></ul>
@@ -129,6 +131,7 @@ export class RouteExplorer extends HTMLElement {
           <div role="tabpanel" id="${this.panelId}-buses-view" aria-labelledby="${this.panelId}-buses-tab" hidden>
             <section class="route-explorer__vehicles" aria-labelledby="${this.panelId}-buses">
               <h3 id="${this.panelId}-buses">Buses shown on map</h3>
+              <label class="route-explorer__field" data-bus-filter hidden>Bus direction<select aria-label="Bus direction"><option value="">All directions</option><option value="INBOUND">Inbound</option><option value="OUTBOUND">Outbound</option><option value="OTHER">Other or unreported</option></select></label>
               <ul data-buses></ul><p data-no-buses class="route-explorer__note">No buses shown for the current map filters.</p>
             </section>
           </div>
@@ -196,6 +199,14 @@ export class RouteExplorer extends HTMLElement {
     this.querySelector('input')!.addEventListener('input', () =>
       this.renderStops()
     );
+    this.querySelector('[data-stop-sort] select')!.addEventListener(
+      'change',
+      () => this.renderStops()
+    );
+    this.querySelector('[data-bus-filter] select')!.addEventListener(
+      'change',
+      () => this.renderVehicles(this.stateManager.getState().activeVehicles)
+    );
     this.querySelector('[data-retry]')!.addEventListener(
       'click',
       () => void this.loadStops()
@@ -212,6 +223,8 @@ export class RouteExplorer extends HTMLElement {
       this.loaded = false;
       this.hasError = false;
       this.querySelector('input')!.value = '';
+      this.querySelector<HTMLSelectElement>('[data-bus-filter] select')!.value =
+        '';
       if (!this.selectedRoute) {
         this.close(false);
         return;
@@ -335,9 +348,38 @@ export class RouteExplorer extends HTMLElement {
 
   private renderStops(): void {
     const query = this.querySelector('input')!.value.trim().toLocaleLowerCase();
-    const visible = this.stops.filter((stop) =>
-      `${stop.stopName} ${stop.stopId}`.toLocaleLowerCase().includes(query)
-    );
+    const origin = this.configuration.getOrigin();
+    const canRank =
+      !!origin &&
+      Number.isFinite(origin.lat) &&
+      Math.abs(origin.lat) <= 90 &&
+      Number.isFinite(origin.lng) &&
+      Math.abs(origin.lng) <= 180;
+    const sort = this.querySelector<HTMLSelectElement>(
+      '[data-stop-sort] select'
+    )!;
+    this.querySelector<HTMLElement>('[data-stop-sort]')!.hidden =
+      !canRank || !this.stops.length;
+    const byDistance = canRank && sort.value === 'distance';
+    this.stopListOrigin = origin ? `${origin.lat},${origin.lng}` : '';
+    const note = byDistance
+      ? 'Straight-line distance from your starting point.'
+      : 'Stops are listed alphabetically, not in travel order.';
+    this.querySelector('[data-order-note]')!.textContent =
+      this.stops.some((stop) => !stop.routes?.length)
+        ? note + ' Transfer listings are incomplete.'
+        : note;
+    const visible = this.stops
+      .filter((stop) =>
+        [stop.stopName, stop.stopId, ...(stop.routes ?? [])].some((text) =>
+          text.toLowerCase().includes(query)
+        )
+      )
+      .map((stop) => ({
+        stop,
+        meters: byDistance ? distanceMeters(origin, stop) : 0
+      }));
+    if (byDistance) visible.sort((a, b) => a.meters - b.meters);
     const status = this.querySelector<HTMLElement>('[data-status]')!;
     status.textContent = this.isLoading
       ? 'Loading stops…'
@@ -353,15 +395,29 @@ export class RouteExplorer extends HTMLElement {
     const list = this.querySelector<HTMLElement>('[data-stops]')!;
     list.setAttribute('aria-busy', String(this.isLoading));
     list.replaceChildren(
-      ...visible.map((stop) => {
+      ...visible.map(({ stop, meters }) => {
         const item = document.createElement('li');
         const button = document.createElement('button');
         button.type = 'button';
+        button.dataset.explorerStop = stop.stopId;
         const name = document.createElement('strong');
         name.textContent = stop.stopName;
         const id = document.createElement('span');
         id.textContent = `Stop ${stop.stopId}`;
+        if (byDistance)
+          id.textContent +=
+            meters < 1000
+              ? ' · ' + Math.round(meters) + ' m'
+              : ' · ' + (meters / 1000).toFixed(1) + ' km';
         button.append(name, id);
+        const transfers = [...new Set(stop.routes ?? [])].filter(
+          (route) => route !== this.selectedRoute
+        );
+        if (transfers.length) {
+          const connections = document.createElement('span');
+          connections.textContent = 'Transfer to ' + transfers.join(' · ');
+          button.append(connections);
+        }
         button.addEventListener('click', () => this.selectStop(stop));
         item.appendChild(button);
         return item;
@@ -375,6 +431,17 @@ export class RouteExplorer extends HTMLElement {
     );
     if (!container) return;
     const origin = this.configuration.getOrigin();
+    if ((origin ? `${origin.lat},${origin.lng}` : '') !== this.stopListOrigin) {
+      const focused =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement.dataset.explorerStop
+          : undefined;
+      this.renderStops();
+      if (focused)
+        [...this.querySelectorAll<HTMLButtonElement>('[data-explorer-stop]')]
+          .find((button) => button.dataset.explorerStop === focused)
+          ?.focus({ preventScroll: true });
+    }
     if (
       !origin ||
       !Number.isFinite(origin.lat) ||
@@ -428,7 +495,7 @@ export class RouteExplorer extends HTMLElement {
     const focused = list.contains(document.activeElement)
       ? (document.activeElement as HTMLElement)
       : null;
-    const relevant = [
+    const onMap = [
       ...new Map(
         vehicles
           .filter(
@@ -443,6 +510,18 @@ export class RouteExplorer extends HTMLElement {
           .map((vehicle) => [vehicle.vid, vehicle])
       ).values()
     ];
+    const busDirection = this.querySelector<HTMLSelectElement>(
+      '[data-bus-filter] select'
+    )!;
+    const group = (v: IVehicle) =>
+      v.direction === 'INBOUND' || v.direction === 'OUTBOUND'
+        ? v.direction
+        : 'OTHER';
+    this.querySelector<HTMLElement>('[data-bus-filter]')!.hidden =
+      !busDirection.value && new Set(onMap.map(group)).size < 2;
+    const relevant = busDirection.value
+      ? onMap.filter((v) => group(v) === busDirection.value)
+      : onMap;
     const previous = new Map(
       [...list.querySelectorAll<HTMLLIElement>('li')].map((item) => [
         item.dataset.vid,
@@ -476,7 +555,20 @@ export class RouteExplorer extends HTMLElement {
         ? vehicle.direction.charAt(0).toUpperCase() +
           vehicle.direction.slice(1).toLowerCase()
         : 'Direction unavailable';
-      const label = `Bus ${vehicle.vid} · ${direction} · ${timestamp}`;
+      const status = {
+        STOPPED_AT: 'Stopped at a stop',
+        INCOMING_AT: 'Approaching a stop',
+        IN_TRANSIT_TO: 'Between stops'
+      };
+      const label = [
+        `Bus ${vehicle.vid}`,
+        direction,
+        vehicle.isDetoured && 'Detour',
+        vehicle.currentStatus && status[vehicle.currentStatus],
+        timestamp
+      ]
+        .filter(Boolean)
+        .join(' · ');
       const button = item.querySelector('button')!;
       if (button.textContent !== label) button.textContent = label;
       if (list.children[index] !== item)
@@ -488,10 +580,12 @@ export class RouteExplorer extends HTMLElement {
       focused.focus();
     else if (focused && !focused.isConnected)
       this.querySelector<HTMLButtonElement>('[data-close]')!.focus();
-    this.querySelector('[data-bus-count]')!.textContent =
-      `(${relevant.length})`;
-    this.querySelector<HTMLElement>('[data-no-buses]')!.hidden =
-      relevant.length > 0;
+    this.querySelector('[data-bus-count]')!.textContent = `(${onMap.length})`;
+    const empty = this.querySelector<HTMLElement>('[data-no-buses]')!;
+    empty.hidden = relevant.length > 0;
+    empty.textContent = busDirection.value
+      ? 'No buses shown in this direction.'
+      : 'No buses shown for the current map filters.';
   }
 }
 

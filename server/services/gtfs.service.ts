@@ -86,7 +86,7 @@ export class GTFSService {
   private routeMap = new Map<string, IRoute>();
   private patternMap = new Map<string, IPattern[]>(); // routeId → patterns
   private stopMap = new Map<string, IStop>(); // stopId → stop details
-  private routeStops = new Map<string, IStop[]>(); // routeId → stops (unordered unique)
+  private routesByStop = new Map<string, string[]>();
   private routeDirectionStops = new Map<string, IStop[]>(); // "routeId:DIRECTION" → ordered stops
 
   // Schedule data
@@ -155,7 +155,7 @@ export class GTFSService {
     this.routeMap.clear();
     this.patternMap.clear();
     this.stopMap.clear();
-    this.routeStops.clear();
+    this.routesByStop.clear();
     this.routeDirectionStops.clear();
     this.tripDirection.clear();
     this.tripShape.clear();
@@ -450,7 +450,11 @@ export class GTFSService {
     routeDirStopIds: Map<string, Set<string>>
   ): void {
     for (const [routeId, stopIds] of routeStopIds) {
-      this.routeStops.set(routeId, resolveStops(stopIds, this.stopMap));
+      for (const stopId of stopIds) {
+        const routes = this.routesByStop.get(stopId);
+        if (routes) routes.push(routeId);
+        else this.routesByStop.set(stopId, [routeId]);
+      }
     }
     for (const [dirKey, stopIds] of routeDirStopIds) {
       this.routeDirectionStops.set(dirKey, resolveStops(stopIds, this.stopMap));
@@ -501,8 +505,13 @@ export class GTFSService {
   }
 
   /** Return stops for a route filtered by direction (INBOUND or OUTBOUND). */
-  getStopsByDirection(routeId: string, direction: string): IStop[] {
-    return this.routeDirectionStops.get(`${routeId}:${direction}`) ?? [];
+  getStopsByDirection(routeId: string, direction: string, includeConnections = false): IStop[] {
+    const stops = this.routeDirectionStops.get(`${routeId}:${direction}`) ?? [];
+    return includeConnections ? stops.map(stop => this.withRoutes(stop)) : stops;
+  }
+
+  private withRoutes(stop: IStop): IStop {
+    return { ...stop, routes: [...(this.routesByStop.get(stop.stopId) ?? [])] };
   }
 
   /**
@@ -511,25 +520,7 @@ export class GTFSService {
    * Used by TransitSearchStrategy for keyword-based stop search.
    */
   getAllStops(): IStop[] {
-    const stopRoutes = new Map<string, Set<string>>();
-
-    for (const [routeId, stops] of this.routeStops.entries()) {
-      for (const stop of stops) {
-        if (!stopRoutes.has(stop.stopId)) {
-          stopRoutes.set(stop.stopId, new Set());
-        }
-        stopRoutes.get(stop.stopId)!.add(routeId);
-      }
-    }
-
-    const result: IStop[] = [];
-    for (const stop of this.stopMap.values()) {
-      result.push({
-        ...stop,
-        routes: [...(stopRoutes.get(stop.stopId) ?? [])]
-      });
-    }
-    return result;
+    return [...this.stopMap.values()].map(stop => this.withRoutes(stop));
   }
 
   private assertGtfsLoaded(): void {

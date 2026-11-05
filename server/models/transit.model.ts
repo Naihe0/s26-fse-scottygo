@@ -152,9 +152,12 @@ export class TransitModel {
   }
 
   /** Stops for a route direction. CMU routes are served by TripShot data. */
-  static async getStops(routeId: string, direction: string): Promise<IStop[]> {
+  static async getStops(routeId: string, direction: string, includeConnections = true): Promise<IStop[]> {
     if (routeId.startsWith('CMU-')) {
       return tripshotService.getStops(routeId, direction).catch(() => []);
+    }
+    if (includeConnections && gtfsService.isLoaded()) {
+      return gtfsService.getStopsByDirection(routeId, direction, true);
     }
     if (TransitModel.bulkDataCache) {
       return TransitModel.bulkDataCache.stops[`${routeId}:${direction}`] ?? [];
@@ -368,7 +371,7 @@ export class TransitModel {
         ? [filters.direction]
         : route.directions;
       for (const direction of directions) {
-        for (const stop of await TransitModel.getStops(route.id, direction)) {
+        for (const stop of await TransitModel.getStops(route.id, direction, false)) {
           const entry = stopsById.get(stop.stopId);
           if (entry) entry.routeIds.add(route.id);
           else stopsById.set(stop.stopId, { stop, routeIds: new Set([route.id]) });
