@@ -1,300 +1,197 @@
-/**
- * Onboarding Tutorial Component
- * A spotlight-based walkthrough that highlights map page components
- * one at a time with descriptive popups.
- */
+export interface IOnboardingTutorialElement extends HTMLElement {
+  start(opener?: HTMLElement): void;
+}
 
-export interface ITutorialStep {
-  targetSelector: string;
+interface GuideTopic {
+  target: string;
   title: string;
   description: string;
-  position: 'top' | 'bottom' | 'left' | 'right';
 }
 
-export interface IOnboardingTutorialElement extends HTMLElement {
-  start(): void;
-}
-
-const TUTORIAL_STEPS: ITutorialStep[] = [
+const topics: GuideTopic[] = [
   {
-    targetSelector: 'transit-search .search-bar',
-    title: 'Search',
+    target: 'transit-search .search-bar',
+    title: 'Find a route or stop',
     description:
-      'Search for routes or stops by name. You can also set a custom planned location.',
-    position: 'bottom'
+      'Search by name, route number or stop ID. Use the Routes and Stops buttons to narrow mixed results.'
   },
   {
-    targetSelector: '#route-filter-btn',
-    title: 'Route Filter',
+    target: '.nearby-stops__launch',
+    title: 'Find a place to board',
     description:
-      'Tap here to browse and select a specific route to display on the map.',
-    position: 'right'
+      'Nearby stops compares the walk with predicted arrival times. Tap a stop to see its arrivals.'
   },
   {
-    targetSelector: '#system-filter-btn',
-    title: 'Transit System',
-    description:
-      'Toggle between Pittsburgh Regional Transit (PRT) and CMU Shuttle routes.',
-    position: 'right'
+    target: '#route-filter-btn',
+    title: 'Choose a route',
+    description: 'Choose a route to see its line, stops and buses on the map.'
   },
   {
-    targetSelector: '#direction-filter-btn',
-    title: 'Direction Filter',
+    target: '#system-filter-btn',
+    title: 'Choose a transit system',
     description:
-      'Show only inbound, outbound, or both directions for the selected route.',
-    position: 'right'
+      'Show Pittsburgh Regional Transit, CMU shuttles or both systems.'
   },
   {
-    targetSelector: '#clear-filters-btn',
-    title: 'Clear Filters',
-    description: 'Reset all active filters and return to the default map view.',
-    position: 'right'
+    target: '#direction-filter-btn',
+    title: 'Choose a direction',
+    description: 'Use the direction filter to show inbound or outbound service.'
   },
   {
-    targetSelector: '#menu-icon',
-    title: 'Menu',
-    description:
-      'Open the menu to access your subscribed routes, notifications, manage your account, or log out.',
-    position: 'bottom'
+    target: '#clear-filters-btn',
+    title: 'Reset filters',
+    description: 'Clear the current filters to see other routes.'
   },
   {
-    targetSelector: 'route-bell',
-    title: 'Route Notifications',
+    target: '.rider-shortcuts__trigger',
+    title: 'Reopen a saved stop',
     description:
-      'Select a route first, then tap the bell to subscribe and receive live notifications.',
-    position: 'left'
+      'My places holds your saved stops, places and route views for this browser and account.'
   },
   {
-    targetSelector: '.gm-style div[role="button"]',
-    title: 'Stop Details',
-    description:
-      'Tap any stop marker on the map to see detailed stop info and real-time arrival predictions.',
-    position: 'top'
+    target: '#bell-btn:enabled',
+    title: 'Follow route updates',
+    description: 'Use the bell to save this route and find its service updates.'
+  },
+  {
+    target: '#menu-icon',
+    title: 'Read transit alerts',
+    description: 'Open the menu to view Alerts, Saved routes or your account.'
   }
 ];
+
+type VisibleTopic = GuideTopic & { element: HTMLElement };
 
 export class OnboardingTutorial
   extends HTMLElement
   implements IOnboardingTutorialElement
 {
-  private currentStep = 0;
-  private overlay: HTMLDivElement | null = null;
-  private popup: HTMLDivElement | null = null;
-  private spotlightEl: HTMLDivElement | null = null;
-  private active = false;
+  private steps: VisibleTopic[] = [];
+  private index = 0;
+  private popup: HTMLDialogElement | null = null;
+  private spotlight: HTMLElement | null = null;
+  private returnTo: HTMLElement | null = null;
 
-  start(): void {
-    this.currentStep = 0;
-    this.active = true;
-    this.createOverlay();
-    this.showStep();
+  start(opener?: HTMLElement): void {
+    if (this.popup) return;
+    this.steps = topics.flatMap((topic) => {
+      const element = document.querySelector<HTMLElement>(topic.target);
+      if (
+        !element ||
+        !element.getClientRects().length ||
+        getComputedStyle(element).visibility === 'hidden'
+      )
+        return [];
+      return [{ ...topic, element }];
+    });
+    if (!this.steps.length) return;
+    this.index = 0;
+    this.returnTo =
+      opener ?? document.querySelector<HTMLElement>('.map-key__toggle');
+    this.spotlight = document.createElement('div');
+    this.spotlight.className = 'tutorial-spotlight';
+    this.spotlight.setAttribute('aria-hidden', 'true');
+    this.popup = document.createElement('dialog');
+    this.popup.className = 'tutorial-popup rider-guide';
+    this.popup.setAttribute('aria-labelledby', 'guide-title');
+    this.popup.setAttribute('aria-describedby', 'guide-description');
+    this.popup.innerHTML = `
+      <div class="rider-guide__top"><span class="tutorial-popup__step"></span><button type="button" data-exit>End tour</button></div>
+      <h2 id="guide-title" class="tutorial-popup__title" tabindex="-1"></h2>
+      <p id="guide-description" class="tutorial-popup__desc"></p>
+      <label class="rider-guide__jump">Jump to topic<select></select></label>
+      <div class="tutorial-popup__actions"><button type="button" data-back>Back</button><button type="button" data-next>Next</button></div>`;
+    this.append(this.spotlight, this.popup);
+    const selector = this.popup.querySelector('select')!;
+    this.steps.forEach((step, index) =>
+      selector.add(new Option(step.title, String(index)))
+    );
+    selector.addEventListener('change', () =>
+      this.show(Number(selector.value))
+    );
+    this.popup
+      .querySelector('[data-back]')!
+      .addEventListener('click', () => this.show(this.index - 1));
+    this.popup.querySelector('[data-next]')!.addEventListener('click', () => {
+      if (this.index === this.steps.length - 1) this.finish();
+      else this.show(this.index + 1);
+    });
+    this.popup
+      .querySelector('[data-exit]')!
+      .addEventListener('click', () => this.finish());
+    this.popup.addEventListener('cancel', (event) => {
+      event.preventDefault();
+      this.finish();
+    });
+    this.popup.showModal();
+    this.show(0);
+    window.addEventListener('resize', this.layout);
+    window.visualViewport?.addEventListener('resize', this.layout);
+  }
+
+  disconnectedCallback(): void {
+    this.cleanup();
+  }
+
+  private show(index: number): void {
+    const step = this.steps[index];
+    if (!step || !this.popup) return;
+    this.index = index;
+    this.popup.querySelector('.tutorial-popup__step')!.textContent =
+      `Map tour · ${index + 1} of ${this.steps.length}`;
+    const title = this.popup.querySelector<HTMLElement>('#guide-title')!;
+    title.textContent = step.title;
+    this.popup.querySelector('#guide-description')!.textContent =
+      step.description;
+    this.popup.querySelector('select')!.value = String(index);
+    this.popup.querySelector<HTMLButtonElement>('[data-back]')!.disabled =
+      index === 0;
+    this.popup.querySelector('[data-next]')!.textContent =
+      index === this.steps.length - 1 ? 'Finish' : 'Next';
+    this.layout();
+    title.focus({ preventScroll: true });
+  }
+
+  private layout = (): void => {
+    if (!this.popup || !this.spotlight) return;
+    const rect = this.steps[this.index].element.getBoundingClientRect();
+    Object.assign(this.spotlight.style, {
+      top: `${rect.top - 4}px`,
+      left: `${rect.left - 4}px`,
+      width: `${rect.width + 8}px`,
+      height: `${rect.height + 8}px`
+    });
+    const card = this.popup.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const width = viewport?.width ?? window.innerWidth;
+    const height = viewport?.height ?? window.innerHeight;
+    const edge = 10;
+    const maxX = Math.max(edge, width - card.width - edge);
+    const maxY = Math.max(edge, height - card.height - edge);
+    const above = rect.top - card.height - edge;
+    const below = rect.bottom + edge;
+    const top = below <= maxY ? below : above;
+    this.popup.style.left = `${Math.min(maxX, Math.max(edge, rect.left + (rect.width - card.width) / 2))}px`;
+    this.popup.style.top = `${Math.min(maxY, Math.max(edge, top))}px`;
+  };
+
+  private cleanup(): void {
+    window.removeEventListener('resize', this.layout);
+    window.visualViewport?.removeEventListener('resize', this.layout);
+    this.popup?.close();
+    this.popup?.remove();
+    this.spotlight?.remove();
+    this.popup = null;
+    this.spotlight = null;
+    this.steps = [];
   }
 
   private finish(): void {
-    this.active = false;
+    const opener = this.returnTo;
     this.cleanup();
+    this.returnTo = null;
+    if (opener?.isConnected) opener.focus({ preventScroll: true });
     this.dispatchEvent(new CustomEvent('tutorial-complete', { bubbles: true }));
-  }
-
-  private cleanup(): void {
-    // Fade out then remove
-    if (this.overlay) {
-      this.overlay.classList.add('tutorial-fade-out');
-      this.overlay.addEventListener(
-        'animationend',
-        () => {
-          this.overlay?.remove();
-          this.overlay = null;
-        },
-        { once: true }
-      );
-    }
-    if (this.spotlightEl) {
-      this.spotlightEl.remove();
-      this.spotlightEl = null;
-    }
-    if (this.popup) {
-      this.popup.remove();
-      this.popup = null;
-    }
-  }
-
-  private createOverlay(): void {
-    this.overlay = document.createElement('div');
-    this.overlay.className = 'tutorial-overlay';
-    this.overlay.setAttribute('aria-hidden', 'true');
-    document.body.appendChild(this.overlay);
-  }
-
-  private showStep(): void {
-    if (!this.active) return;
-
-    const step = TUTORIAL_STEPS[this.currentStep];
-    if (!step) {
-      this.finish();
-      return;
-    }
-
-    let target = document.querySelector(
-      step.targetSelector
-    ) as HTMLElement | null;
-
-    // For stop markers: fall back to the map center area if no marker is found
-    if (!target && step.targetSelector.includes('role="button"')) {
-      target = document.getElementById('map');
-    }
-
-    if (!target) {
-      // Skip step if target doesn't exist
-      this.currentStep++;
-      this.showStep();
-      return;
-    }
-
-    this.positionSpotlight(target);
-    this.createPopup(step, target);
-  }
-
-  private positionSpotlight(target: HTMLElement): void {
-    if (this.spotlightEl) this.spotlightEl.remove();
-
-    this.spotlightEl = document.createElement('div');
-    this.spotlightEl.className = 'tutorial-spotlight';
-    document.body.appendChild(this.spotlightEl);
-
-    const rect = target.getBoundingClientRect();
-    const pad = 8;
-    this.spotlightEl.style.top = `${rect.top - pad}px`;
-    this.spotlightEl.style.left = `${rect.left - pad}px`;
-    this.spotlightEl.style.width = `${rect.width + pad * 2}px`;
-    this.spotlightEl.style.height = `${rect.height + pad * 2}px`;
-  }
-
-  private createPopup(step: ITutorialStep, target: HTMLElement): void {
-    if (this.popup) this.popup.remove();
-
-    const total = TUTORIAL_STEPS.length;
-    const isLast = this.currentStep === total - 1;
-
-    this.popup = document.createElement('div');
-    this.popup.className = 'tutorial-popup';
-    this.popup.setAttribute('role', 'dialog');
-    this.popup.setAttribute('aria-modal', 'true');
-    this.popup.innerHTML = `
-      <p class="tutorial-popup__step">${this.currentStep + 1} of ${total}</p>
-      <h3 class="tutorial-popup__title">${step.title}</h3>
-      <p class="tutorial-popup__desc">${step.description}</p>
-      <div class="tutorial-popup__actions">
-        <span class="tutorial-popup__ok" tabindex="0" role="button">Ok</span>
-        ${isLast ? '' : '<span class="tutorial-popup__dismiss" tabindex="0" role="button">Dismiss</span>'}
-      </div>
-    `;
-    document.body.appendChild(this.popup);
-
-    // Position the popup
-    this.positionPopup(step.position, target);
-
-    // Focus the ok action for keyboard accessibility
-    const okBtn = this.popup.querySelector(
-      '.tutorial-popup__ok'
-    ) as HTMLElement;
-    const dismissBtn = this.popup.querySelector(
-      '.tutorial-popup__dismiss'
-    ) as HTMLElement | null;
-
-    okBtn?.focus();
-
-    okBtn?.addEventListener('click', () => {
-      if (isLast) {
-        this.finish();
-      } else {
-        this.currentStep++;
-        this.showStep();
-      }
-    });
-
-    // Allow Enter/Space on spans for keyboard accessibility
-    okBtn?.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        okBtn.click();
-      }
-    });
-
-    dismissBtn?.addEventListener('click', () => {
-      this.finish();
-    });
-
-    dismissBtn?.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        dismissBtn.click();
-      }
-    });
-
-    // Trap focus within popup
-    this.popup.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key !== 'Tab') return;
-      const focusables = this.popup?.querySelectorAll('[tabindex]') ?? [];
-      if (focusables.length === 0) return;
-      const first = focusables[0] as HTMLElement;
-      const last = focusables[focusables.length - 1] as HTMLElement;
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    });
-  }
-
-  private positionPopup(
-    preferred: 'top' | 'bottom' | 'left' | 'right',
-    target: HTMLElement
-  ): void {
-    if (!this.popup) return;
-
-    const rect = target.getBoundingClientRect();
-    const gap = 16;
-
-    // Temporarily make visible to measure
-    this.popup.style.visibility = 'hidden';
-    this.popup.style.top = '0';
-    this.popup.style.left = '0';
-    const popupRect = this.popup.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-
-    let top = 0;
-    let left = 0;
-
-    switch (preferred) {
-      case 'bottom':
-        top = rect.bottom + gap;
-        left = rect.left + rect.width / 2 - popupRect.width / 2;
-        break;
-      case 'top':
-        top = rect.top - gap - popupRect.height;
-        left = rect.left + rect.width / 2 - popupRect.width / 2;
-        break;
-      case 'right':
-        top = rect.top + rect.height / 2 - popupRect.height / 2;
-        left = rect.right + gap;
-        break;
-      case 'left':
-        top = rect.top + rect.height / 2 - popupRect.height / 2;
-        left = rect.left - gap - popupRect.width;
-        break;
-    }
-
-    // Clamp to viewport
-    left = Math.max(12, Math.min(left, vw - popupRect.width - 12));
-    top = Math.max(12, Math.min(top, vh - popupRect.height - 12));
-
-    this.popup.style.top = `${top}px`;
-    this.popup.style.left = `${left}px`;
-    this.popup.style.visibility = 'visible';
   }
 }
 

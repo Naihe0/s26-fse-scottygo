@@ -1,6 +1,7 @@
 import { createBusIcon } from '../utils/bus-icon';
 import { createLocationIcon } from '../utils/location-icon';
 import { createStopIcon } from '../utils/stop-icon';
+import type { IOnboardingTutorialElement } from './onboarding-tutorial';
 
 /** A small disclosure keeps symbol explanations available without covering the map. */
 export class MapKey extends HTMLElement {
@@ -31,6 +32,7 @@ export class MapKey extends HTMLElement {
           <li><img data-symbol="planned" alt="" /><span><strong>Planning location</strong><small>A place you chose to explore.</small></span></li>
           <li><span class="map-key__lines" aria-hidden="true"><i></i><i></i></span><span><strong>Routes & detours</strong><small>Route colors follow the line. Amber buses and orange-red lines mark detours.</small></span></li>
         </ul>
+        <button type="button" class="map-key__guide">Take the map tour</button>
       </section>`;
     const exampleBus = {
       vid: '',
@@ -59,6 +61,11 @@ export class MapKey extends HTMLElement {
       this.querySelector<HTMLElement>('.map-key__panel')!.hidden = !open;
     });
     document.addEventListener('pointerdown', this.onOutside);
+    this.querySelector('.map-key__guide')!.addEventListener('click', () => {
+      this.close(true);
+      document.querySelector<IOnboardingTutorialElement>('onboarding-tutorial')
+        ?.start(this.querySelector<HTMLButtonElement>('.map-key__toggle')!);
+    });
     document.addEventListener('keydown', this.onEscape);
   }
 

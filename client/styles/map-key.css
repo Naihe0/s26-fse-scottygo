@@ -112,3 +112,36 @@ map-key {
     max-height: calc(100dvh - 150px);
   }
 }
+
+/* The guide stays inside the visible map after an orientation change. */
+.rider-guide.tutorial-popup {
+  inset: auto;
+  margin: 0;
+  box-sizing: border-box;
+  width: min(310px, calc(100vw - 20px));
+  max-height: calc(100dvh - 20px);
+  overflow-y: auto;
+  border: 1px solid #dbe1e8;
+  background: #fff;
+  color: #172331;
+}
+.rider-guide::backdrop { background: transparent; }
+.rider-guide__top, .rider-guide .tutorial-popup__actions {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.rider-guide button, .map-key__guide, .rider-guide select {
+  font: inherit; color: #6d1532; min-height: 44px; cursor: pointer;
+}
+.rider-guide button, .map-key__guide {
+  border: 0; border-radius: 9px; padding: 0 12px; background: #f3f5f7;
+}
+.rider-guide [data-next] { background: #861535; color: #fff; }
+.rider-guide [data-back]:disabled { opacity: .45; }
+.rider-guide .tutorial-popup__title { margin: 10px 0 5px; }
+.rider-guide__jump { display: block; font-size: .85rem; font-weight: 600; color: #334155; }
+.rider-guide select { display: block; width: 100%; margin: 4px 0 12px; background: white; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 16px; }
+.map-key__guide { margin-top: 12px; width: 100%; font-weight: 600; }
+@media (prefers-reduced-motion: reduce) {
+  .rider-guide.tutorial-popup { animation: none; }
+  .tutorial-spotlight { transition: none; }
+}
