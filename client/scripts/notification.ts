@@ -72,6 +72,13 @@ let unreadOnly = false;
 let sort: InboxSort = 'priority';
 let grouped = false;
 let shownUnread: InboxEntry[] = [];
+let lastBatch: InboxEntry[] = [];
+const routeSelect = document.querySelector<HTMLSelectElement>('#notif-route');
+const severitySelect =
+  document.querySelector<HTMLSelectElement>('#notif-severity');
+const resetFilters = document.querySelector<HTMLButtonElement>('#notif-reset');
+const undoRead = document.querySelector<HTMLButtonElement>('#notif-undo');
+let routeOptionsKey = '';
 let savedRoutes: Snapshot<string> = { items: [], loaded: false, failed: false };
 let savedRequest: AbortController | null = null;
 let savedRequestVersion = 0;
@@ -139,6 +146,9 @@ function renderCards(entries: InboxEntry[]): void {
     const actions: NotificationCardActions = {
       read: readStore.isRead(entry),
       onReadChange: (read) => {
+        lastBatch = lastBatch.filter(
+          (item) => inboxKey(item) !== inboxKey(entry)
+        );
         readStore.setRead(entry, read);
         render();
         if (inboxAnnouncement)
@@ -218,41 +228,56 @@ function renderCards(entries: InboxEntry[]): void {
   }
 }
 
+function syncRouteChoices(): void {
+  if (!routeSelect) return;
+  const selection = routeSelect.value;
+  const ids = new Set(alerts.items.flatMap((item) => item.routeIds || []));
+  notifications.items.forEach((item) => ids.add(item.routeId));
+  if (selection) ids.add(selection);
+  const rows = [...ids]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .map((id) => [id, resolveRouteDisplay(id).title]);
+  const key = JSON.stringify(rows);
+  if (key === routeOptionsKey) return;
+  routeOptionsKey = key;
+  routeSelect.replaceChildren(
+    new Option('Any route', ''),
+    ...rows.map(([id, title]) => new Option(title, id))
+  );
+  routeSelect.value = selection;
+}
+
 function render(): void {
+  syncRouteChoices();
   const query = searchInput.value.trim();
   clearBtn.classList.toggle('is-visible', query.length > 0);
   clearBtn.setAttribute('aria-hidden', String(query.length === 0));
-  const visibleAlerts =
-    view === 'live'
-      ? []
-      : alerts.items.filter((alert) => {
-          if (prefillContext?.route)
-            return alert.routeIds.some(
-              (id) => id.toLowerCase() === prefillContext!.route!.toLowerCase()
-            );
-          if (prefillContext?.bus) return false;
-          return matchesAlertQuery(alert, query, resolveRouteDisplay);
-        });
-  const visibleNotifications =
-    view === 'service'
-      ? []
-      : notifications.items
-          .filter((notification) => {
-            if (prefillContext)
-              return (
-                (!prefillContext.route ||
-                  notification.routeId.toLowerCase() ===
-                    prefillContext.route.toLowerCase()) &&
-                (!prefillContext.bus || notification.vid === prefillContext.bus)
-              );
-            return matchesNotificationQuery(
-              notification,
-              query,
-              resolveRouteDisplay,
-              formatMessage
-            );
-          })
-          .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const visibleAlerts = alerts.items.filter((alert) => {
+    if (prefillContext?.route)
+      return alert.routeIds.some(
+        (id) => id.toLowerCase() === prefillContext!.route!.toLowerCase()
+      );
+    if (prefillContext?.bus) return false;
+    return matchesAlertQuery(alert, query, resolveRouteDisplay);
+  });
+  const visibleNotifications = notifications.items
+    .filter((notification) => {
+      if (prefillContext)
+        return (
+          (!prefillContext.route ||
+            notification.routeId.toLowerCase() ===
+              prefillContext.route.toLowerCase()) &&
+          (!prefillContext.bus || notification.vid === prefillContext.bus)
+        );
+      return matchesNotificationQuery(
+        notification,
+        query,
+        resolveRouteDisplay,
+        formatMessage
+      );
+    })
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   const saved = new Set(savedRoutes.items.map((id) => id.toLowerCase()));
   const unique = new Map<string, InboxEntry>();
   const candidates: InboxEntry[] = [
@@ -263,6 +288,19 @@ function render(): void {
   ];
   for (const entry of candidates) {
     if (
+      severitySelect?.value === 'elevated' &&
+      (entry.kind !== 'service' ||
+        !['WARNING', 'SEVERE'].includes(entry.value.severityLevel ?? ''))
+    )
+      continue;
+    if (
+      routeSelect?.value &&
+      !inboxRoutes(entry).some(
+        (id) => id.toLowerCase() === routeSelect.value.toLowerCase()
+      )
+    )
+      continue;
+    if (
       savedOnly &&
       !inboxRoutes(entry).some((route) => saved.has(route.toLowerCase()))
     )
@@ -270,7 +308,42 @@ function render(): void {
     if (unreadOnly && readStore.isRead(entry)) continue;
     unique.set(inboxKey(entry), entry);
   }
-  const entries = sortInbox([...unique.values()], sort);
+  const scoped = [...unique.values()];
+  const entries = sortInbox(
+    scoped.filter((item) => view === 'all' || item.kind === view),
+    sort
+  );
+  const counts = {
+    all: scoped.length,
+    service: scoped.filter((item) => item.kind === 'service').length,
+    live: scoped.filter((item) => item.kind === 'live').length
+  };
+  for (const button of filters) {
+    const type = button.dataset.notifView as View;
+    const known =
+      type === 'all'
+        ? alerts.loaded && notifications.loaded
+        : type === 'live'
+          ? notifications.loaded
+          : alerts.loaded;
+    let badge = button.querySelector('.notif-type-count');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'notif-type-count';
+      button.append(badge);
+    }
+    badge.textContent = known ? ' ' + counts[type] : '';
+  }
+  if (resetFilters)
+    resetFilters.hidden = !(
+      query ||
+      view !== 'all' ||
+      savedOnly ||
+      unreadOnly ||
+      routeSelect?.value ||
+      severitySelect?.value === 'elevated'
+    );
+  if (undoRead) undoRead.hidden = !lastBatch.length;
   renderCards(entries);
 
   const count = entries.length;
@@ -328,6 +401,8 @@ function render(): void {
     link.href = '/subscriptions';
     link.textContent = 'Choose routes';
     emptyEl.append(link);
+  } else if (severitySelect?.value === 'elevated' || routeSelect?.value) {
+    emptyEl.textContent = 'No updates match these route and severity filters.';
   } else if (unreadOnly) {
     emptyEl.textContent =
       'No unread updates match these filters. Turn off Unread to see updates you have read.';
@@ -501,6 +576,19 @@ function init(): void {
     render();
     searchInput.focus();
   });
+  routeSelect?.addEventListener('change', render);
+  severitySelect?.addEventListener('change', render);
+  resetFilters?.addEventListener('click', () => {
+    savedOnly = unreadOnly = false;
+    view = 'all';
+    prefillContext = null;
+    searchInput.value = '';
+    if (routeSelect) routeSelect.value = '';
+    if (severitySelect) severitySelect.value = 'all';
+    history.replaceState(null, '', window.location.pathname);
+    render();
+    filters[0]?.focus({ preventScroll: true });
+  });
   filters.forEach((filter) =>
     filter.addEventListener('click', () => {
       view = filter.dataset.notifView as View;
@@ -515,10 +603,26 @@ function init(): void {
     if (reloadChangedSession() || !shownUnread.length || markShownRead.disabled)
       return;
     const count = shownUnread.length;
+    lastBatch = [...shownUnread];
     readStore.setEntriesRead(shownUnread, true);
     render();
     if (inboxAnnouncement)
       inboxAnnouncement.textContent = `Marked ${count} shown ${count === 1 ? 'update' : 'updates'} as read.`;
+  });
+  undoRead?.addEventListener('click', () => {
+    if (reloadChangedSession() || !lastBatch.length) return;
+    readStore.setEntriesRead(
+      lastBatch.filter((entry) => readStore.isRead(entry)),
+      false
+    );
+    lastBatch = [];
+    render();
+    if (inboxAnnouncement)
+      inboxAnnouncement.textContent = 'Undid the last mark as read.';
+    (markShownRead && !markShownRead.hidden
+      ? markShownRead
+      : unreadOnlyBtn
+    )?.focus({ preventScroll: true });
   });
   savedOnlyBtn?.addEventListener('click', () => {
     savedOnly = !savedOnly;
@@ -545,6 +649,7 @@ function init(): void {
       event.key === null
     ) {
       readStore.reload();
+      lastBatch = [];
       render();
     }
   };

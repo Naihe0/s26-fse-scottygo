@@ -98,6 +98,8 @@
           <details class="notif-more-options" id="notif-more-options">
             <summary>More options</summary>
             <div class="notif-option-fields">
+              <label>Affected route<select id="notif-route"><option value="">Any route</option></select></label>
+              <label>Agency severity<select id="notif-severity"><option value="all">Any severity</option><option value="elevated">Warnings &amp; severe only</option></select></label>
               <label
                 >Order<select id="notif-sort"
                   ><option value="priority">Priority first</option
@@ -137,9 +139,11 @@
       <div class="notif-results-meta">
         <div class="notif-result-actions">
           <span id="notif-count">0 updates</span>
+          <button type="button" id="notif-reset" hidden>Clear filters</button>
           <button type="button" id="notif-mark-shown-read" hidden
             >Mark shown as read</button
           >
+          <button type="button" id="notif-undo" hidden>Undo mark as read</button>
         </div>
         <p id="notif-status" role="status" aria-live="polite"
           >Loading transit updates…</p

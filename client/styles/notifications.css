@@ -690,3 +690,8 @@
     min-height: 44px;
   }
 }
+.notif-type-count:not(:empty) {
+  margin-inline-start: 0.3em;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}

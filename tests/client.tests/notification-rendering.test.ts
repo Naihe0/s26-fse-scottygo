@@ -626,6 +626,45 @@ describe('notification center rendering and refresh ownership', () => {
     expect(document.querySelector('[data-key="alert:new"]')).not.toBeNull();
   });
 
+  test('exact route, severity and source counts compose; undo preserves other read cards', async () => {
+    document.body.insertAdjacentHTML(
+      'beforeend',
+      '<select id="notif-route"></select><select id="notif-severity"><option value="all">Any</option><option value="elevated">Warnings</option></select><button id="notif-mark-shown-read"></button><button id="notif-undo"></button><button id="notif-reset"></button>'
+    );
+    useSnapshots(
+      [
+        { ...service('a', '61C'), severityLevel: 'WARNING' },
+        service('b', '61C'),
+        service('c', '61')
+      ],
+      [rider()]
+    );
+    await import('../../client/scripts/notification');
+    await flush();
+    const select = (id: string, value: string) => {
+      const field = document.querySelector<HTMLSelectElement>(id)!;
+      field.value = value;
+      field.dispatchEvent(new Event('change'));
+    };
+    select('#notif-route', '61C');
+    select('#notif-severity', 'elevated');
+    expect(document.querySelectorAll('.notif-card')).toHaveLength(1);
+    expect(
+      document
+        .querySelector('[data-notif-view="live"] .notif-type-count')!
+        .textContent?.trim()
+    ).toBe('0');
+    document.getElementById('notif-mark-shown-read')!.click();
+    expect(
+      document.querySelector('[data-key="alert:a"]')!.getAttribute('data-read')
+    ).toBe('true');
+    document.getElementById('notif-undo')!.click();
+    expect(
+      document.querySelector('[data-key="alert:a"]')!.getAttribute('data-read')
+    ).toBe('false');
+    document.getElementById('notif-reset')!.click();
+    expect(document.querySelectorAll('.notif-card')).toHaveLength(4);
+  });
   test('priority and newest order can be switched without another feed request', async () => {
     useSnapshots(
       [
