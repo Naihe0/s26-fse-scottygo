@@ -13,8 +13,9 @@ permissions:
 jobs:
   integrate:
     name: Check, build, and test
-    # MongoDB 8 refuses the Ubuntu 26 runner's 7.0.0 kernel (SERVER-121912).
-    runs-on: ubuntu-24.04
+    # Both 24.04 and 26.04 runners currently have kernel 7.0.0, which
+    # MongoDB 8 refuses (SERVER-121912). The 22.04 runner uses 6.8.
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     services:
       mongodb:
