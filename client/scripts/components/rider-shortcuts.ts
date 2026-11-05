@@ -1,8 +1,11 @@
 import type { ILatLng } from '../../../common/map.interface';
+import { haversineMeters } from '../../../common/geo';
 import { copyStopLink } from '../utils/stop-link';
 import {
   clearRecentShortcuts,
   getRiderShortcuts,
+  isStopSaved,
+  toggleSavedStop,
   removeShortcut,
   renameShortcut,
   saveFilterView,
@@ -50,6 +53,8 @@ export class RiderShortcuts extends HTMLElement {
   private context: RiderShortcutsContext | null = null;
   private dialog: HTMLDialogElement | null = null;
   private activeTab: Tab = 'stops';
+  private stopTools = document.createElement('div');
+  private recentTools = document.createElement('div');
   private unsubscribe: (() => void) | null = null;
   private returnFocus: HTMLElement | null = null;
 
@@ -58,6 +63,10 @@ export class RiderShortcuts extends HTMLElement {
     this.unsubscribe?.();
     this.unsubscribe = subscribeRiderShortcuts((accountChanged) => {
       if (accountChanged) {
+        this.activeTab = 'stops';
+        this.stopQuery.value = '';
+        this.stopOrder.value = 'saved';
+        this.recentKind.value = 'all';
         this.close();
         return;
       }
@@ -77,7 +86,7 @@ export class RiderShortcuts extends HTMLElement {
     if (this.dialog?.open) this.renderPanel();
   }
 
-  open(tab: Tab = 'stops'): void {
+  open(tab: Tab = this.activeTab): void {
     if (!this.dialog) this.build();
     this.activeTab = tab;
     this.returnFocus =
@@ -116,6 +125,15 @@ export class RiderShortcuts extends HTMLElement {
     this.dialog
       .querySelector('.rider-shortcuts__close')!
       .addEventListener('click', () => this.close());
+    this.stopTools.className = 'rider-shortcuts__filters';
+    this.stopTools.innerHTML =
+      '<input type="search" aria-label="Search saved stops" placeholder="Stop name, number or route" autocomplete="off"><select aria-label="Saved stop order"><option value="saved">Saved order</option><option value="nearest">Nearest first</option></select>';
+    this.stopQuery.addEventListener('input', () => this.renderPanel());
+    this.stopOrder.addEventListener('change', () => this.renderPanel());
+    this.recentTools.className = 'rider-shortcuts__filters';
+    this.recentTools.innerHTML =
+      '<select aria-label="Recent item type"><option value="all">All recent items</option><option value="stop">Recent stops</option><option value="route">Recent routes</option></select>';
+    this.recentKind.addEventListener('change', () => this.renderPanel());
     this.dialog.addEventListener('cancel', (event) => {
       event.preventDefault();
       this.close();
@@ -171,6 +189,16 @@ export class RiderShortcuts extends HTMLElement {
       ?.focus();
   }
 
+  private get stopQuery(): HTMLInputElement {
+    return this.stopTools.querySelector('input')!;
+  }
+  private get stopOrder(): HTMLSelectElement {
+    return this.stopTools.querySelector('select')!;
+  }
+  private get recentKind(): HTMLSelectElement {
+    return this.recentTools.querySelector('select')!;
+  }
+
   private isEditing(): boolean {
     return [
       ...(this.dialog?.querySelectorAll<HTMLInputElement>(
@@ -211,22 +239,82 @@ export class RiderShortcuts extends HTMLElement {
       `rider-shortcuts-tab-${this.activeTab}`
     );
     const data = getRiderShortcuts();
+    // Keep the live search node mounted during input, including iOS composition.
+    const activeTools =
+      this.activeTab === 'stops' && data.stops.length
+        ? this.stopTools
+        : this.activeTab === 'recent' && data.recent.length
+          ? this.recentTools
+          : null;
+    for (const tools of [this.stopTools, this.recentTools]) {
+      if (tools === activeTools) {
+        if (tools.nextElementSibling !== panel) panel.before(tools);
+      } else tools.remove();
+    }
     if (this.activeTab === 'stops') {
-      this.summary(panel, `${data.stops.length} of 20 saved stops`);
+      const origin = this.context?.getOrigin();
+      this.stopOrder.querySelector<HTMLOptionElement>(
+        '[value="nearest"]'
+      )!.disabled = !origin;
+      if (!origin) this.stopOrder.value = 'saved';
+      const query = this.stopQuery.value.trim().toLowerCase();
+      const visible = data.stops.filter(
+        (stop) =>
+          !query ||
+          [stop.stopId, stop.stopName, stop.nickname, ...stop.routes].some(
+            (value) => value?.toLowerCase().includes(query)
+          )
+      );
+      const distance = (stop: SavedStop) =>
+        origin ? haversineMeters(origin, { lat: stop.lat, lng: stop.lon }) : 0;
+      const nearest = this.stopOrder.value === 'nearest' && !!origin;
+      if (nearest) visible.sort((a, b) => distance(a) - distance(b));
+      this.summary(
+        panel,
+        query
+          ? `${visible.length} matching saved stops`
+          : `${data.stops.length} of 20 saved stops`
+      );
       if (!data.stops.length)
         this.empty(
           panel,
           'Keep a stop close',
           'Open any stop on the map and tap Save stop.'
         );
-      data.stops.forEach(({ nickname, ...stop }) => {
+      if (nearest)
+        this.summary(
+          panel,
+          `Straight-line distance from ${origin.label || 'your planning location'}`
+        );
+      if (query && data.stops.length && !visible.length) {
+        panel.append(
+          button(
+            'Clear stop search',
+            () => {
+              this.stopQuery.value = '';
+              this.renderPanel();
+              this.stopQuery.focus();
+            },
+            'rider-shortcuts__text-action'
+          )
+        );
+      }
+      visible.forEach(({ nickname, ...stop }) => {
         const label = nickname || stop.stopName;
-        const service = stop.routes.length
-          ? stop.routes.join(' · ')
-          : `Stop ${stop.stopId}`;
+        const service = [...stop.routes, `Stop ${stop.stopId}`];
+        if (nearest) {
+          const meters = distance(stop);
+          service.push(
+            meters < 1000
+              ? `${Math.round(meters / 10) * 10} m`
+              : `${(meters / 1000).toFixed(1)} km`
+          );
+        }
         const row = this.row(
           label,
-          nickname ? `${stop.stopName} · ${service}` : service,
+          [nickname ? stop.stopName : '', ...service]
+            .filter(Boolean)
+            .join(' · '),
           () => this.select(() => this.context?.onSelectStop(stop))
         );
         const actions = document.createElement('div');
@@ -300,11 +388,22 @@ export class RiderShortcuts extends HTMLElement {
         panel.append(row);
       });
     } else if (this.activeTab === 'recent') {
-      this.summary(panel, `${data.recent.length} recent routes and stops`);
+      const recentItems = data.recent.filter(
+        (item) =>
+          this.recentKind.value === 'all' || this.recentKind.value === item.kind
+      );
+      this.summary(
+        panel,
+        this.recentKind.value === 'all'
+          ? `${data.recent.length} recent routes and stops`
+          : `${recentItems.length} recent ${this.recentKind.value}s`
+      );
       if (data.recent.length)
         panel.append(
           button(
-            'Clear recent',
+            this.recentKind.value === 'all'
+              ? 'Clear recent'
+              : 'Clear all recent history',
             () => {
               clearRecentShortcuts();
               this.status('Recent history cleared.');
@@ -319,7 +418,7 @@ export class RiderShortcuts extends HTMLElement {
           'Pick up where you left off',
           'Routes and stops you open will appear here.'
         );
-      data.recent.forEach((recent) => {
+      recentItems.forEach((recent) => {
         const label =
           recent.kind === 'route' ? recent.label : recent.stop.stopName;
         const row = this.row(
@@ -334,6 +433,24 @@ export class RiderShortcuts extends HTMLElement {
               else this.context?.onSelectStop(recent.stop);
             })
         );
+        if (recent.kind === 'stop') {
+          const saved = isStopSaved(recent.stop.stopId);
+          const save = button(
+            saved ? 'Saved' : 'Save stop',
+            () => {
+              if (isStopSaved(recent.stop.stopId)) return;
+              this.status(toggleSavedStop(recent.stop).message);
+              this.focusTab();
+            },
+            'rider-shortcuts__secondary'
+          );
+          save.disabled = saved;
+          save.setAttribute(
+            'aria-label',
+            `${saved ? 'Already saved' : 'Save'} ${label}`
+          );
+          row.append(save);
+        }
         row.append(this.removeButton('recent', recent.id, label));
         panel.append(row);
       });

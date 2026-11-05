@@ -43,7 +43,7 @@ describe('My places rider shortcut interactions', () => {
   }
 
   function submit(value: string, root: ParentNode = element) {
-    const input = root.querySelector<HTMLInputElement>('input')!;
+    const input = root.querySelector<HTMLInputElement>('form input')!;
     input.value = value;
     input
       .closest('form')!
@@ -116,6 +116,50 @@ describe('My places rider shortcut interactions', () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  test('filters by public stop ID, sorts from planning origin and saves a recent stop without losing the tab', () => {
+    const far = { ...stop, stopId: '876', stopName: 'Airport', lat: 40.5 };
+    toggleSavedStop(stop);
+    toggleSavedStop(far);
+    element.open();
+    const search = element.querySelector<HTMLInputElement>(
+      '[aria-label="Search saved stops"]'
+    )!;
+    search.value = '876';
+    search.dispatchEvent(new Event('input'));
+    expect(element.querySelectorAll('.rider-shortcuts__row')).toHaveLength(1);
+    expect(
+      element.querySelector('.rider-shortcuts__row')!.textContent
+    ).toContain('Stop 876');
+    search.value = '';
+    search.dispatchEvent(new Event('input'));
+    const order = element.querySelector<HTMLSelectElement>(
+      '[aria-label="Saved stop order"]'
+    )!;
+    order.value = 'nearest';
+    order.dispatchEvent(new Event('change'));
+    expect(
+      element.querySelector('.rider-shortcuts__row')!.textContent
+    ).toContain('Forbes');
+    const other = { ...stop, stopId: 'new', stopName: 'New stop' };
+    recordRecentStop(other);
+    recordRecentRoute('61C');
+    element.open('recent');
+    const kind = element.querySelector<HTMLSelectElement>(
+      '[aria-label="Recent item type"]'
+    )!;
+    kind.value = 'stop';
+    kind.dispatchEvent(new Event('change'));
+    expect(element.querySelectorAll('.rider-shortcuts__row')).toHaveLength(1);
+    click('Save New stop');
+    expect(
+      getRiderShortcuts().stops.some((item) => item.stopId === 'new')
+    ).toBe(true);
+    element.close();
+    trigger.click();
+    expect(element.querySelector('[aria-selected="true"]')!.textContent).toBe(
+      'Recent'
+    );
+  });
   test('opens saved stops, shares them and removes them independently', () => {
     toggleSavedStop(stop);
     element.open();
