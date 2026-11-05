@@ -1,0 +1,91 @@
+.bus-report {
+  box-sizing: border-box;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+.bus-report__header {
+  position: relative;
+  padding-right: 44px;
+}
+.bus-report .report-close {
+  position: absolute;
+  right: -4px;
+  top: -8px;
+  min-width: 44px;
+  font-size: 1.4rem;
+}
+.bus-report .report-close,
+.report-review button,
+.bus-report [data-keep],
+.bus-report [data-discard] {
+  min-height: 44px;
+  border: 0;
+  border-radius: 9px;
+  background: #eef1f4;
+  color: #6f1735;
+  cursor: pointer;
+  padding: 0 12px;
+}
+.bus-report [data-keep] {
+  background: #861535;
+  color: white;
+}
+.report-topic {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #475569;
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+}
+.report-topic select {
+  font: inherit;
+  font-size: 16px;
+  min-height: 44px;
+  max-width: 68%;
+  padding: 0 5px;
+  border: 1px solid #c5ced8;
+  color: #172331;
+  background: white;
+  border-radius: 9px;
+}
+.bus-report .bus-report__option {
+  min-height: 44px;
+}
+.report-review {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.report-review li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid #dce1e6;
+  padding: 5px 0;
+}
+.report-review strong,
+.report-review span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.report-review strong {
+  font-size: 0.8rem;
+  color: #475569;
+}
+.bus-report__error {
+  color: #9d1830;
+}
+
+dialog.bus-report {
+  margin: auto;
+  border: 0;
+}
+dialog.bus-report::backdrop {
+  background: rgba(15, 23, 42, 0.44);
+}
+.bus-report-backdrop:has(dialog[open]) {
+  background: transparent;
+}

@@ -53,6 +53,32 @@ test('an empty report stays open and explains what is missing', () => {
   );
 });
 
+test('skipping a drafted comment removes it and waits for explicit review submission', () => {
+  document.body.innerHTML = '<bus-report-form></bus-report-form>';
+  const form = document.querySelector(
+    'bus-report-form'
+  ) as BusReportFormElement;
+  const sent = jest.fn();
+  form.addEventListener('busReportSubmitted', sent);
+  form.open('123', '61D', 40, -79);
+  form
+    .querySelector<HTMLButtonElement>('[data-value="Few Seats Taken"]')!
+    .click();
+  const jump = form.querySelector('select')!;
+  jump.value = '3';
+  jump.dispatchEvent(new Event('change', { bubbles: true }));
+  const note = form.querySelector('textarea')!;
+  note.value = 'Discard this draft';
+  note.dispatchEvent(new Event('input', { bubbles: true }));
+  form.querySelector<HTMLButtonElement>('#bus-report-skip')!.click();
+  expect(sent).not.toHaveBeenCalled();
+  expect(form.querySelector('.report-review')!.textContent).toContain(
+    'Many seats open'
+  );
+  form.querySelector<HTMLButtonElement>('#bus-report-next')!.click();
+  expect(sent.mock.calls[0][0].detail.report).not.toHaveProperty('comment');
+});
+
 test('a failed report preserves its draft, prevents duplicate sends, and can be retried', () => {
   document.body.innerHTML = '<bus-report-form></bus-report-form>';
   const form = document.querySelector(
@@ -68,6 +94,11 @@ test('a failed report preserves its draft, prevents duplicate sends, and can be 
   const comment = form.querySelector<HTMLTextAreaElement>('textarea')!;
   comment.value = 'My report draft';
   comment.dispatchEvent(new Event('input', { bubbles: true }));
+  form.querySelector<HTMLButtonElement>('#bus-report-next')!.click();
+  expect(form.querySelector('.report-review')!.textContent).toContain(
+    'My report draft'
+  );
+  expect(submissions).toHaveLength(0);
   const submit = form.querySelector<HTMLButtonElement>('#bus-report-next')!;
   submit.click();
   submit.dispatchEvent(new Event('click'));
@@ -75,7 +106,9 @@ test('a failed report preserves its draft, prevents duplicate sends, and can be 
   expect(form.classList.contains('is-open')).toBe(true);
   expect(submit.disabled).toBe(true);
   submissions[0].onError('Network unavailable. Please retry.');
-  expect(comment.value).toBe('My report draft');
+  expect(form.querySelector('.report-review')!.textContent).toContain(
+    'My report draft'
+  );
   expect(submit.disabled).toBe(false);
   expect(form.querySelector('#bus-report-error')!.textContent).toContain(
     'Network unavailable'
@@ -98,7 +131,7 @@ test('completion of an old report does not close a newly opened report', () => {
   });
   form.open('123', '61D', 40, -79);
   form.querySelector<HTMLButtonElement>('.bus-report__option')!.click();
-  for (let step = 0; step < 4; step++)
+  for (let step = 0; step < 5; step++)
     form.querySelector<HTMLButtonElement>('#bus-report-next')!.click();
   form.close();
   form.open('456', '71A', 40, -79);
