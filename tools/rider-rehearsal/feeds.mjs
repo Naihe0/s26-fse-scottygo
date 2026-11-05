@@ -110,6 +110,7 @@ export function apiFixture() {
                 heading: 0,
                 speed: 2,
                 direction: 'INBOUND',
+                currentStopId: stop.stopId,
                 currentStatus: 'IN_TRANSIT_TO'
               }
             ]

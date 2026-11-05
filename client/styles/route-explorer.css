@@ -258,6 +258,12 @@ route-explorer[hidden] {
 .route-explorer__dialog [hidden] {
   display: none;
 }
+.route-explorer__vehicles details {border-block:1px solid #dce2e9; margin:0 0 12px;}
+.route-explorer__vehicles details summary {padding:12px 2px; min-height:44px; box-sizing:border-box; font-weight:600; cursor:pointer}
+.route-explorer__vehicles details small {display:block; color:#475569; margin:0 0 10px}
+.route-explorer__vehicles .vehicle-recent {display:flex;align-items:center;gap:8px;min-height:44px}
+.route-explorer__vehicles .vehicle-recent input {width:18px;height:18px}
+.route-explorer__vehicles [data-bus-reset] {min-height:44px; margin-top:10px}
 route-explorer button:focus-visible,
 route-explorer input:focus-visible,
 route-explorer select:focus-visible {

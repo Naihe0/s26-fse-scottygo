@@ -131,8 +131,16 @@ export class RouteExplorer extends HTMLElement {
           <div role="tabpanel" id="${this.panelId}-buses-view" aria-labelledby="${this.panelId}-buses-tab" hidden>
             <section class="route-explorer__vehicles" aria-labelledby="${this.panelId}-buses">
               <h3 id="${this.panelId}-buses">Buses shown on map</h3>
+              <details data-vehicle-tools><summary>Find a bus</summary>
+                <label class="route-explorer__field">Find bus or reported stop<input type="search" data-bus-query placeholder="Bus number, stop ID or name" autocomplete="off"></label>
+                <label class="route-explorer__field">Order buses<select data-bus-order><option value="feed">Agency order</option><option value="near">Closest to start</option><option value="recent">Newest GPS first</option></select></label>
+                <label class="vehicle-recent"><input type="checkbox" data-recent-gps> Recent GPS only</label>
+                <small>Recent means measured within 90 seconds. Distances are straight-line from your starting point. List filters leave map markers in place.</small>
+              </details>
               <label class="route-explorer__field" data-bus-filter hidden>Bus direction<select aria-label="Bus direction"><option value="">All directions</option><option value="INBOUND">Inbound</option><option value="OUTBOUND">Outbound</option><option value="OTHER">Other or unreported</option></select></label>
+              <p data-bus-results class="route-explorer__note" role="status" hidden></p>
               <ul data-buses></ul><p data-no-buses class="route-explorer__note">No buses shown for the current map filters.</p>
+              <button type="button" data-bus-reset hidden>Reset bus list</button>
             </section>
           </div>
         </div>
@@ -207,6 +215,25 @@ export class RouteExplorer extends HTMLElement {
       'change',
       () => this.renderVehicles(this.stateManager.getState().activeVehicles)
     );
+    const updateBuses = () =>
+      this.renderVehicles(this.stateManager.getState().activeVehicles);
+    this.querySelector('[data-bus-query]')!.addEventListener(
+      'input',
+      updateBuses
+    );
+    this.querySelector('[data-bus-order]')!.addEventListener(
+      'change',
+      updateBuses
+    );
+    this.querySelector('[data-recent-gps]')!.addEventListener(
+      'change',
+      updateBuses
+    );
+    this.querySelector('[data-bus-reset]')!.addEventListener('click', () => {
+      this.resetBusTools();
+      updateBuses();
+      this.querySelector<HTMLElement>('[data-vehicle-tools] summary')!.focus();
+    });
     this.querySelector('[data-retry]')!.addEventListener(
       'click',
       () => void this.loadStops()
@@ -223,8 +250,7 @@ export class RouteExplorer extends HTMLElement {
       this.loaded = false;
       this.hasError = false;
       this.querySelector('input')!.value = '';
-      this.querySelector<HTMLSelectElement>('[data-bus-filter] select')!.value =
-        '';
+      this.resetBusTools();
       if (!this.selectedRoute) {
         this.close(false);
         return;
@@ -336,6 +362,7 @@ export class RouteExplorer extends HTMLElement {
         this.stopRequest = null;
         this.isLoading = false;
         this.renderStops();
+        this.renderVehicles(this.stateManager.getState().activeVehicles);
         this.renderNearestStop();
       }
     }
@@ -365,10 +392,11 @@ export class RouteExplorer extends HTMLElement {
     const note = byDistance
       ? 'Straight-line distance from your starting point.'
       : 'Stops are listed alphabetically, not in travel order.';
-    this.querySelector('[data-order-note]')!.textContent =
-      this.stops.some((stop) => !stop.routes?.length)
-        ? note + ' Transfer listings are incomplete.'
-        : note;
+    this.querySelector('[data-order-note]')!.textContent = this.stops.some(
+      (stop) => !stop.routes?.length
+    )
+      ? note + ' Transfer listings are incomplete.'
+      : note;
     const visible = this.stops
       .filter((stop) =>
         [stop.stopName, stop.stopId, ...(stop.routes ?? [])].some((text) =>
@@ -489,6 +517,14 @@ export class RouteExplorer extends HTMLElement {
     if (restoreFocus) button.focus();
   }
 
+  private resetBusTools(): void {
+    this.querySelector<HTMLInputElement>('[data-bus-query]')!.value = '';
+    this.querySelector<HTMLSelectElement>('[data-bus-order]')!.value = 'feed';
+    this.querySelector<HTMLInputElement>('[data-recent-gps]')!.checked = false;
+    this.querySelector<HTMLSelectElement>('[data-bus-filter] select')!.value =
+      '';
+  }
+
   private renderVehicles(vehicles: IVehicle[]): void {
     const list = this.querySelector<HTMLElement>('[data-buses]')!;
     const directions = this.stateManager.getState().selectedDirections;
@@ -519,9 +555,62 @@ export class RouteExplorer extends HTMLElement {
         : 'OTHER';
     this.querySelector<HTMLElement>('[data-bus-filter]')!.hidden =
       !busDirection.value && new Set(onMap.map(group)).size < 2;
-    const relevant = busDirection.value
-      ? onMap.filter((v) => group(v) === busDirection.value)
-      : onMap;
+    const origin = this.configuration.getOrigin();
+    const canRank =
+      origin &&
+      Number.isFinite(origin.lat) &&
+      Number.isFinite(origin.lng) &&
+      Math.abs(origin.lat) <= 90 &&
+      Math.abs(origin.lng) <= 180;
+    const distances = new Map(
+      onMap.map((v) => [
+        v.vid,
+        canRank &&
+        Number.isFinite(v.lat) &&
+        Number.isFinite(v.lon) &&
+        Math.abs(v.lat) <= 90 &&
+        Math.abs(v.lon) <= 180
+          ? haversineMeters(origin, { lat: v.lat, lng: v.lon })
+          : Infinity
+      ])
+    );
+    const query = this.querySelector<HTMLInputElement>('[data-bus-query]')!
+      .value.trim()
+      .toLowerCase();
+    const order = this.querySelector<HTMLSelectElement>('[data-bus-order]')!;
+    order.querySelector<HTMLOptionElement>('[value="near"]')!.disabled =
+      !canRank;
+    if (!canRank && order.value === 'near') order.value = 'feed';
+    const freshOnly =
+      this.querySelector<HTMLInputElement>('[data-recent-gps]')!.checked;
+    const stopNames = new Map(
+      this.stops.map((stop) => [stop.stopId, stop.stopName])
+    );
+    const now = Date.now();
+    const relevant = onMap.filter((v) => {
+      const age = now - Date.parse(v.lastUpdate);
+      return (
+        (!busDirection.value || group(v) === busDirection.value) &&
+        (!freshOnly || (v.source === 'live' && age >= 0 && age <= 90000)) &&
+        (!query ||
+          [v.vid, v.currentStopId, stopNames.get(v.currentStopId ?? '')].some(
+            (text) => text?.toLowerCase().includes(query)
+          ))
+      );
+    });
+    if (order.value === 'near')
+      relevant.sort((a, b) => distances.get(a.vid)! - distances.get(b.vid)!);
+    if (order.value === 'recent') {
+      const time = (v: IVehicle) => Date.parse(v.lastUpdate) || 0;
+      relevant.sort((a, b) => time(b) - time(a));
+    }
+    const active = Boolean(query || freshOnly || busDirection.value);
+    const count = this.querySelector<HTMLElement>('[data-bus-results]')!;
+    count.hidden = !active;
+    const resultText = `${relevant.length} of ${onMap.length} buses shown`;
+    if (count.textContent !== resultText) count.textContent = resultText;
+    this.querySelector<HTMLButtonElement>('[data-bus-reset]')!.hidden =
+      !active && order.value === 'feed';
     const previous = new Map(
       [...list.querySelectorAll<HTMLLIElement>('li')].map((item) => [
         item.dataset.vid,
@@ -560,17 +649,34 @@ export class RouteExplorer extends HTMLElement {
         INCOMING_AT: 'Approaching a stop',
         IN_TRANSIT_TO: 'Between stops'
       };
-      const label = [
+      const title = [
         `Bus ${vehicle.vid}`,
         direction,
         vehicle.isDetoured && 'Detour',
-        vehicle.currentStatus && status[vehicle.currentStatus],
-        timestamp
+        vehicle.currentStatus && status[vehicle.currentStatus]
       ]
         .filter(Boolean)
         .join(' · ');
+      const meters = distances.get(vehicle.vid)!;
+      const platform =
+        vehicle.currentStopId &&
+        `Stop ${stopNames.get(vehicle.currentStopId) ? stopNames.get(vehicle.currentStopId) + ' · ' : ''}#${vehicle.currentStopId}`;
+      const distance =
+        Number.isFinite(meters) &&
+        (meters < 1000
+          ? Math.round(meters) + ' m'
+          : (meters / 1000).toFixed(1) + ' km') + ' from start';
+      const detail = [platform, distance, timestamp]
+        .filter(Boolean)
+        .join(' · ');
       const button = item.querySelector('button')!;
-      if (button.textContent !== label) button.textContent = label;
+      if (button.textContent !== title + detail) {
+        const primary = document.createElement('strong');
+        primary.textContent = title;
+        const secondary = document.createElement('span');
+        secondary.textContent = detail;
+        button.replaceChildren(primary, secondary);
+      }
       if (list.children[index] !== item)
         list.insertBefore(item, list.children[index] ?? null);
       previous.delete(vehicle.vid);
@@ -583,9 +689,12 @@ export class RouteExplorer extends HTMLElement {
     this.querySelector('[data-bus-count]')!.textContent = `(${onMap.length})`;
     const empty = this.querySelector<HTMLElement>('[data-no-buses]')!;
     empty.hidden = relevant.length > 0;
-    empty.textContent = busDirection.value
-      ? 'No buses shown in this direction.'
-      : 'No buses shown for the current map filters.';
+    empty.textContent =
+      query || freshOnly
+        ? 'No buses match these list filters.'
+        : busDirection.value
+          ? 'No buses shown in this direction.'
+          : 'No buses shown for the current map filters.';
   }
 }
 

@@ -297,6 +297,11 @@ try {
       .getByRole('combobox', { name: 'Order stops' })
       .selectOption('distance');
     await explorer.getByRole('tab', { name: /Buses/ }).click();
+    await explorer.locator('[data-vehicle-tools] summary').click();
+    await explorer.getByLabel('Find bus or reported stop').fill('7117');
+    await explorer.getByLabel('Recent GPS only').check();
+    await explorer.getByLabel('Order buses').selectOption('near');
+    assert.match(await explorer.locator('[data-buses] li').first().innerText(), /4100[\s\S]*from start/);
     await explorer.locator('[data-buses] button').first().click();
     const follow = page.locator('.map-popup__action-btn--follow');
     await follow.click();
