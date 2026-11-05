@@ -1,4 +1,5 @@
 import { copyViewLink } from './copy-view-link';
+import { shareTransitLink } from './share-transit-link';
 import { validShortcutStopId } from './rider-shortcuts';
 
 /** A stop link contains only a public stop ID, never the rider's location or filters. */
@@ -41,21 +42,23 @@ export async function copyStopLink(
     announce('This stop cannot be shared yet.');
     return;
   }
-  await copyViewLink(link, trigger, (message) => {
-    if (message.startsWith('View link copied'))
-      announce('Stop link copied. Your location is not included.');
-    else announce(message);
+  await shareTransitLink(link, 'ScottyGo stop', trigger, async () => {
+    await copyViewLink(link, trigger, (message) => {
+      if (message.startsWith('View link copied'))
+        announce('Stop link copied. Your location is not included.');
+      else announce(message);
+    });
+    // Reuse the established clipboard fallback with stop-specific instructions.
+    const dialog = document.getElementById('copy-view-link-dialog');
+    if (dialog) {
+      const title = dialog.querySelector('h2');
+      const description = dialog.querySelector('p');
+      const label = dialog.querySelector('label');
+      if (title) title.textContent = 'Copy stop link';
+      if (description)
+        description.textContent =
+          'Share this stop. Your location and account information are not included.';
+      if (label) label.textContent = 'Stop link';
+    }
   });
-  // Reuse the established clipboard fallback with stop-specific instructions.
-  const dialog = document.getElementById('copy-view-link-dialog');
-  if (dialog) {
-    const title = dialog.querySelector('h2');
-    const description = dialog.querySelector('p');
-    const label = dialog.querySelector('label');
-    if (title) title.textContent = 'Copy stop link';
-    if (description)
-      description.textContent =
-        'Share this stop. Your location and account information are not included.';
-    if (label) label.textContent = 'Stop link';
-  }
 }

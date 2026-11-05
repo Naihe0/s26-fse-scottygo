@@ -76,3 +76,25 @@ describe('public stop links', () => {
     expect(announce).toHaveBeenCalledWith('This stop cannot be shared yet.');
   });
 });
+
+test('an unavailable share sheet falls back to copying the public stop only', async () => {
+  document.body.innerHTML = '<button>Share</button>';
+  const share = jest.fn().mockRejectedValue(new Error('unavailable'));
+  Object.defineProperty(navigator, 'share', {
+    configurable: true,
+    value: share
+  });
+  jest.mocked(copyViewLink).mockReset().mockResolvedValue(undefined);
+  try {
+    await copyStopLink('123', document.querySelector('button')!, jest.fn());
+    const url = 'http://localhost/#/map?stop=123';
+    expect(share).toHaveBeenCalledWith({ title: 'ScottyGo stop', url });
+    expect(copyViewLink).toHaveBeenCalledWith(
+      url,
+      expect.any(HTMLButtonElement),
+      expect.any(Function)
+    );
+  } finally {
+    Reflect.deleteProperty(navigator, 'share');
+  }
+});

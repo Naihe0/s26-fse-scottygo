@@ -113,3 +113,30 @@ test('duplicate requests are ignored while clipboard permission is pending', asy
   await first;
   expect(button.disabled).toBe(false);
 });
+
+test('the map shares a public route directly from the tap and cancellation leaves the clipboard alone', async () => {
+  const share = jest
+    .fn()
+    .mockRejectedValue(new DOMException('cancel', 'AbortError'));
+  const writeText = jest.fn();
+  Object.defineProperties(navigator, {
+    share: { configurable: true, value: share },
+    clipboard: { configurable: true, value: { writeText } }
+  });
+  try {
+    document.body.innerHTML = '<map-controls></map-controls>';
+    button = document.querySelector('#copy-view-link-btn')!;
+    state.updateFilter('selectedRouteId', '61B');
+    expect(button.getAttribute('aria-label')).toBe('Share map view');
+    button.click();
+    expect(share).toHaveBeenCalledWith({
+      title: 'ScottyGo map',
+      url: 'http://localhost/map#/map?r=61B'
+    });
+    await Promise.resolve();
+    expect(writeText).not.toHaveBeenCalled();
+    expect(button.disabled).toBe(false);
+  } finally {
+    Reflect.deleteProperty(navigator, 'share');
+  }
+});

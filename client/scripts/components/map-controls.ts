@@ -6,6 +6,7 @@
 import { MapStateManager } from '../state/map-state';
 import { URLSyncManager } from '../state/url-sync';
 import { copyViewLink } from '../utils/copy-view-link';
+import { shareTransitLink } from '../utils/share-transit-link';
 import { showToast } from '../utils/toast';
 
 export class MapControls extends HTMLElement {
@@ -15,6 +16,8 @@ export class MapControls extends HTMLElement {
   }
 
   private renderControls(): void {
+    const canShare = typeof navigator.share === 'function';
+    const shareLabel = canShare ? 'Share map view' : 'Copy view link';
     this.innerHTML = `
       <div class="control-panel">
         <button class="circle-btn" id="route-filter-btn" title="Route Filter" aria-label="Filter routes">
@@ -37,8 +40,8 @@ export class MapControls extends HTMLElement {
         >
           <span class="system-text">CLEAR</span>
         </button>
-        <button class="circle-btn" id="copy-view-link-btn" type="button" title="Copy view link" aria-label="Copy view link">
-          <span class="material-icons-outlined" aria-hidden="true">link</span>
+        <button class="circle-btn" id="copy-view-link-btn" type="button" title="${shareLabel}" aria-label="${shareLabel}">
+          <span class="material-icons-outlined" aria-hidden="true">${canShare ? 'ios_share' : 'link'}</span>
         </button>
       </div>
       <span class="view-link-status" role="status" aria-live="polite"></span>
@@ -70,10 +73,12 @@ export class MapControls extends HTMLElement {
       const url = URLSyncManager.getInstance().getViewLink(
         MapStateManager.getInstance().getState()
       );
-      void copyViewLink(url, copyBtn, (message) => {
-        this.querySelector('.view-link-status')!.textContent = message;
-        showToast(message);
-      });
+      void shareTransitLink(url, 'ScottyGo map', copyBtn, () =>
+        copyViewLink(url, copyBtn, (message) => {
+          this.querySelector('.view-link-status')!.textContent = message;
+          showToast(message);
+        })
+      );
     });
   }
 
