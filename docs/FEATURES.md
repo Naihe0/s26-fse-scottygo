@@ -42,6 +42,8 @@ The use cases above are the starting checklist for these rounds. Browser checks 
 | 1 · Choosing a route | The route picker found **61C** but returned no matches for **McKeesport**, even though the agency names the route MCKEESPORT-HOMESTEAD. A floating Nearby button could cover Cancel. | Read and search the published route name beside its ID; order the list by number or name; see the exact route ID before partial matches; open an exact or unique search result with the keyboard’s Go key; reopen a recent route directly in the picker. Filter actions also sit above the map shortcuts. |
 | 2 · Walk to the boarding stop | The phone showed a three-minute walk beside departures two and eleven minutes away. The card gave no distance, turns or boarding margin, and its exit control measured 26 × 22 pixels. | See the walking distance. Expand the supplied turn instructions and distances. Compare each selected departure with the estimated walking arrival. Identify the platform by its stop number and Pittsburgh arrival time. Collapse the details to see the route, or exit with a 44-pixel button. |
 
+![Walking from the campus demonstration point to stop 7117, with the four steps returned by Google.](wireframes/current/walking-steps-phone.png)
+
 ## Ten rider walkthroughs and fifty improvements
 
 Each round started with a rider using the previous interface in a browser. The checks below describe how to try the five changes in the shared iPhone and web interface.
