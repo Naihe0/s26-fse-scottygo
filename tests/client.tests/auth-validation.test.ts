@@ -91,6 +91,22 @@ describe('registration validation and agreement recovery', () => {
     ).toBe(false);
   });
 
+  test('campus completion preserves alternate domains and reading the terms keeps the draft unagreed', async () => {
+    document.getElementById('show-register-btn')!.click();
+    const complete = document.querySelector<HTMLButtonElement>('#complete-email')!;
+    input('reg-email', 'student@cmu.edu');
+    expect(complete.hidden).toBe(true);
+    input('reg-email', 'student');
+    complete.click();
+    expect(document.querySelector<HTMLInputElement>('#reg-email')!.value).toBe('student@andrew.cmu.edu');
+    document.getElementById('terms-link')!.click();
+    expect(document.getElementById('terms-accept')!.hidden).toBe(true);
+    document.getElementById('terms-return')!.click();
+    expect(document.querySelector<HTMLInputElement>('#tos')!.checked).toBe(false);
+    expect(document.activeElement?.id).toBe('terms-link');
+    expect(mockRequest).not.toHaveBeenCalled();
+  });
+
   test('editing a previously valid field immediately disables registration', async () => {
     document.getElementById('show-register-btn')!.click();
     input('reg-username', 'validuser');

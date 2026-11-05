@@ -208,6 +208,38 @@ const clearHint = (el: HTMLSpanElement | null): void => {
   el.className = 'field-hint';
 };
 
+const completeEmail = document.querySelector<HTMLButtonElement>('#complete-email');
+const nextField = document.querySelector<HTMLButtonElement>('#reg-next-field');
+const passwordGuide = document.getElementById('password-guide');
+const termsReturn = document.querySelector<HTMLButtonElement>('#terms-return');
+
+function showMissingPasswordRules(): void {
+  if (!passwordGuide || !regPassword) return;
+  const value = regPassword.value;
+  const symbols = '$%#@!*&~^-+';
+  if (!value) {
+    passwordGuide.textContent = `Use 4–72 characters, including a letter, a number and a symbol from ${symbols}.`;
+    return;
+  }
+  const missing = [
+    value.length < 4 && 'at least 4 characters',
+    value.length > 72 && 'at most 72 characters',
+    !/[a-z]/i.test(value) && 'a letter',
+    !/\d/.test(value) && 'a number',
+    ![...value].some(char => symbols.includes(char)) && `a symbol from ${symbols}`
+  ].filter(Boolean);
+  passwordGuide.textContent = /[^a-zA-Z0-9$%#@!*&~^+\-]/.test(value)
+    ? `Use only letters, numbers and these symbols: ${symbols}`
+    : missing.length ? `Still needed: ${missing.join(', ')}.` : 'Password format is complete.';
+}
+
+completeEmail?.addEventListener('click', () => {
+  if (!regEmail || !/^[\w.+-]+$/.test(regEmail.value.trim())) return;
+  regEmail.value = `${regEmail.value.trim()}@andrew.cmu.edu`;
+  regEmail.dispatchEvent(new Event('input', { bubbles: true }));
+  regEmail.focus();
+});
+
 const setInputError = (errorName: string): void => {
   // Highlight relevant inputs in the currently-visible form
   const u = loginForm?.hidden ? regUsername : loginUsername;
@@ -371,6 +403,21 @@ const updateRegisterButton = (): void => {
     !!tosInput?.checked;
   registerBtn.disabled =
     !allValid || registrationSubmitting || agreementSubmitting;
+  if (nextField) {
+    const items = [
+      { input: regUsername, ready: fieldValid.username, label: 'username' },
+      { input: regEmail, ready: fieldValid.email, label: 'campus email' },
+      { input: regPassword, ready: fieldValid.password, label: 'password' },
+      { input: regConfirm, ready: fieldValid.confirm, label: 'password confirmation' },
+      { input: tosInput, ready: tosInput?.checked, label: 'terms agreement' }
+    ];
+    const first = items.find(item => !item.ready);
+    nextField.hidden = !first;
+    if (first) {
+      nextField.textContent = `Continue with ${first.label}`;
+      nextField.onclick = () => first.input?.focus();
+    }
+  }
 };
 
 // Wire up validation listeners
@@ -392,6 +439,7 @@ regUsername?.addEventListener('blur', () => {
 });
 
 regEmail?.addEventListener('input', () => {
+  if (completeEmail) completeEmail.hidden = !/^[\w.+-]+$/.test(regEmail.value.trim());
   validateFieldDebounced(
     'email',
     regEmail.value.trim(),
@@ -409,6 +457,7 @@ regEmail?.addEventListener('blur', () => {
 });
 
 regPassword?.addEventListener('input', () => {
+  showMissingPasswordRules();
   validateFieldDebounced(
     'password',
     regPassword.value,
@@ -550,6 +599,7 @@ const openTermsModal = (
   password: string,
   shouldRedirect: boolean
 ): void => {
+  setTermsReadingMode(false);
   pendingAgreementUsername = username;
   pendingAgreementPassword = password;
   pendingRedirectToHome = shouldRedirect;
@@ -645,7 +695,12 @@ registerForm?.addEventListener('submit', async (event: SubmitEvent) => {
     email,
     agreed: shouldAgree
   };
+  const reviewName = document.getElementById('review-username');
+  const reviewEmail = document.getElementById('review-email');
+  if (reviewName) reviewName.textContent = credentials.username;
+  if (reviewEmail) reviewEmail.textContent = email;
   openModal(confirmModal);
+  confirmNo?.focus();
 });
 
 // ── Confirm Registration Modal ──────────────────────────────────────
@@ -723,6 +778,7 @@ confirmYes?.addEventListener('click', async () => {
 confirmNo?.addEventListener('click', () => {
   pendingRegisterPayload = null;
   closeModal(confirmModal);
+  regUsername?.focus();
 });
 
 // ── Terms Modal ─────────────────────────────────────────────────────
@@ -782,7 +838,29 @@ termsLink?.addEventListener('click', () => {
   pendingAgreementUsername = null;
   pendingAgreementPassword = null;
   pendingRedirectToHome = false;
+  setTermsReadingMode(true);
   openModal(termsModal);
+  termsReturn?.focus();
+});
+
+function setTermsReadingMode(reading: boolean): void {
+  if (termsReturn) termsReturn.hidden = !reading;
+  if (termsAccept) termsAccept.hidden = reading;
+  if (termsDecline) termsDecline.hidden = reading;
+  const note = document.getElementById('terms-note');
+  if (note) note.hidden = reading;
+}
+
+termsReturn?.addEventListener('click', () => {
+  closeModal(termsModal);
+  setTermsReadingMode(false);
+  termsLink?.focus();
+});
+termsModal?.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && termsReturn && !termsReturn.hidden) {
+    event.preventDefault();
+    termsReturn.click();
+  }
 });
 
 termsDecline?.addEventListener('click', () => {

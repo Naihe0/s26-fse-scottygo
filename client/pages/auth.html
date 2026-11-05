@@ -97,6 +97,7 @@
               placeholder="scotty@andrew.cmu.edu"
             />
             <span class="field-hint" id="reg-email-hint"></span>
+            <button type="button" class="field-action" id="complete-email" hidden>Use @andrew.cmu.edu</button>
           </div>
 
           <div class="form-group">
@@ -105,6 +106,7 @@
               <input
                 type="password"
                 id="reg-password"
+                aria-describedby="password-guide reg-password-hint"
                 name="password"
                 autocomplete="new-password"
                 autocapitalize="none"
@@ -123,6 +125,7 @@
               >
             </div>
             <span class="field-hint" id="reg-password-hint"></span>
+            <small id="password-guide">Use 4–72 characters, including a letter, a number and a symbol from $%#@!*&amp;~^-+.</small>
           </div>
 
           <div class="form-group">
@@ -166,6 +169,7 @@
             </div>
           </div>
 
+          <button type="button" id="reg-next-field" class="field-action"></button>
           <button type="submit" class="submit-btn" id="register-btn" disabled
             >Register</button
           >
@@ -186,8 +190,9 @@
         aria-labelledby="confirm-title"
       >
         <h2 id="confirm-title" class="modal-title"
-          >Do you really want to create an account?</h2
+          >Review your account</h2
         >
+        <dl class="registration-review"><dt>Username</dt><dd id="review-username"></dd><dt>Campus email</dt><dd id="review-email"></dd></dl>
         <div class="modal-actions">
           <button
             type="button"
@@ -199,7 +204,7 @@
             type="button"
             class="modal-btn modal-btn--secondary"
             id="confirm-no"
-            >Cancel</button
+            >Edit details</button
           >
         </div>
       </div>
@@ -295,10 +300,11 @@
             </li>
           </ol>
         </div>
-        <p class="terms-note"
+        <p class="terms-note" id="terms-note"
           >*To continue, you need to accept the terms of service</p
         >
         <div class="modal-actions">
+          <button type="button" class="modal-btn modal-btn--secondary" id="terms-return" hidden>Back to registration</button>
           <button
             type="button"
             class="modal-btn modal-btn--primary"
