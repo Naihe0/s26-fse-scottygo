@@ -65,6 +65,12 @@ Build and run with auto-reload:
 npm run watch
 ```
 
+## Preview on an iPhone from Windows
+
+The iOS app opens the hosted ScottyGo site in a native WebView. Install [Expo Go](https://apps.apple.com/us/app/expo-go/id982107779) on an iPhone running iOS 16.4 or later. Connect the phone and PC to the same local network, then double-click [start-on-iphone.cmd](ios/mobile/start-on-iphone.cmd). The launcher installs the mobile dependencies on first use and opens Expo login when needed. Sign in to Expo Go with the same Expo account, then scan the terminal QR code with the iPhone Camera app. Keep the terminal open while testing. Press Ctrl+C to stop it.
+
+Mobile code and its lockfile live under `ios/mobile/`. The preview connects to the public Render service over HTTPS. The mobile package can also produce a standalone iOS app. See the [build and signing instructions](docs/ARCHITECTURE.md#ios-app).
+
 ## Testing
 
 Unit tests need no database. Integration and REST suites require MongoDB on `127.0.0.1:27019`, using the disposable `scottygo_test` database. Jest refuses remote databases and application database names, clears external email/AI keys, and serializes database suites. Override `TEST_DB_URL` only with a loopback URL whose database is `scottygo_test` or `scottygo_test_*`. Live transit E2E tests are opt-in (`npm run test:rest:e2e:transitAPI`) and depend on upstream availability.

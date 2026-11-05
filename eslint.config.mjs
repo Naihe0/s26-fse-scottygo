@@ -9,6 +9,7 @@ export default [
       '**/*.js',
       '**/*.mjs',
       'private/**',
+      'ios/mobile/**', // The mobile package uses its own TypeScript configuration.
       'tmp/**',
       '**/.dist',
       '**/jest.config.ts',

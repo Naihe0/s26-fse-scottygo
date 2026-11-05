@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "ScottyGo",
+    "slug": "scottygo",
+    "version": "1.0.0",
+    "platforms": [
+      "ios"
+    ],
+    "icon": "./assets/icon.png",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.naihe0.scottygo",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "ScottyGo uses your location to center the map, find nearby stops, and check that you are near the bus when you submit a report."
+      }
+    }
+  }
+}

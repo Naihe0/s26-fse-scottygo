@@ -271,6 +271,16 @@ After pushing application changes, verify Render's deployed commit and Live stat
 
 Record the current release's commits and acceptance in [FEATURES.md](FEATURES.md), and verify deployed identity in Render. Keep older release history in Git. If replacing screenshots, capture the implemented UI and avoid credentials, personal location, or fabricated production reports.
 
+## iOS app
+
+`ios/mobile/` contains the Expo project. The same React Native component runs in Expo Go on a phone and as a standalone app. Its iOS WebView opens ScottyGo over HTTPS and uses the website's existing map, account and transit APIs. Mobile development dependencies are installed separately from the web server. Keep signing files and server credentials outside the mobile package.
+
+For Windows preview, use the launcher in the [README](../README.md#preview-on-an-iphone-from-windows). The computer can use Ethernet if the phone can reach it over the local network. If the phone cannot connect, check that Expo uses the physical network adapter and that local network access is enabled for Expo Go. The current iPhone client requires the same Expo account in the CLI and Expo Go. [Expo device setup](https://docs.expo.dev/get-started/start-developing/)
+
+For automated builds, the iOS workflow installs dependencies from the lockfile, generates the Xcode project on a macOS runner, and builds and launches a simulator app. Its artifact is for the iOS Simulator. On a Mac, run `npm ci` and `npx expo run:ios` from `ios/mobile` to generate and launch the native project locally.
+
+For a separately installed build on a registered iPhone, open a terminal in `ios/mobile`, run `npx eas-cli@latest device:create` to register the device and `npx eas-cli@latest build --platform ios --profile preview`. The first cloud build prompts for the Expo project and Apple signing team. A TestFlight build uses the `production` profile and App Store Connect. Both distribution paths need an active Apple Developer Program membership. The device preview in Expo Go uses a free Expo account. [Expo iOS distribution](https://docs.expo.dev/build/internal-distribution/)
+
 ## Diagnostics and constraints
 
 The memory monitor samples every five seconds, tracks RSS/heap/external memory and startup phases, warns at 420 MB RSS, and flags critical at 460 MB. `/transit/memory/dashboard` provides a graph, peak/critical drilldowns, reload, and CSV export. Samples persist for seven days. Examine startup phases and sustained slope rather than treating a single RSS peak as a leak. These diagnostic endpoints are currently public.
@@ -286,4 +296,4 @@ The memory monitor samples every five seconds, tracks RSS/heap/external memory a
 | UI still shows old code locally | Rebuild, restart the correct process, and refresh; use `npm run clean:build` if generated artifacts are stale. |
 | Prediction stops | Inspect report age, stop/status/speed evidence, shape ambiguity, limits, and source health. Do not force arbitrary movement to hide an outage. |
 
-Known boundaries: a single Render process and in-memory feed state, no background push/native application/offline support, no pagination for the short notification window, no automatic bus-report retention policy, and provider-limited observation cadence. Any future horizontal scaling must coordinate Socket.IO rooms, caches, rate limits, and subscription/report writers. Browser authentication currently stores bearer tokens in local storage, making safe text rendering and avoidance of script injection especially important.
+The web and iOS clients require network access and show live updates while open. A single Render process holds feed state in memory. The notification window is short, bus reports currently lack an automatic retention policy, and vehicle observation cadence depends on the provider. Any future horizontal scaling must coordinate Socket.IO rooms, caches, rate limits, and subscription/report writers. Browser authentication currently stores bearer tokens in local storage, making safe text rendering and avoidance of script injection especially important.

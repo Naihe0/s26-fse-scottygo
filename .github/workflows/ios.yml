@@ -1,0 +1,110 @@
+name: iOS simulator
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios.yml'
+  pull_request:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulator:
+    name: Build and launch on iPhone
+    runs-on: macos-26
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: ios/mobile
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: ios/mobile/package-lock.json
+
+      - name: Generate the Xcode workspace
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npx expo prebuild --platform ios --no-install
+          pod install --project-directory=ios
+
+      - name: Select an installed iPhone simulator
+        run: |
+          xcodebuild -version
+          udid=$(xcrun simctl list devices available --json | jq -er '
+            [.devices | to_entries[] | select(.key | contains(".iOS-")) |
+             .value[] | select(.name | startswith("iPhone"))][0].udid')
+          echo "SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
+
+      - name: Build ScottyGo
+        run: |
+          xcodebuild -workspace ios/ScottyGo.xcworkspace \
+            -scheme ScottyGo -configuration Release \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" -quiet build
+
+      - name: Install and launch the app
+        id: launch
+        run: |
+          app="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphonesimulator/ScottyGo.app"
+          bundle_id=$(plutil -extract CFBundleIdentifier raw -o - "$app/Info.plist")
+          mkdir "$RUNNER_TEMP/ios-artifacts"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/ios-artifacts/ScottyGo.app.zip"
+          xcrun simctl bootstatus "$SIMULATOR_UDID" -b
+          xcrun simctl install "$SIMULATOR_UDID" "$app"
+          launch=$(xcrun simctl launch "$SIMULATOR_UDID" "$bundle_id")
+          echo "$launch"
+          sleep 5
+          kill -0 "${launch##*: }"
+
+      - name: Verify the hosted login is visible
+        run: |
+          cat > "$RUNNER_TEMP/login.swift" <<'SWIFT'
+          import Foundation
+          import Vision
+
+          let screenshot = URL(fileURLWithPath: CommandLine.arguments[1])
+          let request = VNRecognizeTextRequest()
+          request.recognitionLanguages = ["en-US"]
+          try VNImageRequestHandler(url: screenshot, options: [:]).perform([request])
+          let words = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+              .joined(separator: " ").lowercased()
+          exit(words.contains("username") && words.contains("password") ? 0 : 1)
+          SWIFT
+          swiftc "$RUNNER_TEMP/login.swift" -o "$RUNNER_TEMP/check-login"
+          screenshot="$RUNNER_TEMP/ios-artifacts/launch.png"
+          # Allow the hosted service to wake up after inactivity.
+          for attempt in {1..24}; do
+            xcrun simctl io "$SIMULATOR_UDID" screenshot "$screenshot"
+            if "$RUNNER_TEMP/check-login" "$screenshot"; then
+              echo 'The hosted ScottyGo username and password fields are visible.'
+              exit 0
+            fi
+            sleep 5
+          done
+          echo '::error::The hosted login did not appear. See launch.png in the artifact.'
+          exit 1
+
+      - name: Save simulator app and launch screenshot
+        if: ${{ !cancelled() && steps.launch.outcome == 'success' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: ScottyGo-iOS-Simulator
+          path: ${{ runner.temp }}/ios-artifacts/
+          if-no-files-found: error
+          retention-days: 7
