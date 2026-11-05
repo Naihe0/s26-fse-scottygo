@@ -20,6 +20,10 @@ const ARRIVAL_LIMIT = 5;
 const ARRIVAL_CONCURRENCY = 3;
 const REFRESH_MS = 30_000;
 
+function walkMinutes(distanceMeters: number): number {
+  return Math.ceil((distanceMeters * 15) / 1000);
+}
+
 function validPosition(point: ILatLng | undefined): point is ILatLng {
   return (
     !!point &&
@@ -342,7 +346,10 @@ export class NearbyStopsPanel extends HTMLElement {
       title.textContent = item.stop.stopName;
       const distance = document.createElement('span');
       distance.className = 'nearby-stops__distance';
-      distance.textContent = `${Math.round(item.distanceMeters)} m · ~${Math.max(1, Math.ceil((item.distanceMeters * 15) / 1000))} min walk`;
+      const walking = walkMinutes(item.distanceMeters);
+      distance.textContent = walking
+        ? `${Math.round(item.distanceMeters)} m · ~${walking} min walk`
+        : 'At the starting point';
       const routes = document.createElement('span');
       routes.className = 'nearby-stops__routes';
       const suppliedRoutes = item.routesServingStop ?? item.stop.routes ?? [];
@@ -400,7 +407,8 @@ export class NearbyStopsPanel extends HTMLElement {
       this.opened && version === this.version && !request.signal.aborted;
     const worker = async () => {
       while (current() && cursor < candidates.length) {
-        const stop = candidates[cursor++].stop;
+        const candidate = candidates[cursor++];
+        const stop = candidate.stop;
         let predictions: IPrediction[] | null;
         try {
           predictions = await transitApiService.getPredictionsResult(
@@ -415,7 +423,12 @@ export class NearbyStopsPanel extends HTMLElement {
         const target = [
           ...this.querySelectorAll<HTMLElement>('[data-arrival-stop]')
         ].find((element) => element.dataset.arrivalStop === stop.stopId);
-        if (target) target.textContent = this.arrivalLabel(predictions);
+        if (target)
+          this.renderArrival(
+            target,
+            predictions,
+            walkMinutes(candidate.distanceMeters)
+          );
       }
     };
     await Promise.all(
@@ -427,20 +440,45 @@ export class NearbyStopsPanel extends HTMLElement {
     if (this.arrivalRequest === request) this.arrivalRequest = null;
   }
 
-  private arrivalLabel(predictions: IPrediction[] | null): string {
-    if (!predictions) return 'Arrival unavailable · tap to retry';
-    const next = predictions
+  private renderArrival(
+    target: HTMLElement,
+    predictions: IPrediction[] | null,
+    walking: number
+  ): void {
+    const now = Date.now();
+    const upcoming = (predictions ?? [])
       .filter(
         (item) =>
           typeof item?.routeId === 'string' &&
           Number.isFinite(item.predictedArrivalTime) &&
-          item.predictedArrivalTime >= Date.now() - 30_000
+          item.predictedArrivalTime >= now - 30_000
       )
-      .sort((a, b) => a.predictedArrivalTime - b.predictedArrivalTime)[0];
-    if (!next) return 'No upcoming arrivals';
+      .sort((a, b) => a.predictedArrivalTime - b.predictedArrivalTime);
+    const next = upcoming[0];
+    if (!next) {
+      target.textContent = predictions
+        ? 'No upcoming arrivals'
+        : 'Arrival unavailable · tap to retry';
+      return;
+    }
+    target.textContent = this.arrivalLabel(next, now);
+    const walkEnds = now + walking * 60_000;
+    if (!walking || next.predictedArrivalTime >= walkEnds) return;
+    const later = upcoming.find(
+      (item) => item.predictedArrivalTime >= walkEnds
+    );
+    const note = document.createElement('span');
+    note.className = 'nearby-stops__walk-note';
+    note.textContent = later
+      ? `After the ~${walking} min walk · ${this.arrivalLabel(later, now)}`
+      : 'May arrive before you reach the stop. No later arrival listed.';
+    target.append(note);
+  }
+
+  private arrivalLabel(next: IPrediction, now: number): string {
     const minutes = Math.max(
       0,
-      Math.ceil((next.predictedArrivalTime - Date.now()) / 60_000)
+      Math.ceil((next.predictedArrivalTime - now) / 60_000)
     );
     return `${this.routeTitle(next.routeId)} · ${minutes === 0 ? 'Due' : `${minutes} min`}${next.vid === 'Scheduled' ? ' · scheduled' : ''}${next.isDelayed ? ' · delayed' : ''}`;
   }

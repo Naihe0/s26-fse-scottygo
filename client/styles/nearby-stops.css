@@ -197,6 +197,13 @@ nearby-stops-panel [hidden] {
   font-size: 12px;
   line-height: 1.45;
 }
+.nearby-stops__walk-note {
+  display: block;
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 2px solid #77ada4;
+  color: #315c53;
+}
 nearby-stops-panel button:focus-visible {
   outline: 3px solid #2563eb;
   outline-offset: 2px;

@@ -299,6 +299,46 @@ describe('Nearby stop discovery and arrival comparisons', () => {
     );
   });
 
+  test('shows the first arrival after the estimated walk as well as the imminent bus', async () => {
+    nearby.mockResolvedValue(payload([stop('a', 400)]));
+    const inMinutes = (minutes: number) => Date.now() + minutes * 60_000;
+    arrivals.mockResolvedValue([
+      prediction({ predictedArrivalTime: inMinutes(12) }),
+      prediction({
+        routeId: '71A',
+        predictedArrivalTime: inMinutes(6),
+        vid: 'Scheduled'
+      }),
+      prediction({ predictedArrivalTime: inMinutes(2) })
+    ]);
+    await open();
+    const arrival = panel.querySelector('[data-arrival-stop="a"]')!;
+    expect(arrival.textContent).toContain('Route 61C · 2 min');
+    expect(arrival.querySelector('.nearby-stops__walk-note')!.textContent).toBe(
+      'After the ~6 min walk · Route 71A · 6 min · scheduled'
+    );
+    expect(arrivals).toHaveBeenCalledTimes(1);
+  });
+
+  test('explains tight connections, then removes the warning when the refreshed bus is reachable', async () => {
+    nearby.mockResolvedValue(payload([stop('a', 400)]));
+    arrivals
+      .mockResolvedValueOnce([prediction()])
+      .mockImplementation(async () => [
+        prediction({ predictedArrivalTime: Date.now() + 7 * 60_000 })
+      ]);
+    await open();
+    expect(
+      panel.querySelector('.nearby-stops__walk-note')?.textContent
+    ).toContain('No later arrival listed');
+    jest.advanceTimersByTime(30_000);
+    await flush();
+    expect(panel.querySelector('.nearby-stops__walk-note')).toBeNull();
+    expect(panel.querySelector('[data-arrival-stop="a"]')?.textContent).toBe(
+      'Route 61C · 7 min'
+    );
+  });
+
   test('polls only while open and foreground, aborting predictions when closed', async () => {
     await open();
     jest.advanceTimersByTime(30_000);
