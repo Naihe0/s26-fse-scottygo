@@ -1,4 +1,5 @@
 import { escapeHtml } from '../utils/html';
+import { getRiderShortcuts } from '../utils/rider-shortcuts';
 
 export interface IRouteSelection {
   route: string | null;
@@ -7,6 +8,8 @@ export interface IRouteSelection {
 export interface IRouteOption {
   id: string;
   name: string;
+  destination?: string;
+  system?: string;
 }
 
 export interface IRouteSelectorElement extends HTMLElement {
@@ -29,6 +32,7 @@ export class RouteSelectorPanel
   private committedRoute: string | null = null;
   private isVisible = false;
   private searchValue = '';
+  private order: 'number' | 'name' = 'number';
   private isComposing = false;
   private opener: HTMLElement | null = null;
 
@@ -56,6 +60,7 @@ export class RouteSelectorPanel
     panel.style.pointerEvents = 'auto';
     panel.classList.add('visible');
     this.isVisible = true;
+    this.renderResults();
     // Focus the panel without opening the phone keyboard before a search tap.
     panel.focus({ preventScroll: true });
     this.querySelector<HTMLElement>('.route-btn.selected')?.scrollIntoView?.({
@@ -120,11 +125,13 @@ export class RouteSelectorPanel
         </div>
         <div class="route-search-wrapper">
           <span class="material-icons-outlined route-search-icon" aria-hidden="true">search</span>
-          <input type="search" class="route-search-input" aria-label="Search routes" placeholder="Route number or name" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          <input type="search" class="route-search-input" aria-label="Search routes" placeholder="Route number or name" enterkeyhint="go" autocomplete="off" autocapitalize="off" spellcheck="false" />
           <button type="button" class="route-search-clear" aria-label="Clear route search" hidden><span aria-hidden="true">×</span></button>
         </div>
         <button type="button" class="route-all" aria-pressed="true">All routes<span aria-hidden="true">✓</span></button>
         <p class="route-selection-summary"></p>
+        <div class="route-picker-recent" hidden></div>
+        <label class="route-picker-order">List order<select data-picker-order><option value="number">Route number</option><option value="name">Route name A–Z</option></select></label>
         <p class="route-results-status" role="status" aria-live="polite"></p>
         <div class="route-list"></div>
         <div class="filter-actions">
@@ -134,6 +141,10 @@ export class RouteSelectorPanel
       </section>
     `;
     const input = this.querySelector<HTMLInputElement>('.route-search-input')!;
+    this.querySelector<HTMLSelectElement>('[data-picker-order]')!.addEventListener('change', (e) => {
+      this.order = (e.currentTarget as HTMLSelectElement).value === 'name' ? 'name' : 'number';
+      this.renderResults();
+    });
     input.addEventListener('compositionstart', () => {
       this.isComposing = true;
     });
@@ -154,14 +165,24 @@ export class RouteSelectorPanel
     const filtered = this.routes.filter(
       (route) =>
         route.id.toLowerCase().includes(query) ||
-        route.name.toLowerCase().includes(query)
+        route.name.toLowerCase().includes(query) ||
+        route.destination?.toLowerCase().includes(query)
+    ).sort((a,b) =>
+      Number(b.id.toLowerCase() === query) - Number(a.id.toLowerCase() === query) ||
+      (this.order === 'name' ? (a.destination || a.name).localeCompare(b.destination || b.name, 'en', {numeric:true}) : 0) ||
+      a.id.localeCompare(b.id, 'en', {numeric:true})
     );
+    const recent = this.querySelector<HTMLElement>('.route-picker-recent')!;
+    const ids = !query && this.isVisible ? getRiderShortcuts().recent.flatMap(item =>
+      item.kind === 'route' && this.routes.some(r => r.id === item.routeId) ? [item.routeId] : []).slice(0,3) : [];
+    recent.hidden = !ids.length;
+    recent.innerHTML = ids.length ? 'Recent '+ids.map(id => `<button type="button" data-recent-route="${escapeHtml(id)}">${escapeHtml(id)}</button>`).join('') : '';
     const list = this.querySelector<HTMLElement>('.route-list')!;
     list.innerHTML = filtered
       .map(
         (route) => `
           <button type="button" class="route-btn" data-route="${escapeHtml(route.id)}" aria-pressed="false">
-            <span>${escapeHtml(route.name)}</span><span class="route-selected-check" aria-hidden="true">✓</span>
+            <span>${escapeHtml(route.name)}${route.destination && route.destination !== route.name ? `<small>${escapeHtml(route.destination)}</small>` : ''}</span><span class="route-selected-check" aria-hidden="true">✓</span>
           </button>
         `
       )
@@ -211,7 +232,10 @@ export class RouteSelectorPanel
       'button'
     );
     if (!button) return;
-    if (button.matches('.route-btn')) {
+    if (button.hasAttribute('data-recent-route')) {
+      this.selectedRoute = button.dataset.recentRoute || null;
+      this.querySelector<HTMLButtonElement>('#route-ok')!.click();
+    } else if (button.matches('.route-btn')) {
       this.selectedRoute = button.dataset.route ?? null;
       this.updateSelection();
     } else if (button.matches('.route-all')) {
@@ -241,6 +265,16 @@ export class RouteSelectorPanel
   };
 
   private handleKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === 'Enter' && this.isVisible && !event.isComposing && !this.isComposing && (event.target as Element).matches('.route-search-input') && this.searchValue.trim()) {
+      const matches = [...this.querySelectorAll<HTMLButtonElement>('.route-btn')];
+      const option = matches.find(b => b.dataset.route?.toLowerCase() === this.searchValue.trim().toLowerCase()) ?? (matches.length === 1 ? matches[0] : null);
+      if (option) {
+        event.preventDefault();
+        this.selectedRoute = option.dataset.route!;
+        this.querySelector<HTMLButtonElement>('#route-ok')!.click();
+      }
+      return;
+    }
     if (
       event.key !== 'Escape' ||
       event.isComposing ||

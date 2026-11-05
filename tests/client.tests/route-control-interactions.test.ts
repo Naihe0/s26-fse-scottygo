@@ -44,6 +44,22 @@ const search = (value: string): HTMLInputElement => {
   return input;
 };
 
+test('a rider can open a unique destination from the keyboard without committing ambiguous text', () => {
+  routes.setRoutes([
+    { id: '61C', name: '61C', destination: 'McKeesport via Homestead' },
+    { id: '61D', name: '61D', destination: 'Murray' }
+  ]);
+  const selected = jest.fn();
+  routes.addEventListener('routeSelected', selected);
+  routes.show();
+  const enter = () => new KeyboardEvent('keydown', { key:'Enter', bubbles:true });
+  search('61').dispatchEvent(enter());
+  expect(selected).not.toHaveBeenCalled();
+  search('homestead').dispatchEvent(enter());
+  expect(selected).toHaveBeenCalledTimes(1);
+  expect(selected.mock.calls[0][0].detail.route).toBe('61C');
+});
+
 test('route filtering retains the input, focus and selection during typing and data refresh', () => {
   routes.show();
   const input = search('61');

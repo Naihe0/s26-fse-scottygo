@@ -17,7 +17,9 @@ export const formatRouteName = (route: IRoute): string => {
 export const buildRouteOptions = (routes: IRoute[]): IRouteOption[] =>
   routes.map((route) => ({
     id: route.id,
-    name: formatRouteName(route)
+    name: formatRouteName(route),
+    destination: route.name?.trim(),
+    system: route.system
   }));
 
 /** Straight-line walking estimate in minutes, or null without a location. */

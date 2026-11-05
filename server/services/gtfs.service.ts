@@ -211,7 +211,7 @@ export class GTFSService {
     await this.streamTable(zipPath, 'routes.txt', (r) => {
       this.routeMap.set(r.route_id, {
         id: r.route_id,
-        name: r.route_short_name || r.route_long_name,
+        name: r.route_long_name?.trim() || r.route_short_name?.trim() || r.route_id,
         system: 'PRT',
         color:
           r.route_color && r.route_color.toUpperCase() !== 'FFFFFF'

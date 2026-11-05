@@ -1,6 +1,12 @@
 /* Route and transit filters share a compact, touch-friendly panel shell. */
+.route-picker-order, .route-picker-recent {display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:var(--app-muted); font-size:13px}
+.route-picker-recent[hidden] {display:none}
+.route-picker-order select,.route-picker-recent button {min-height:44px; padding:0 10px; border:1px solid var(--app-border); border-radius:10px; background:var(--app-surface); color:var(--app-text); font-size:16px}
+.route-picker-recent button {color:var(--app-brand-strong); font-weight:600}
+.route-btn small {display:block; margin-top:2px; font-size:12px; color:var(--app-muted); font-weight:500}
 route-selector-panel .route-selector-panel,
 toggle-panel .toggle-filter-panel {
+  z-index: 1000; /* Keep Apply/Cancel above the map's floating rider tools. */
   width: 320px;
   min-width: 0;
   max-width: calc(100% - 112px);

@@ -33,6 +33,14 @@ Start with the rider's goal in the second column. The third column gives the alt
 
 Existing regression suites live under `tests/client.tests`, `tests/server.tests` and `ios/mobile/tests`. Use the relevant suite for repeatable edge cases, then record what was actually exercised in the browser, on a device or with test data. A live route without arrivals or vehicles exercises the empty state. A separate controlled departure or vehicle is needed to exercise the populated state.
 
+## iPhone rider release log
+
+The use cases above are the starting checklist for these rounds. Browser checks use phone-sized WebKit and desktop Chrome. Controlled data covers missed buses, service failures and account writes without submitting test reports to riders.
+
+| Round | Friction observed | Changes riders can use |
+| --- | --- | --- |
+| 1 · Choosing a route | The route picker found **61C** but returned no matches for **McKeesport**, even though the agency names the route MCKEESPORT-HOMESTEAD. A floating Nearby button could cover Cancel. | Read and search the published route name beside its ID; order the list by number or name; see the exact route ID before partial matches; open an exact or unique search result with the keyboard’s Go key; reopen a recent route directly in the picker. Filter actions also sit above the map shortcuts. |
+
 ## Ten rider walkthroughs and fifty improvements
 
 Each round started with a rider using the previous interface in a browser. The checks below describe how to try the five changes in the shared iPhone and web interface.

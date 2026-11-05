@@ -78,7 +78,7 @@ describe('bounded streaming GTFS startup', () => {
 
     expect(service.isLoaded()).toBe(true);
     expect(service.getRoutes()).toEqual([
-      expect.objectContaining({ id: '61C', color: '#C41230' })
+      expect.objectContaining({ id: '61C', name: 'Test route', color: '#C41230' })
     ]);
     expect(service.getPatterns('61C')).toEqual([
       {
