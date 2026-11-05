@@ -24,6 +24,10 @@ Browser acceptance used the actual built UI with controlled transit responses. I
 
 ![Phone sign-in with the password visibility control](wireframes/current/iphone-sign-in.png)
 
+On the personal Render deployment, phone-sized WebKit opened stop 7117, returned to that stop from Alerts, and switched between the real 61C stop and vehicle lists. At the time of capture the route showed eight vehicles. Counts change with service.
+
+![Route 61C Stops and Buses tabs in the live phone layout](wireframes/current/iphone-route-tabs.png)
+
 ## Realtime bus movement refinement
 
 The map keeps one marker per bus and updates its position between agency reports. This iteration improves how fresh reports reach the browser and how the marker reconciles them:

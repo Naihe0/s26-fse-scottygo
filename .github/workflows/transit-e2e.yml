@@ -12,7 +12,8 @@ permissions:
 jobs:
   transit-e2e:
     name: Transit E2E (Live Upstream Dependencies)
-    runs-on: ubuntu-latest
+    # Use the same MongoDB-compatible runner as the integration workflow.
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     services:
       mongodb:
