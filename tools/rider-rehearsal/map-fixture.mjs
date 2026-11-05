@@ -95,12 +95,16 @@ export function installMapFixture() {
       },
       importLibrary: async () => ({
         Route: {
-          computeRoutes: async ({ origin, destination }) => ({
+          computeRoutes: async ({ origin, destination, fields }) => ({
             routes: [
               {
                 path: [origin, destination],
                 durationMillis: 180000,
                 distanceMeters: 210,
+                legs: fields.includes('legs') ? [{ steps: [
+                  { instructions: 'Walk east on Forbes', distanceMeters: 150 },
+                  { instructions: 'Turn toward the platform', distanceMeters: 60 }
+                ] }] : undefined,
                 warnings: []
               }
             ]

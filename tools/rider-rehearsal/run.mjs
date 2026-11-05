@@ -185,9 +185,10 @@ try {
     await activateFilter('#direction-panel .ok-btn');
     await click('#clear-filters-btn');
     await click('#route-filter-btn');
-    await page.locator('.route-search-input').fill('61C');
-    await click('.route-btn[data-route="61C"]');
-    await click('#route-ok');
+    await page.locator('[data-picker-order]').selectOption('name');
+    await page.locator('.route-search-input').fill('McKeesport');
+    assert.match(await page.locator('.route-btn[data-route="61C"]').innerText(), /McKeesport/i);
+    await page.locator('.route-search-input').press('Enter');
     await page.waitForURL(/r=61C/);
   });
   await step('UC06 Tap overlapping map objects and dismiss', async () => {
@@ -234,6 +235,12 @@ try {
     await page
       .locator('#directions-panel .directions-panel__duration')
       .waitFor();
+    assert.match(await page.locator('.directions-panel__distance').innerText(), /210 m/);
+    await click('[data-walk-action="steps"]');
+    assert.match(await page.locator('#walk-details ol').innerText(), /Turn toward the platform/);
+    await click('[data-walk-action="compact"]');
+    assert.equal(await page.locator('#walk-details').isVisible(), false);
+    await click('[data-walk-action="compact"]');
     await click('.directions-panel__close');
     await page.locator('#directions-panel').waitFor({ state: 'hidden' });
   });
