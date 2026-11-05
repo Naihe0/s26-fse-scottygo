@@ -92,7 +92,7 @@ Filter links use `/#/map?r=61C&s=PRT&dir=IB`; supported optional fields are rout
 
 Copy-stop links contain only `stop`; Copy-view links contain only filters. On load/history restoration, the browser resolves the stop through authenticated `GET /search?q=<stopId>`, validates an exact returned ID and its coordinates, then opens the current arrival card. Resolution has a 15-second browser deadline, cancellation, session ownership and a retry path. No new stop-detail REST endpoint is introduced.
 
-Saved stops, named planning places, recent selections and filter presets are browser-local records, separate from `/notifications/subscriptions`. They have no synchronization or CRUD API. Route exploration reuses the existing route, stop, vehicle and prediction endpoints; bus follow and overlap selection are client-side map behavior.
+Saved stops (including personal nicknames), named planning places, recent selections, read marks and filter presets are browser-local records, separate from `/notifications/subscriptions`. They have no synchronization or CRUD API. Route exploration and the nearby walking comparison reuse the existing route, stop, vehicle and prediction endpoints. A stop card treats a successful empty prediction list as no upcoming arrivals; a failed request keeps the last known arrivals on screen.
 
 ## Transit
 

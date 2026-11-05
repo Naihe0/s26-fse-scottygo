@@ -273,6 +273,10 @@ Record the current release's commits and acceptance in [FEATURES.md](FEATURES.md
 
 ## iOS app
 
+Search scopes and route-explorer tabs reuse the current client data. Nearby boarding compares arrival timestamps with the existing estimated walk. The stop card uses the nullable prediction result to distinguish an unavailable request from confirmed empty service. It keeps the last successful rows, pauses countdowns on a failed refresh and coalesces retry, reconnection and foreground refreshes. Closing the card removes its listeners. Public map/stop sharing uses the system share sheet when available and otherwise reuses the clipboard/manual-copy flow.
+
+Saved-stop nicknames and read marks use the existing account-scoped browser stores. The header remembers only a sanitized map hash per account in tab session storage. The iOS shell tracks its own WebKit content-process lifecycle: a discarded page reloads once on return, while repeated termination within a minute brings up manual retry.
+
 `ios/mobile/` contains the Expo project. The same React Native component runs in Expo Go on a phone and as a standalone app. Its iOS WebView opens ScottyGo over HTTPS and uses the website's existing map, account and transit APIs. Mobile development dependencies are installed separately from the web server. Keep signing files and server credentials outside the mobile package.
 
 For Windows preview, use the launcher in the [README](../README.md#preview-on-an-iphone-from-windows). The computer can use Ethernet if the phone can reach it over the local network. If the phone cannot connect, check that Expo uses the physical network adapter and that local network access is enabled for Expo Go. The current iPhone client requires the same Expo account in the CLI and Expo Go. [Expo device setup](https://docs.expo.dev/get-started/start-developing/)

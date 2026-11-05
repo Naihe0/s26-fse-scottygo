@@ -2,6 +2,28 @@
 
 ScottyGo combines Pittsburgh Regional Transit (PRT) buses and CMU shuttles in one map. The current personal deployment is [scottygo-ningrui.onrender.com](https://scottygo-ningrui.onrender.com/). This guide describes the implemented app; [ARCHITECTURE.md](ARCHITECTURE.md) covers development and operations, and [API.md](API.md) describes its interfaces.
 
+## iPhone and web rider improvements
+
+The iPhone app loads the same ScottyGo pages as the browser. The first ten improvements below work on both. Personal settings stay in the browser or app where they were created.
+
+| Round | What to try | Expected result |
+| --- | --- | --- |
+| 1. Check a password | Tap **Show** during sign-in or registration. | Verify the current field without retyping. Leaving the form or backgrounding the page conceals it again. |
+| 2. Return to a stop | Open a stop or filtered route, visit Saved routes or Updates, then tap the ScottyGo map link. | The same tab restores that account’s last public map selection. |
+| 3. Narrow a search | Search for a term that matches both routes and stops, then tap **Stops**. | Only matching stops remain. Switch back to **All** without typing or fetching again. |
+| 4. Decide which bus to walk for | Open **Nearby stops** and compare the walk with the first arrival. | If it may leave before you get there, the row shows a later listed option when available. Walking and arrival times are estimates. |
+| 5. Browse a route | Switch between **Stops** and **Buses** in the route explorer. | Jump directly to either list. The stop search stays in place when you come back. |
+| 6. Recover arrivals | Keep a stop open while the connection drops, then reconnect or tap **Retry arrivals**. | Last-known arrivals display clock times. A successful empty response shows **No upcoming arrivals**. |
+| 7. Share a stop or view | Tap **Share stop** or the map’s share button. | Supported devices open the system share sheet. Other browsers offer a copyable link; canceling the sheet leaves the clipboard alone. |
+| 8. Name a daily stop | Under **My places → Saved stops**, open **More** and add a nickname. | The official stop stays visible. Opening and sharing still use its original stop ID. |
+| 9. Open a saved route | Choose the map or updates link on a saved-route card. | Open that route directly on the map, including the CMU system where needed, or read its alerts. |
+| 10. Catch up on alerts | Filter the inbox, then mark the shown updates as read. | The action applies to the current results. Other routes and future updates keep their own read state. |
+| 11. Return after iOS frees memory | Return to the iPhone app after WebKit discards its page. | The app tries to reload the page on return; a repeated failure within a minute offers a manual retry. |
+
+Browser acceptance used the actual built UI with controlled transit responses. In phone-sized WebKit and desktop Chrome, filtering mixed search results used a single request; a six-minute walk surfaced the nine-minute arrival after a two-minute arrival; and switching route tabs retained the stop search. Both browsers restored the public route and stop after visiting Alerts and recovered a stop card from a failed prediction request. At 375 px, the WebKit checks also verified filtered read marks after reload, separate map and alert destinations for a CMU route, and adding, reopening and removing a nickname. The iOS package has separate tests for foreground recovery and repeated termination.
+
+![Phone sign-in with the password visibility control](wireframes/current/iphone-sign-in.png)
+
 ## Realtime bus movement refinement
 
 The map keeps one marker per bus and updates its position between agency reports. This iteration improves how fresh reports reach the browser and how the marker reconciles them:
@@ -197,7 +219,7 @@ The **Notifications** page offers **All updates**, **Service alerts**, and **Liv
 
 ![Current notification center with readable agency notices and route actions](wireframes/current/alerts.jpg)
 
-These are notifications inside the open web app. Background push, lock-screen notifications, an offline map, an installable PWA, and a native iOS app are not implemented.
+Notifications appear inside the open website or iPhone app. Lock-screen push notifications and offline maps are not available.
 
 ## Saved routes and reports
 
