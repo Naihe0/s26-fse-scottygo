@@ -144,3 +144,10 @@ transit-search .search-announcement {
     font-size: 16px;
   }
 }
+
+transit-search mark {
+  color: inherit;
+  background: #fff0be;
+  border-radius: 2px;
+  font-weight: 700;
+}

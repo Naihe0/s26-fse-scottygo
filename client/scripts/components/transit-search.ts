@@ -3,10 +3,24 @@ import { MapStateManager } from '../state/map-state';
 import type { IRoute, IStop } from '../../../common/transit.interface';
 import { escapeHtml } from '../utils/html';
 import { authHeaders } from '../services/session';
+import { haversineMeters } from '../../../common/geo';
+import type { ILatLng } from '../../../common/map.interface';
 
 const DEFAULT_BADGE_COLOR = '#888888';
 const SEARCH_DELAY_MS = 220;
 const SEARCH_TIMEOUT_MS = 10000;
+
+function highlightMatch(label: string, query: string): string {
+  const start = label.toLowerCase().indexOf(query.toLowerCase());
+  if (!query || start < 0) return escapeHtml(label);
+  return (
+    escapeHtml(label.slice(0, start)) +
+    '<mark>' +
+    escapeHtml(label.slice(start, start + query.length)) +
+    '</mark>' +
+    escapeHtml(label.slice(start + query.length))
+  );
+}
 
 export class TransitSearch extends HTMLElement {
   private routeMap = new Map<string, IRoute>();
@@ -22,6 +36,7 @@ export class TransitSearch extends HTMLElement {
   private requestTimer: number | null = null;
   private request: AbortController | null = null;
   private activeIndex = -1;
+  private preferredType = 'All';
   private composing = false;
   private readonly handleOutsideClick = (event: MouseEvent): void => {
     if (!event.composedPath().includes(this)) this.hideDropdown();
@@ -66,6 +81,7 @@ export class TransitSearch extends HTMLElement {
       new CustomEvent('search', { detail: { query }, bubbles: true })
     );
     if (!query) {
+      this.preferredType = 'All';
       this.hideDropdown();
       return;
     }
@@ -197,24 +213,39 @@ export class TransitSearch extends HTMLElement {
       count
         ? `<div role="group" data-type="${label}" aria-label="${label}"><div class="search-group-title" aria-hidden="true">${label}<span>${count}</span></div>${content}</div>`
         : '';
+    const exactId = (id: string) => id.toLowerCase() === query.toLowerCase();
+    const byIdMatch = (a: string, b: string) =>
+      Number(exactId(b)) - Number(exactId(a));
+    const origin = MapStateManager.getInstance().getEffectiveLocation();
+    const routeGroup = group(
+      'Routes',
+      routes.length,
+      [...routes]
+        .sort((a, b) => byIdMatch(a.id, b.id))
+        .map((r, i) => this.buildRouteItemHTML(r, i, query))
+        .join('')
+    );
+    const stopGroup = group(
+      'Stops',
+      stops.length,
+      [...stops]
+        .sort((a, b) => byIdMatch(a.stopId, b.stopId))
+        .map((s, i) =>
+          this.buildStopItemHTML(s, routes.length + i, query, origin)
+        )
+        .join('')
+    );
     this.results.innerHTML =
-      group(
-        'Routes',
-        routes.length,
-        routes.map((r, i) => this.buildRouteItemHTML(r, i)).join('')
-      ) +
-      group(
-        'Stops',
-        stops.length,
-        stops
-          .map((s, i) => this.buildStopItemHTML(s, routes.length + i))
-          .join('')
-      );
+      stops.some((s) => exactId(s.stopId)) && !routes.some((r) => exactId(r.id))
+        ? stopGroup + routeGroup
+        : routeGroup + stopGroup;
     this.results.hidden = false;
     this.querySelector<HTMLElement>('.search-type-filter')!.hidden = !(
       routes.length && stops.length
     );
-    this.filterResults('All');
+    this.filterResults(
+      routes.length && stops.length ? this.preferredType : 'All'
+    );
     this.attachResultListeners(stops);
     this.showDropdown();
   }
@@ -238,12 +269,13 @@ export class TransitSearch extends HTMLElement {
       this.announcement.textContent = `${count} ${count === 1 ? 'result' : 'results'}. Use the arrow keys to choose.`;
   }
 
-  private buildRouteItemHTML(route: IRoute, index: number): string {
-    const label = /^\d+$/.test(route.id)
-      ? route.name
-      : route.id === route.name
-        ? route.id
-        : `${route.id} · ${route.name}`;
+  private buildRouteItemHTML(
+    route: IRoute,
+    index: number,
+    query: string
+  ): string {
+    const label =
+      route.id === route.name ? route.id : `${route.id} · ${route.name}`;
     const system =
       route.system === 'CMU'
         ? 'CMU Shuttle'
@@ -252,12 +284,29 @@ export class TransitSearch extends HTMLElement {
           : '';
     return `<div id="search-option-${index}" class="search-result-item search-result-route" data-route-id="${escapeHtml(route.id)}" role="option" aria-selected="false">
       <span class="material-icons-outlined search-result-icon" aria-hidden="true">directions_bus</span>
-      <span class="search-result-content"><span class="search-result-name">${escapeHtml(label)}</span>${system ? `<span class="search-result-meta">${system}</span>` : ''}</span>
+      <span class="search-result-content"><span class="search-result-name">${highlightMatch(label, query)}</span>${system ? `<span class="search-result-meta">${system}</span>` : ''}</span>
       <span class="material-icons-outlined search-result-arrow" aria-hidden="true">chevron_right</span>
     </div>`;
   }
 
-  private buildStopItemHTML(stop: IStop, index: number): string {
+  private buildStopItemHTML(
+    stop: IStop,
+    index: number,
+    query: string,
+    origin: ILatLng | null
+  ): string {
+    const meters =
+      origin && Number.isFinite(stop.lat) && Number.isFinite(stop.lon)
+        ? haversineMeters(origin, { lat: stop.lat, lng: stop.lon })
+        : null;
+    const distance =
+      meters !== null && Number.isFinite(meters)
+        ? ' · ' +
+          (meters < 1000
+            ? Math.round(meters) + ' m'
+            : (meters / 1000).toFixed(1) + ' km') +
+          ' from start'
+        : '';
     const badges = (stop.routes ?? [])
       .map((routeId) => {
         const route = this.routeMap.get(routeId);
@@ -269,38 +318,40 @@ export class TransitSearch extends HTMLElement {
       .join('');
     return `<div id="search-option-${index}" class="search-result-item search-result-stop" data-stop-id="${escapeHtml(stop.stopId)}" role="option" aria-selected="false">
       <span class="material-icons-outlined search-result-icon" aria-hidden="true">place</span>
-      <span class="search-result-content"><span class="search-result-name">${escapeHtml(stop.stopName)}</span><span class="search-result-meta">Stop ${escapeHtml(stop.stopId)}</span>${badges ? `<span class="search-result-badges">${badges}</span>` : ''}</span>
+      <span class="search-result-content"><span class="search-result-name">${highlightMatch(stop.stopName, query)}</span><span class="search-result-meta">Stop ${highlightMatch(stop.stopId, query)}${distance}</span>${badges ? `<span class="search-result-badges">${badges}</span>` : ''}</span>
       <span class="material-icons-outlined search-result-arrow" aria-hidden="true">chevron_right</span>
     </div>`;
   }
 
   private attachResultListeners(stops: IStop[]): void {
     const stopById = new Map(stops.map((stop) => [stop.stopId, stop]));
-    this.getOptions().forEach((option) => {
-      option.addEventListener('click', (event) => {
-        const routeId = option.dataset.routeId;
-        const stopId = option.dataset.stopId;
-        // Pointer selections release the onscreen keyboard. Keyboard activation
-        // keeps the combobox focused without firing another search.
-        if (event.detail > 0) this.searchInput?.blur();
-        this.hideDropdown();
-        if (routeId) {
-          this.dispatchEvent(
-            new CustomEvent('searchSelectRoute', {
-              detail: { routeId },
-              bubbles: true
-            })
-          );
-        } else if (stopId) {
-          this.dispatchEvent(
-            new CustomEvent('searchSelectStop', {
-              detail: { stopId, stop: stopById.get(stopId) },
-              bubbles: true
-            })
-          );
-        }
+    this.results
+      ?.querySelectorAll<HTMLElement>('[role="option"]')
+      .forEach((option) => {
+        option.addEventListener('click', (event) => {
+          const routeId = option.dataset.routeId;
+          const stopId = option.dataset.stopId;
+          // Pointer selections release the onscreen keyboard. Keyboard activation
+          // keeps the combobox focused without firing another search.
+          if (event.detail > 0) this.searchInput?.blur();
+          this.hideDropdown();
+          if (routeId) {
+            this.dispatchEvent(
+              new CustomEvent('searchSelectRoute', {
+                detail: { routeId },
+                bubbles: true
+              })
+            );
+          } else if (stopId) {
+            this.dispatchEvent(
+              new CustomEvent('searchSelectStop', {
+                detail: { stopId, stop: stopById.get(stopId) },
+                bubbles: true
+              })
+            );
+          }
+        });
       });
-    });
   }
 
   private getOptions(): HTMLElement[] {
@@ -356,6 +407,7 @@ export class TransitSearch extends HTMLElement {
 
   /** Synchronize navigation without emitting another search or moving focus. */
   setSelection(routeId: string | null): void {
+    this.preferredType = 'All';
     if (this.searchInput) this.searchInput.value = routeId ?? '';
     this.clearBtn?.classList.toggle('is-visible', !!routeId);
     this.hideDropdown();
@@ -429,9 +481,10 @@ export class TransitSearch extends HTMLElement {
     });
     this.querySelectorAll<HTMLButtonElement>('[data-search-type]').forEach(
       (button) => {
-        button.addEventListener('click', () =>
-          this.filterResults(button.dataset.searchType!)
-        );
+        button.addEventListener('click', () => {
+          this.preferredType = button.dataset.searchType!;
+          this.filterResults(this.preferredType);
+        });
         button.addEventListener('keydown', (event) => {
           if (event.key === 'Escape') {
             this.searchInput?.focus();

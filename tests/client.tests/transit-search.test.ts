@@ -204,6 +204,33 @@ describe('transit search feedback and keyboard navigation', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
+  test('refining a scoped search preserves the scope and prioritizes an exact stop number on return to All', async () => {
+    mockFetch.mockResolvedValue(mixedResponse());
+    await search('Forbes');
+    component
+      .querySelector<HTMLButtonElement>('[data-search-type="Stops"]')!
+      .click();
+    await search('123');
+    expect(
+      component
+        .querySelector('[data-search-type="Stops"]')
+        ?.getAttribute('aria-pressed')
+    ).toBe('true');
+    component
+      .querySelector<HTMLButtonElement>('[data-search-type="All"]')!
+      .click();
+    expect(
+      component.querySelector('[role="option"]')?.getAttribute('data-stop-id')
+    ).toBe('123');
+    expect(
+      component.querySelector('[data-stop-id="123"] mark')?.textContent
+    ).toBe('123');
+    const select = jest.fn();
+    component.addEventListener('searchSelectRoute', select);
+    component.querySelector<HTMLElement>('[data-route-id="61D"]')!.click();
+    expect(select).toHaveBeenCalledTimes(1);
+  });
+
   test('can show all options again and omits filters for a single category', async () => {
     mockFetch
       .mockResolvedValueOnce(mixedResponse())
