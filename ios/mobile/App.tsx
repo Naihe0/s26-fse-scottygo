@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Linking,
   Pressable,
   StatusBar,
@@ -11,6 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
+import { ContentRecovery } from './contentRecovery';
 import {
   APP_URL,
   isAppURL,
@@ -24,6 +26,21 @@ export default function App() {
   const [source, setSource] = useState({ uri: APP_URL });
   const [failure, setFailure] = useState<string | null>(null);
   const requestedPage = useRef(APP_URL);
+  const recovery = useRef(new ContentRecovery());
+  const webView = useRef<WebView<object>>(null);
+
+  const recover = useCallback((action: ReturnType<ContentRecovery['resume']>) => {
+    if (action === 'restore') webView.current?.reload();
+    if (action === 'offer-retry')
+      setFailure('The page closed again. Tap below to reopen it.');
+  }, []);
+
+  useEffect(() => {
+    const listener = AppState.addEventListener('change', state => {
+      if (state === 'active') recover(recovery.current.resume(Date.now()));
+    });
+    return () => listener.remove();
+  }, [recover]);
 
   function retry() {
     setSource({ uri: requestedPage.current });
@@ -35,8 +52,9 @@ export default function App() {
       <SafeAreaView style={styles.screen}>
         <StatusBar barStyle="dark-content" />
         {failure === null ? (
-          <WebView
+          <WebView<object>
             testID="scottygo-web"
+            ref={webView}
             source={source}
             // Route every scheme through our policy. Otherwise the WebView
             // opens out-of-whitelist URLs directly in an external app.
@@ -83,8 +101,11 @@ export default function App() {
                 );
               }
             }}
+            onNavigationStateChange={({ url }) => {
+              if (isAppURL(url)) requestedPage.current = url;
+            }}
             onContentProcessDidTerminate={() =>
-              setFailure('The web page closed unexpectedly.')
+              recover(recovery.current.terminated(AppState.currentState === 'active', Date.now()))
             }
             allowsBackForwardNavigationGestures
             javaScriptCanOpenWindowsAutomatically={false}
