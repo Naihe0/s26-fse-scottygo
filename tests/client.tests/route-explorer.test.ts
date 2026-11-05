@@ -156,6 +156,43 @@ test('selecting a stop closes the explorer and calls the configured map action',
   expect(explorer.querySelector('dialog')!.open).toBe(false);
 });
 
+test('switches between stops and buses without losing a typed stop or refetching', async () => {
+  await open();
+  const stops = explorer.querySelector<HTMLButtonElement>(
+    '[data-view="stops"]'
+  )!;
+  const buses = explorer.querySelector<HTMLButtonElement>(
+    '[data-view="buses"]'
+  )!;
+  const stopPanel = document.getElementById(
+    stops.getAttribute('aria-controls')!
+  )!;
+  const busPanel = document.getElementById(
+    buses.getAttribute('aria-controls')!
+  )!;
+  const input = explorer.querySelector('input')!;
+  input.value = 'Zeta';
+  input.dispatchEvent(new Event('input'));
+  expect(stopPanel.hidden).toBe(false);
+  expect(busPanel.hidden).toBe(true);
+  buses.click();
+  expect(buses.getAttribute('aria-selected')).toBe('true');
+  expect(stopPanel.hidden).toBe(true);
+  expect(busPanel.hidden).toBe(false);
+  state.setActiveVehicles([vehicle()]);
+  expect(buses.textContent).toContain('(1)');
+  expect(busPanel.textContent).toContain('Bus 6001 · Inbound');
+  buses.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })
+  );
+  expect(document.activeElement).toBe(stops);
+  expect(stops.tabIndex).toBe(0);
+  expect(buses.tabIndex).toBe(-1);
+  expect(input.value).toBe('Zeta');
+  expect(stopPanel.querySelectorAll('[data-stops] li')).toHaveLength(1);
+  expect(getStops).toHaveBeenCalledTimes(1);
+});
+
 test('nearest boarding stop uses the selected direction and labels straight-line distance', async () => {
   state.updateFilter('plannedLocationLabel', 'CMU Campus');
   await open();
@@ -325,6 +362,7 @@ test('bus rows use reported timestamps, keep delayed buses, and dispatch the sel
   jest.useFakeTimers().setSystemTime(new Date('2026-10-24T12:05:00Z'));
   await open();
   const event = jest.fn();
+  explorer.querySelector<HTMLButtonElement>('[data-view="buses"]')!.click();
   explorer.addEventListener('selectBus', event);
   state.setActiveVehicles([
     vehicle(),
@@ -357,6 +395,7 @@ test('full-route overview emits the selected route and dismisses the panel', asy
 
 test('vehicle refresh preserves a focused bus row and uses the current route after reassignment', async () => {
   await open();
+  explorer.querySelector<HTMLButtonElement>('[data-view="buses"]')!.click();
   const listener = jest.fn();
   explorer.addEventListener('selectBus', listener);
   state.setActiveVehicles([vehicle()]);

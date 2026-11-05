@@ -108,16 +108,15 @@ export class RouteExplorer extends HTMLElement {
           <div><p>Explore route</p><h2 id="${this.panelId}-title"></h2></div>
           <button type="button" data-close aria-label="Close route explorer">×</button>
         </header>
+        <div class="route-explorer__views" role="tablist" aria-label="Route details">
+          <button type="button" role="tab" data-view="stops" id="${this.panelId}-stops-tab" aria-controls="${this.panelId}-stops-view" aria-selected="true">Stops</button>
+          <button type="button" role="tab" data-view="buses" id="${this.panelId}-buses-tab" aria-controls="${this.panelId}-buses-view" aria-selected="false" tabindex="-1">Buses <span data-bus-count></span></button>
+        </div>
         <div class="route-explorer__body">
           <button type="button" data-overview class="route-explorer__overview"><span class="material-icons-outlined" aria-hidden="true">zoom_out_map</span>Show full route</button>
-          <label class="route-explorer__field">Browse stop direction<select aria-label="Route direction"></select></label>
-          <p class="route-explorer__note">Choose a direction for stops. Bus visibility follows your map filters.</p>
+          <div role="tabpanel" id="${this.panelId}-stops-view" aria-labelledby="${this.panelId}-stops-tab">
+          <label class="route-explorer__field">Stop direction<select aria-label="Route direction"></select></label>
           <section class="route-explorer__nearest" aria-label="Nearest boarding stop"></section>
-          <section class="route-explorer__vehicles" aria-labelledby="${this.panelId}-buses">
-            <h3 id="${this.panelId}-buses">Buses shown on map <span data-bus-count></span></h3>
-            <p class="route-explorer__note">Tap a bus to find it on the map.</p>
-            <ul data-buses></ul><p data-no-buses class="route-explorer__note">No buses shown for the current map filters.</p>
-          </section>
           <section aria-labelledby="${this.panelId}-stops">
             <h3 id="${this.panelId}-stops">Stops</h3>
             <label class="route-explorer__field route-explorer__search"><span class="route-explorer__sr-only">Search route stops</span><input type="search" placeholder="Find a stop on this route" aria-label="Search route stops" autocomplete="off" /></label>
@@ -126,8 +125,43 @@ export class RouteExplorer extends HTMLElement {
             <button type="button" data-retry hidden>Retry loading stops</button>
             <ul data-stops></ul>
           </section>
+          </div>
+          <div role="tabpanel" id="${this.panelId}-buses-view" aria-labelledby="${this.panelId}-buses-tab" hidden>
+            <section class="route-explorer__vehicles" aria-labelledby="${this.panelId}-buses">
+              <h3 id="${this.panelId}-buses">Buses shown on map</h3>
+              <ul data-buses></ul><p data-no-buses class="route-explorer__note">No buses shown for the current map filters.</p>
+            </section>
+          </div>
         </div>
       </dialog>`;
+    const tabs = [...this.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    const selectTab = (active: HTMLButtonElement) => {
+      for (const tab of tabs) {
+        const selected = tab === active;
+        tab.setAttribute('aria-selected', String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+        this.querySelector<HTMLElement>(
+          `#${tab.getAttribute('aria-controls')}`
+        )!.hidden = !selected;
+      }
+      this.querySelector<HTMLElement>('.route-explorer__body')!.scrollTop = 0;
+    };
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => selectTab(tab));
+      tab.addEventListener('keydown', (event) => {
+        const keys: Record<string, number> = {
+          ArrowLeft: 1 - index,
+          ArrowRight: 1 - index,
+          Home: 0,
+          End: 1
+        };
+        const target = tabs[keys[event.key]];
+        if (!target) return;
+        event.preventDefault();
+        selectTab(target);
+        target.focus();
+      });
+    });
     this.trigger.addEventListener('click', () => this.open());
     this.querySelector('[data-close]')!.addEventListener('click', () =>
       this.close()
@@ -227,8 +261,10 @@ export class RouteExplorer extends HTMLElement {
       this.selectedRoute,
       state.availableRoutes
     );
-    this.renderVehicles(state.activeVehicles);
-    this.renderNearestStop();
+    if (this.querySelector('dialog')!.open) {
+      this.renderVehicles(state.activeVehicles);
+      this.renderNearestStop();
+    }
   }
 
   private cancelRequest(): void {
@@ -436,8 +472,13 @@ export class RouteExplorer extends HTMLElement {
       const timestamp = Number.isFinite(captured.getTime())
         ? `${vehicle.source === 'static' ? 'Cached report' : 'Reported'} ${captured.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}${Date.now() - captured.getTime() > 90_000 ? ' · delayed' : ''}`
         : 'Report time unavailable';
-      item.querySelector('button')!.textContent =
-        `Bus ${vehicle.vid} · ${timestamp}${vehicle.direction ? '' : ' · direction unavailable'}`;
+      const direction = vehicle.direction
+        ? vehicle.direction.charAt(0).toUpperCase() +
+          vehicle.direction.slice(1).toLowerCase()
+        : 'Direction unavailable';
+      const label = `Bus ${vehicle.vid} · ${direction} · ${timestamp}`;
+      const button = item.querySelector('button')!;
+      if (button.textContent !== label) button.textContent = label;
       if (list.children[index] !== item)
         list.insertBefore(item, list.children[index] ?? null);
       previous.delete(vehicle.vid);

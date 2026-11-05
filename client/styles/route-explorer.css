@@ -115,6 +115,32 @@ route-explorer[hidden] {
   -webkit-overflow-scrolling: touch;
   padding: 16px 18px max(18px, env(safe-area-inset-bottom, 0px));
 }
+.route-explorer__views {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  margin: 12px 16px 0;
+  padding: 3px;
+  border-radius: 14px;
+  background: #edf1f5;
+}
+.route-explorer__views button {
+  flex: 1;
+  min-height: 44px;
+  border: 0;
+  border-radius: 11px;
+  color: #465366;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.route-explorer__views [aria-selected='true'] {
+  background: white;
+  color: #9c1028;
+  box-shadow: 0 1px 5px #25304426;
+}
 .route-explorer__body section {
   margin-top: 22px;
 }
