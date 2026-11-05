@@ -252,7 +252,7 @@ Only changed conditions publish a new `INotification`; an accepted identical rep
 
 | Method and path | Parameters | Result |
 | --- | --- | --- |
-| `GET /transit/health` | None | Raw live process/feed summary; always 200 for liveness. |
+| `GET /transit/health` | None | Raw live process/feed summary; always 200 for liveness. `revision` is the deployed Git commit on Render, otherwise `null`. |
 | `GET /transit/memory/samples` | `limit` default 120, clamped 1–2,000 | `MemorySamplesRetrieved`: recent samples, newest first. |
 | `GET /transit/memory/summary` | `limit` default 720, clamped 1–5,000 | `MemorySummaryRetrieved`: time range, RSS/heap trends/peaks, warning/critical counts, diagnostic guidance. |
 | `GET /transit/memory/dashboard` | None | HTML diagnostics dashboard. |

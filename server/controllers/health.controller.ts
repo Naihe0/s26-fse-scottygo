@@ -61,7 +61,9 @@ export default class HealthController extends Controller {
 
   // GET /transit/health — always 200; `overall` reports transit readiness.
   private getHealth(_req: Request, res: Response): void {
+    const commit = process.env.RENDER_GIT_COMMIT ?? '';
     const status = {
+      revision: /^[a-f0-9]{40}$/i.test(commit) ? commit : null,
       gtfs: { ready: gtfsService.isLoaded() },
       memory: memoryMonitorService.getSummary(),
       vehiclePositions: feedStatus(vehiclePositionsService),
