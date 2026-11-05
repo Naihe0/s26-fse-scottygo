@@ -2,6 +2,8 @@
 import { MapNavigationCoordinator } from '../../client/scripts/state/map-navigation';
 import { MapStateManager } from '../../client/scripts/state/map-state';
 import { URLSyncManager } from '../../client/scripts/state/url-sync';
+import { RouteSelectorPanel } from '../../client/scripts/components/route-selector';
+import { synchronizeMapFilterControls } from '../../client/scripts/state/map-filter-controls';
 
 const state = MapStateManager.getInstance();
 const sync = URLSyncManager.getInstance();
@@ -107,6 +109,40 @@ describe('map navigation ownership and history', () => {
     expect(window.location.hash).toBe('#/map?r=61B');
     expect(error).not.toHaveBeenCalled();
   });
+
+  test.each([false, true])(
+    'a rider typing during slow rendering keeps their draft unless the committed route changes (%s)',
+    async (routeCleared) => {
+      document.body.replaceChildren();
+      const picker = new RouteSelectorPanel();
+      document.body.append(picker);
+      picker.setRoutes([{ id: '61C', name: 'McKeesport' }]);
+      controls.mockImplementation(() => synchronizeMapFilterControls(state.getState()));
+      const slow = deferred<boolean>();
+      render.mockImplementationOnce(() => slow.promise);
+      try {
+        const pending = coordinator.commit({ selectedRouteId: '61C' });
+        picker.show();
+        const field = picker.querySelector<HTMLInputElement>('input')!;
+        field.focus();
+        field.value = 'McKees';
+        field.dispatchEvent(new Event('input'));
+        if (routeCleared) state.updateFilter('selectedRouteId', null);
+        slow.resolve(true);
+        await pending;
+        expect(picker.isOpen()).toBe(!routeCleared);
+        expect(field.value).toBe(routeCleared ? '' : 'McKees');
+        if (routeCleared) {
+          expect(picker.querySelector('.route-all')?.getAttribute('aria-pressed')).toBe('true');
+        } else {
+          expect(document.activeElement).toBe(field);
+        }
+      } finally {
+        controls.mockReset();
+        document.body.replaceChildren();
+      }
+    }
+  );
 
   test('clear resets every filter, preserves private planned location, and revokes earlier work', async () => {
     state.setPlannedLocation({ lat: 40.4, lng: -79.9 }, 'My local place');

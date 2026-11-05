@@ -51,6 +51,7 @@ export class MapNavigationCoordinator {
     this.dependencies.synchronizeControls();
     if (!this.ready || this.disposed || this.dependencies.directionsActive())
       return;
+    const requestedRoute = this.dependencies.getState().selectedRouteId;
     const session = this.dependencies.directionsSession();
     const token = getToken();
     const isCurrent = () =>
@@ -78,13 +79,15 @@ export class MapNavigationCoordinator {
         canceled
       ]);
       if (!isCurrent()) return;
-      this.dependencies.synchronizeControls();
+      // Loading route metadata can clear a route from a disabled system.
+      // Otherwise a rider may already be typing the next search.
+      const route = this.dependencies.getState().selectedRouteId;
+      if (route !== requestedRoute) this.dependencies.synchronizeControls();
       this.dependencies.writeURL('replace');
       if (!restored) {
         this.dependencies.onError();
         return;
       }
-      const route = this.dependencies.getState().selectedRouteId;
       if (showRouteInfo && route)
         await Promise.race([
           this.dependencies.showRouteInfo(route, isCurrent),
