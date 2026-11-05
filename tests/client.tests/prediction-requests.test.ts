@@ -156,7 +156,12 @@ describe('prediction refresh contents', () => {
         document.querySelectorAll<HTMLButtonElement>('.map-popup__arrival')
       );
     expect(rows()).toHaveLength(8);
-    document.querySelector<HTMLButtonElement>('.arrival-board__more')!.click();
+    const paging = () =>
+      document.querySelector<HTMLButtonElement>('.arrival-board__more')!;
+    paging().focus();
+    await jest.advanceTimersByTimeAsync(30_000);
+    expect(document.activeElement).toBe(paging());
+    paging().click();
     rows()[13].click();
     const route = document.querySelector<HTMLSelectElement>('[data-route]')!;
     route.value = '61A';
@@ -184,13 +189,15 @@ describe('prediction refresh contents', () => {
   test('manual refresh updates the checked time and preserves the Pittsburgh time display', async () => {
     jest.setSystemTime(new Date('2026-11-05T20:00:00Z'));
     mockPredictions.mockResolvedValue([
-      { ...first, predictedArrivalTime: Date.now() + 120_000 }
+      { ...first, predictedArrivalTime: Date.now() + 120_000 },
+      { ...second, predictedArrivalTime: '2026-11-05T21:00:00Z' }
     ]);
     await controller.handleStopClick(stop);
     const stamp = () => document.querySelector('[data-checked]')!.textContent;
     expect(stamp()).toContain('3:00 PM ET');
     document.querySelector<HTMLInputElement>('[data-clock]')!.click();
     expect(document.querySelector('time')!.textContent).toBe('3:02 PM ET');
+    expect(document.querySelectorAll('time')).toHaveLength(1);
     jest.setSystemTime(new Date('2026-11-05T20:01:00Z'));
     document.querySelector<HTMLButtonElement>('[data-refresh]')!.click();
     await jest.advanceTimersByTimeAsync(1);

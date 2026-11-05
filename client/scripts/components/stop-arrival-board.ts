@@ -26,6 +26,7 @@ function validArrivals(rows: IPrediction[]): IPrediction[] {
     (row) =>
       row &&
       typeof row.routeId === 'string' &&
+      typeof row.predictedArrivalTime === 'number' &&
       Number.isFinite(new Date(row.predictedArrivalTime).getTime())
   );
 }
@@ -141,6 +142,9 @@ export class StopArrivalBoard {
   private render(): void {
     const list = this.host.querySelector<HTMLUListElement>('ul')!;
     const focused = document.activeElement;
+    const moreWasFocused =
+      list.contains(focused) &&
+      focused?.classList.contains('arrival-board__more');
     const focusedKey =
       focused instanceof HTMLElement && list.contains(focused)
         ? focused.dataset.key
@@ -171,7 +175,8 @@ export class StopArrivalBoard {
       const more = document.createElement('button');
       more.type = 'button';
       more.className = 'arrival-board__more';
-      more.textContent = `Show ${Math.min(PAGE_SIZE, filtered.length - visible.length)} later arrivals`;
+      const nextCount = Math.min(PAGE_SIZE, filtered.length - visible.length);
+      more.textContent = `Show ${nextCount} later ${nextCount === 1 ? 'arrival' : 'arrivals'}`;
       more.addEventListener('click', () => {
         this.limit += PAGE_SIZE;
         this.render();
@@ -209,6 +214,11 @@ export class StopArrivalBoard {
       );
       (
         rows.find((row) => row.dataset.key === focusedKey) ?? this.directions
+      ).focus({ preventScroll: true });
+    } else if (moreWasFocused) {
+      (
+        list.querySelector<HTMLButtonElement>('.arrival-board__more') ??
+        this.directions
       ).focus({ preventScroll: true });
     }
   }
