@@ -6,7 +6,7 @@ const mockPredictions = jest.fn();
 const mockStartDirections = jest.fn().mockResolvedValue(false);
 jest.mock('../../client/scripts/services/transit-api.service', () => ({
   transitApiService: {
-    getPredictions: (...args: unknown[]) => mockPredictions(...args)
+    getPredictionsResult: (...args: unknown[]) => mockPredictions(...args)
   }
 }));
 jest.mock('../../client/scripts/renderers/route-renderer', () => ({
@@ -65,6 +65,36 @@ describe('prediction refresh contents', () => {
     await jest.advanceTimersByTimeAsync(30000);
     expect(document.querySelectorAll('.map-popup__arrival')).toHaveLength(2);
     expect(document.querySelector('.map-popup__empty')).toBeNull();
+  });
+
+  test('failed refresh keeps the selected bus and displays a last-known time until reconnection', async () => {
+    mockPredictions.mockResolvedValueOnce([first]).mockResolvedValueOnce(null).mockResolvedValue([]);
+    await controller.handleStopClick(stop);
+    document.querySelector<HTMLElement>('.map-popup__arrival')!.click();
+    await jest.advanceTimersByTimeAsync(30000);
+    expect(document.querySelector<HTMLElement>('.arrival-recovery')!.hidden).toBe(false);
+    expect(document.querySelector('.map-popup__arrival')!.getAttribute('aria-pressed')).toBe('true');
+    expect(document.querySelector('.map-popup__minutes')!.textContent).toMatch(/:/);
+    window.dispatchEvent(new Event('online'));
+    await jest.advanceTimersByTimeAsync(1);
+    expect(document.querySelector<HTMLElement>('.arrival-recovery')!.hidden).toBe(true);
+    expect(document.querySelector<HTMLElement>('.map-popup__empty')!.hidden).toBe(false);
+  });
+
+  test('an initial failure offers retry and coalesces a double tap and reconnect', async () => {
+    let finish!: (p: IPrediction[]) => void;
+    mockPredictions.mockResolvedValueOnce(null).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    await controller.handleStopClick(stop);
+    expect(document.querySelector<HTMLElement>('.map-popup__empty')!.hidden).toBe(true);
+    const retry = document.querySelector<HTMLButtonElement>('.arrival-recovery button')!;
+    retry.click();
+    retry.click();
+    window.dispatchEvent(new Event('online'));
+    expect(mockPredictions).toHaveBeenCalledTimes(2);
+    finish([first]);
+    await jest.advanceTimersByTimeAsync(1);
+    expect(document.querySelector('.map-popup__arrival')).not.toBeNull();
+    expect(document.querySelector<HTMLElement>('.arrival-recovery')!.hidden).toBe(true);
   });
 
   test('selected buses remain the same when refreshed arrivals change order', async () => {

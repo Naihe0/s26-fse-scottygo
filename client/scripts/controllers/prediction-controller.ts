@@ -27,6 +27,7 @@ interface StopPopupContext {
   selectedIndices: Set<number>;
   /** Mutable display slice (up to 8, updated on each refresh). */
   displayPredictions: IPrediction[];
+  unavailable: boolean;
 }
 import { MapStateManager } from '../state/map-state';
 import { RouteRenderer } from '../renderers/route-renderer';
@@ -69,7 +70,8 @@ export class PredictionController {
   private minimisedStop: IStop | null = null;
 
   /** Cached predictions for the minimised stop. */
-  private minimisedPredictions: IPrediction[] = [];
+  private minimisedPredictions: IPrediction[] | null = [];
+  private minimisedUnavailable = false;
 
   /** Stop ID of the currently open prediction popup (for live refresh). */
   private openPopupStopId: string | null = null;
@@ -82,6 +84,7 @@ export class PredictionController {
 
   /** Interval handle for 1-second countdown ticker. */
   private predictionTickerInterval: number | null = null;
+  private pollingEvents: AbortController | null = null;
   private requestVersion = 0;
   private stopSelectionPending = false;
   private stopShortcutUnsubscribe: (() => void) | null = null;
@@ -167,7 +170,7 @@ export class PredictionController {
    */
   restoreMinimisedPopup(stop: IStop): boolean {
     if (this.minimisedStop && this.minimisedStop.stopId === stop.stopId) {
-      this.showStopPopup(stop, this.minimisedPredictions);
+      this.showStopPopup(stop, this.minimisedPredictions, this.minimisedUnavailable);
       this.minimisedStop = null;
       return true;
     }
@@ -178,6 +181,8 @@ export class PredictionController {
   stopPolling(): void {
     this.requestVersion++;
     this.stopSelectionPending = false;
+    this.pollingEvents?.abort();
+    this.pollingEvents = null;
     this.stopShortcutUnsubscribe?.();
     this.stopShortcutUnsubscribe = null;
     if (this.predictionPollInterval !== null) {
@@ -198,21 +203,23 @@ export class PredictionController {
 
   private async fetchPredictions(
     stopId: string,
-    routeId?: string
-  ): Promise<IPrediction[]> {
-    return transitApiService.getPredictions(stopId, routeId);
+    routeId?: string,
+    signal?: AbortSignal
+  ): Promise<IPrediction[] | null> {
+    return transitApiService.getPredictionsResult(stopId, routeId, signal);
   }
 
-  private showStopPopup(stop: IStop, predictions: IPrediction[]): void {
+  private showStopPopup(stop: IStop, predictions: IPrediction[] | null, unavailable = predictions === null): void {
     prepareForNewPopup('stop');
     this.stopPolling();
     this.minimisedStop = null;
 
     const ctx: StopPopupContext = {
       stop,
-      predictions,
+      predictions: predictions ?? [],
       selectedIndices: new Set<number>(),
-      displayPredictions: predictions.slice(0, 8)
+      displayPredictions: predictions?.slice(0, 8) ?? [],
+      unavailable
     };
 
     const { popup, subheader } = createMapPopup(
@@ -237,6 +244,10 @@ export class PredictionController {
     }
 
     const directionsBtn = this.buildDirectionsButton();
+    const notice = document.createElement('div');
+    notice.className = 'arrival-recovery';
+    notice.innerHTML = '<span role="status"></span><button type="button">Retry arrivals</button>';
+    popup.appendChild(notice);
     this.buildPredictionListSection(ctx, directionsBtn).forEach((el) =>
       popup.appendChild(el)
     );
@@ -349,6 +360,7 @@ export class PredictionController {
       const empty = document.createElement('p');
       empty.className = 'map-popup__empty';
       empty.textContent = 'No upcoming arrivals';
+      empty.hidden = ctx.unavailable;
       nodes.push(empty);
       return nodes;
     }
@@ -463,40 +475,79 @@ export class PredictionController {
 
   private startPredictionPolling(ctx: StopPopupContext): void {
     this.stopPolling();
+    const popup = document.getElementById(MAP_POPUP_ID);
+    if (!popup) return;
     this.openPopupStopId = ctx.stop.stopId;
     this.openPopupRouteId = this.stateManager.getState().selectedRouteId;
     const version = this.requestVersion;
+    const events = new AbortController();
+    this.pollingEvents = events;
+    const notice = popup.querySelector<HTMLElement>('.arrival-recovery')!;
+    const retry = notice.querySelector('button')!;
+    let fetching = false;
+    const updateNotice = () => {
+      notice.hidden = !ctx.unavailable;
+      const label = ctx.displayPredictions.length
+        ? 'Updates paused. Showing last known arrival times.'
+        : 'Arrival times are unavailable.';
+      const status = notice.querySelector('span')!;
+      if (status.textContent !== label) status.textContent = label;
+      const empty = popup.querySelector<HTMLElement>('.map-popup__empty');
+      if (empty) empty.hidden = ctx.unavailable;
+      this.tickPredictionCountdowns(ctx.unavailable);
+    };
+    updateNotice();
 
     // 1-second countdown ticker
     this.predictionTickerInterval = window.setInterval(() => {
-      if (!document.getElementById(MAP_POPUP_ID)) {
+      if (!popup.isConnected) {
         this.stopPolling();
         return;
       }
-      this.tickPredictionCountdowns();
+      if (!document.hidden && !ctx.unavailable) this.tickPredictionCountdowns(false);
     }, 1000);
 
     // 30-second full refresh from server
-    this.predictionPollInterval = window.setInterval(async () => {
-      if (!document.getElementById(MAP_POPUP_ID)) {
+    const refresh = async () => {
+      if (!popup.isConnected) {
         this.stopPolling();
         return;
       }
+      if (version !== this.requestVersion || fetching || document.hidden) return;
+      if (navigator.onLine === false) {
+        ctx.unavailable = true;
+        updateNotice();
+        return;
+      }
+      fetching = true;
+      retry.disabled = true;
       try {
         const fresh = await this.fetchPredictions(
           ctx.stop.stopId,
-          this.openPopupRouteId ?? undefined
+          this.openPopupRouteId ?? undefined,
+          events.signal
         );
-        if (version !== this.requestVersion) return;
-        this.refreshPredictionList(fresh.slice(0, 8), ctx);
-      } catch (error) {
-        if (version === this.requestVersion)
-          console.warn('Could not refresh stop predictions:', error);
+        if (version !== this.requestVersion || !popup.isConnected) return;
+        ctx.unavailable = fresh === null || !navigator.onLine;
+        if (!ctx.unavailable && fresh) this.refreshPredictionList(fresh.slice(0, 8), ctx);
+        updateNotice();
+      } finally {
+        fetching = false;
+        retry.disabled = false;
       }
-    }, 30_000);
+    };
+    retry.disabled = false;
+    retry.addEventListener('click', refresh, { signal: events.signal });
+    window.addEventListener('online', refresh, { signal: events.signal });
+    window.addEventListener('offline', () => {
+      ctx.unavailable = true;
+      updateNotice();
+    }, { signal: events.signal });
+    document.addEventListener('visibilitychange', refresh, { signal: events.signal });
+    this.predictionPollInterval = window.setInterval(refresh, 30_000);
   }
 
-  private tickPredictionCountdowns(): void {
+  private tickPredictionCountdowns(unavailable: boolean): void {
     const popup = document.getElementById(MAP_POPUP_ID);
     if (!popup) return;
     const items = popup.querySelectorAll<HTMLElement>('.map-popup__arrival');
@@ -504,7 +555,9 @@ export class PredictionController {
       const arrival = Number(li.dataset.arrival);
       if (!arrival) return;
       const minsEl = li.querySelector('.map-popup__minutes');
-      if (minsEl) minsEl.textContent = this.formatCountdown(arrival);
+      if (minsEl) minsEl.textContent = unavailable
+        ? new Date(arrival).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+        : this.formatCountdown(arrival);
     });
   }
 
@@ -569,6 +622,7 @@ export class PredictionController {
     minBtn.addEventListener('click', () => {
       this.minimisedStop = ctx.stop;
       this.minimisedPredictions = ctx.predictions;
+      this.minimisedUnavailable = ctx.unavailable;
       this.stopPolling();
       minimizePopup(
         'stop',

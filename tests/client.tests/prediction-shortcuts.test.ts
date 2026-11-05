@@ -14,7 +14,7 @@ import type { IStop, IPrediction } from '../../common/transit.interface';
 const mockPredictions = jest.fn();
 jest.mock('../../client/scripts/services/transit-api.service', () => ({
   transitApiService: {
-    getPredictions: (...args: unknown[]) => mockPredictions(...args)
+    getPredictionsResult: (...args: unknown[]) => mockPredictions(...args)
   }
 }));
 jest.mock('../../client/scripts/renderers/route-renderer', () => ({

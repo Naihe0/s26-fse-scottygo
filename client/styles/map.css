@@ -1113,6 +1113,29 @@ input:checked + .slider:before {
 
 /* ── Stop-specific content ─── */
 
+.arrival-recovery:not([hidden]) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 4px 0;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: #fff4d9;
+  color: #62440a;
+  font-size: .875rem;
+}
+.arrival-recovery button {
+  flex-shrink: 0;
+  min-height: 44px;
+  background: none;
+  color: inherit;
+  border: 0;
+  text-decoration: underline;
+  font: inherit;
+  cursor: pointer;
+}
+
 .map-popup__empty {
   text-align: center;
   color: #9ca3af;
