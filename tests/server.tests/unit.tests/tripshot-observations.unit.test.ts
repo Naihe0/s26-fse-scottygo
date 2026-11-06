@@ -42,6 +42,45 @@ beforeEach(() => {
   fetchMock = jest.spyOn(globalThis, 'fetch');
   service = new TripShotLiveStatusService();
 });
+
+test('a shuttle returning to one platform keeps separate visit identities when estimates move', async () => {
+  const feed = (delta: number) =>
+    ({
+      ok: true,
+      json: async () => ({
+        vehicleStatuses: [status()],
+        rides: [
+          {
+            rideId: 'loop-run',
+            routeId: 'route-id',
+            vehicleId: 'bus-id',
+            state: { Active: {} },
+            scheduledStart: new Date(now).toISOString(),
+            scheduledEnd: new Date(now + 3600000).toISOString(),
+            stopStatus: [0, 2].map((i) => ({
+              Awaiting: {
+                stopId: 'platform',
+                viaIdx: i,
+                expectedArrivalTime: new Date(
+                  now + 60000 + i * 120000 + delta
+                ).toISOString()
+              }
+            }))
+          }
+        ]
+      })
+    }) as unknown as Response;
+  fetchMock.mockResolvedValueOnce(feed(0)).mockResolvedValueOnce(feed(15000));
+  service.start();
+  await jest.advanceTimersByTimeAsync(0);
+  const keys = service.getPredictions('platform').map((p) => p.occurrenceId);
+  expect(keys.every(Boolean)).toBe(true);
+  expect(new Set(keys).size).toBe(2);
+  await jest.advanceTimersByTimeAsync(15000);
+  expect(service.getPredictions('platform').map((p) => p.occurrenceId)).toEqual(
+    keys
+  );
+});
 afterEach(() => {
   service.stop();
   expect(jest.getTimerCount()).toBe(0);

@@ -43,6 +43,19 @@ function decodePredictions(
         stopId: update.stopId,
         routeId,
         vid,
+        ...(tripUpdate.trip.tripId &&
+        Object.prototype.hasOwnProperty.call(update, 'stopSequence') &&
+        Number.isInteger(update.stopSequence)
+          ? {
+              occurrenceId: JSON.stringify([
+                'prt',
+                tripUpdate.trip.tripId,
+                tripUpdate.trip.startDate || '',
+                tripUpdate.trip.startTime || '',
+                update.stopSequence
+              ])
+            }
+          : {}),
         predictedArrivalTime: arrivalSec * 1000,
         isDelayed: false, // GTFS-RT has no simple delay flag.
         minutes: Math.round((arrivalSec - nowSec) / 60)

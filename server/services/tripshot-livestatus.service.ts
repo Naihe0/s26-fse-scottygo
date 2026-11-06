@@ -141,6 +141,9 @@ function buildPrediction(
     stopId: stop.stopId,
     routeId: ride.routeId,
     vid,
+    ...(ride.rideId && Number.isInteger(stop.viaIdx) && stop.viaIdx >= 0
+      ? { occurrenceId: JSON.stringify(['cmu', ride.rideId, stop.viaIdx]) }
+      : {}),
     predictedArrivalTime: eta,
     isDelayed: false, // TripShot does not expose a delay flag.
     minutes: Math.max(0, Math.round((eta - now) / 60_000))

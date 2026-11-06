@@ -42,6 +42,8 @@ export interface IStop {
 export interface IPrediction {
   stopId: string;
   routeId: string;
+  /** Provider trip and stop visit; stays the same when that visit's ETA changes. */
+  occurrenceId?: string;
   vid?: string;
   predictedArrivalTime: number;
   isDelayed: boolean;

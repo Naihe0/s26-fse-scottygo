@@ -189,7 +189,7 @@ The authoritative TypeScript definitions are in `common/transit.interface.ts`.
 | `IPattern` | `direction`, ordered `path: {lat, lng}[]`, optional exact `shapeId`. |
 | `IStop` | `stopId`, `stopName`, `lat`, `lon`, optional `routes[]`, added/removed detour references `dtradd[]`, `dtrrem[]`. |
 | `IVehicle` | `vid`, `routeId`, `lat`, `lon`, `source: "live" \| "static"`, `lastUpdate`, `isDetoured`; optional `heading` (compass degrees), `speed` (m/s), `delay`, `tripId`, `shapeId`, `direction`, `currentStatus`, `currentStopSequence`, `currentStopId`. |
-| `IPrediction` | `stopId`, `routeId`, optional `vid`, `predictedArrivalTime` (Unix milliseconds), `minutes`, `isDelayed`. |
+| `IPrediction` | `stopId`, `routeId`, optional `vid`, `predictedArrivalTime` (Unix milliseconds), `minutes`, `isDelayed`. Optional opaque `occurrenceId` identifies this visit on a trip when the provider supplies its identity. A vehicle can visit one platform more than once. |
 | `IDetour` | `id`, `description`, `startdt`, `enddt`, optional `routeIds[]`, `geometry[]`; each geometry has `detourId`, `direction`, `detourPath[]`, optional `originalPath[]`, using `{lat, lng}`. |
 | `IRouteSchedule` | `routeId`, `routeName`, `system`, `operatingDays[]`, `directions[]` with `direction`, `firstTrip`, `lastTrip`, optional `headsign`; plus `alerts[]`, `detours[]`. |
 

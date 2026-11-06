@@ -168,7 +168,15 @@ test('PRT arrival lookups recalculate minutes and remove departures that passed 
         id: 'trip-1',
         tripUpdate: {
           trip: { tripId: 'trip-1', routeId: '61C' },
-          stopTimeUpdate: [{ stopId: '1', arrival: { time: arrivalTime } }]
+          stopTimeUpdate: [
+            { stopId: '1', stopSequence: 8, arrival: { time: arrivalTime } },
+            {
+              stopId: '1',
+              stopSequence: 15,
+              arrival: { time: arrivalTime + 30 }
+            },
+            { stopId: '2', arrival: { time: arrivalTime } }
+          ]
         }
       }
     ]
@@ -180,9 +188,13 @@ test('PRT arrival lookups recalculate minutes and remove departures that passed 
     await jest.advanceTimersByTimeAsync(0);
     service.stop();
     expect(service.getPredictions('1')[0].minutes).toBe(2);
+    const visits = service.getPredictions('1').map((p) => p.occurrenceId);
+    expect(visits.every(Boolean)).toBe(true);
+    expect(new Set(visits).size).toBe(2);
+    expect(service.getPredictions('2')[0].occurrenceId).toBeUndefined();
     await jest.advanceTimersByTimeAsync(60_000);
     expect(service.getPredictions('1')[0].minutes).toBe(1);
-    await jest.advanceTimersByTimeAsync(60_001);
+    await jest.advanceTimersByTimeAsync(90_001);
     expect(service.getPredictions('1')).toEqual([]);
   } finally {
     service.stop();
