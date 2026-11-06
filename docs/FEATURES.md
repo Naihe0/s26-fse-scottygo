@@ -428,7 +428,7 @@ This is a new ten-round series beyond e06755c. Every round first runs the comple
 
 The same round repaired a confirmed live search failure: the deployed Google project rejected the legacy autocomplete interface. The picker now uses [Places API (New)](https://developers.google.com/maps/documentation/javascript/legacy/places-migration-autocomplete), with loading/error feedback, keyboard selection and stale-response cancellation. Candidate checks using the actual production key selected Carnegie Library of Pittsburgh — Main (Oakland), verified the proposed label before saving, and verified the stored coordinates in phone WebKit and desktop Chrome.
 
-R1 evidence: `private/rider-rehearsals/flow-01-before-2026-11-06T03-43-26-931Z/results.json` and `private/rider-rehearsals/flow-01-accept-2026-11-06T04-09-06-757Z/results.json`. The first after-gate found and drove the result-button click fix; the complete rerun above passed. Browser and controlled assertion coverage remain separate from the eight physical-iPhone checks listed as pending in the evidence.
+R1 accepted product candidate: `03d5075ca7b810342d1978141127ce9432fa6a72`. Evidence: `private/rider-rehearsals/flow-01-before-2026-11-06T03-43-26-931Z/results.json` and `private/rider-rehearsals/flow-01-accept-2026-11-06T04-09-06-757Z/results.json`. The first after-gate found and drove the result-button click fix; the complete rerun above passed. Browser and controlled assertion coverage remain separate from the eight physical-iPhone checks listed as pending in the evidence.
 
 ![My places lets a rider name a place and change its location in the same flow.](wireframes/current/my-places-location-phone.png)
 
