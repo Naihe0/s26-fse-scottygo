@@ -2568,3 +2568,12 @@ location-search {
     bottom: calc(96px + env(safe-area-inset-bottom, 0px));
   }
 }
+
+.bus-popup__route-name { margin: 0 0 5px; color: #53637a; font-size: 13px; overflow-wrap: anywhere; }
+.bus-popup__route-name[hidden], .bus-popup__next-stop[hidden] { display: none; }
+.bus-popup__next-stop[href], .bus-popup__route-link {
+  display: flex; align-items: center; min-height: 44px; color: #8a1934;
+  font-weight: 600; font-size: 13px; line-height: 1.4; text-underline-offset: 3px;
+}
+.bus-popup__units { display: flex; justify-content: space-between; align-items: center; min-height: 44px; gap: 8px; }
+.bus-popup__units select { min-height: 44px; font: inherit; font-size: 16px; border: 1px solid #b4c1cf; border-radius: 8px; background: #fff; color: #17283c; }

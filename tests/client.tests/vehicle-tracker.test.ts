@@ -703,6 +703,16 @@ describe('live vehicle freshness and polling lifecycle', () => {
     expect(details.querySelector('.bus-reported-speed')?.textContent).toBe(
       '11.2 mph'
     );
+    tracker.updateUserLocation({lat:bus.lat,lng:bus.lon});
+    const unit = details.querySelector<HTMLSelectElement>('[aria-label="Bus speed unit"]')!;
+    unit.value = 'km/h';
+    unit.dispatchEvent(new Event('change'));
+    expect(details.querySelector('.bus-reported-speed')?.textContent).toBe('18.0 km/h');
+    // The animation fixture is north of this reported point. GPS distance uses the measurement.
+    expect(details.querySelector('.bus-relative-distance')?.textContent).toBe('0 m · straight line to reported position');
+    expect(document.querySelector('.bus-popup__next-stop')?.getAttribute('href')).toBe('/#/map?stop=123');
+    unit.value = 'mph';
+    unit.dispatchEvent(new Event('change'));
     expect(details.textContent).toContain('PRT live GPS');
     expect(
       details.querySelector('.bus-position-explanation')?.textContent

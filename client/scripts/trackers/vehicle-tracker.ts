@@ -36,6 +36,8 @@ import { getRouteTitle } from '../utils/route-display';
 import { showToast } from '../utils/toast';
 import { getToken } from '../services/session';
 import { haversineMeters, METERS_PER_MILE } from '../../../common/geo';
+import { publicStopPath } from '../utils/public-stop-path';
+import { routeMapUrl } from '../utils/alert-content';
 
 // Read the shared server cache frequently; this does not poll the agency per rider.
 const POLL_MS = 5_000;
@@ -46,6 +48,13 @@ const MAX_RETAINED_AGE_MS = 15 * 60_000;
 const MAX_CLOCK_SKEW_MS = 30_000;
 /** Riders must be this close to a bus to report on it (checked again server-side). */
 const REPORT_PROXIMITY_MILES = 0.5;
+const gpsClock = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  hour: 'numeric',
+  minute: '2-digit',
+  second: '2-digit',
+  timeZoneName: 'short'
+});
 
 export class VehicleTracker {
   private static instance: VehicleTracker;
@@ -53,6 +62,8 @@ export class VehicleTracker {
   private stateManager: MapStateManager;
   private isAdminProximityBypass = false;
   private userLocation: { lat: number; lng: number } | null = null;
+  private readonly routeStops = new Map<string, IStop[]>();
+  private speedUnit: 'mph' | 'km/h' = 'mph';
 
   private pollingInterval: number | null = null;
   private pollingGeneration = 0;
@@ -208,6 +219,7 @@ export class VehicleTracker {
     patterns: IPattern[],
     stops: IStop[]
   ): void {
+    this.routeStops.set(routeId, stops);
     this.motion.setRouteGeometry(routeId, patterns, stops);
   }
 
@@ -1017,16 +1029,18 @@ export class VehicleTracker {
       `Bus ${vehicle.vid}`
     );
     subheader.textContent = this.getRouteSubheaderText(vehicle.routeId);
+    const routeName = document.createElement('p');
+    routeName.className = 'bus-popup__route-name';
 
     // Keep the default card short; native disclosure retains keyboard access.
     const content = document.createElement('div');
     content.className = 'bus-popup__content';
     const positionState = document.createElement('p');
     positionState.className = 'bus-position-state';
-    const nextStop = document.createElement('p');
+    const nextStop = document.createElement('a');
     nextStop.className = 'bus-popup__next-stop';
     nextStop.hidden = true;
-    content.append(positionState, nextStop);
+    content.append(routeName, positionState, nextStop);
 
     const more = document.createElement('details');
     more.className = 'bus-popup__more';
@@ -1040,6 +1054,18 @@ export class VehicleTracker {
     this.addDetailRow(details, 'Status', '', 'bus-reported-status');
     this.addDetailRow(details, 'Speed', '', 'bus-reported-speed');
     this.addDetailRow(details, 'Stop', '', 'bus-reported-stop');
+    this.addDetailRow(details, 'GPS time', '', 'bus-gps-clock');
+    this.addDetailRow(details, 'Distance', '', 'bus-relative-distance');
+    const units = document.createElement('label');
+    units.className = 'bus-popup__units';
+    units.textContent = 'Speed unit ';
+    const unit = document.createElement('select');
+    unit.setAttribute('aria-label', 'Bus speed unit');
+    unit.innerHTML =
+      '<option value="mph">mph</option><option value="km/h">km/h</option>';
+    unit.value = this.speedUnit;
+    units.append(unit);
+    details.append(units);
     this.addDetailRow(
       details,
       'Source',
@@ -1063,6 +1089,11 @@ export class VehicleTracker {
     }
 
     more.append(summary, explanation, details);
+    const routeLink = document.createElement('a');
+    routeLink.className = 'bus-popup__route-link';
+    routeLink.textContent = 'View this route and its stops';
+    routeLink.href = routeMapUrl(vehicle.routeId);
+    more.append(routeLink);
     content.append(more);
     popup.append(content);
 
@@ -1252,6 +1283,13 @@ export class VehicleTracker {
     vid: string,
     vehicle: IVehicle
   ): void {
+    const units = popup.querySelector<HTMLSelectElement>('.bus-popup__units select');
+    if (units) units.value = this.speedUnit;
+    units?.addEventListener('change', (event) => {
+        this.speedUnit =
+          (event.target as HTMLSelectElement).value === 'km/h' ? 'km/h' : 'mph';
+        this.refreshOpenPopupUpdatedTime();
+    });
     const more = popup.querySelector<HTMLDetailsElement>('.bus-popup__more');
     more?.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || !more.open) return;
@@ -1439,6 +1477,38 @@ export class VehicleTracker {
     if (!vehicle) return;
 
     const fresh = this.isFresh(vehicle);
+    const route = this.stateManager
+      .getState()
+      .availableRoutes?.find((item) => item.id === vehicle.routeId);
+    const direction = (
+      { INBOUND: 'Inbound', OUTBOUND: 'Outbound' } as Record<string, string>
+    )[vehicle.direction ?? ''];
+    const subheader = popup.querySelector('.map-popup__subheader');
+    if (subheader)
+      subheader.textContent = [
+        this.getRouteSubheaderText(vehicle.routeId),
+        direction
+      ]
+        .filter(Boolean)
+        .join(' · ');
+    const routeName = popup.querySelector<HTMLElement>(
+      '.bus-popup__route-name'
+    );
+    if (routeName) {
+      const name = route?.name;
+      routeName.hidden =
+        !name ||
+        name === vehicle.routeId ||
+        name === this.getRouteSubheaderText(vehicle.routeId);
+      routeName.textContent = name ?? '';
+    }
+    const reportedStop = this.routeStops
+      .get(vehicle.routeId)
+      ?.find((stop) => stop.stopId === vehicle.currentStopId);
+    const routeLink = popup.querySelector<HTMLAnchorElement>(
+      '.bus-popup__route-link'
+    );
+    if (routeLink) routeLink.href = routeMapUrl(vehicle.routeId);
     const estimated = this.displayedStatuses.get(vehicle.vid) === 'estimated';
     const motionState = this.displayedMotionStates.get(vehicle.vid);
     const positionKind = estimated
@@ -1480,7 +1550,9 @@ export class VehicleTracker {
       if (estimated && !fresh)
         explanation.textContent += ' Reporting needs a fresher GPS update.';
     }
-    const nextStop = popup.querySelector<HTMLElement>('.bus-popup__next-stop');
+    const nextStop = popup.querySelector<HTMLAnchorElement>(
+      '.bus-popup__next-stop'
+    );
     if (nextStop) {
       nextStop.hidden = !vehicle.currentStopId;
       const prefix =
@@ -1492,8 +1564,12 @@ export class VehicleTracker {
               ? 'Next stop'
               : 'Reported stop';
       nextStop.textContent = vehicle.currentStopId
-        ? `${prefix} #${vehicle.currentStopId}`
+        ? `${prefix} #${vehicle.currentStopId}${reportedStop ? ' · ' + reportedStop.stopName : ''}`
         : '';
+      const link = publicStopPath(vehicle.currentStopId ?? '');
+      if (link) nextStop.href = link;
+      else nextStop.removeAttribute('href');
+      nextStop.title = 'Open the reported platform on the map';
     }
     const report = popup.querySelector<HTMLButtonElement>(
       '.map-popup__action-btn--report'
@@ -1508,17 +1584,38 @@ export class VehicleTracker {
     if (dot) dot.hidden = !fresh;
     const statusRow = popup.querySelector('.map-popup__value--live');
     statusRow?.classList.toggle('bus-position-delayed', !fresh);
+    const distance = this.userLocation
+      ? haversineMeters(this.userLocation, {
+          lat: vehicle.lat,
+          lng: vehicle.lon
+        })
+      : null;
+    const distanceLabel =
+      distance === null
+        ? ''
+        : distance < 1000
+          ? `${Math.round(distance / 10) * 10} m`
+          : `${(distance / 1000).toFixed(1)} km`;
+    const sourceTime = this.sourceTime(vehicle);
     const reportedValues: Record<string, string> = {
       '.bus-reported-status': vehicle.currentStatus
         ? this.formatStatus(vehicle.currentStatus)
         : 'Not reported',
       '.bus-reported-speed':
-        typeof vehicle.speed === 'number' && Number.isFinite(vehicle.speed)
-          ? `${(vehicle.speed * 2.23694).toFixed(1)} mph`
+        typeof vehicle.speed === 'number' &&
+        Number.isFinite(vehicle.speed) &&
+        vehicle.speed >= 0
+          ? `${(vehicle.speed * (this.speedUnit === 'mph' ? 2.23694 : 3.6)).toFixed(1)} ${this.speedUnit}`
           : 'Not reported',
       '.bus-reported-stop': vehicle.currentStopId
         ? `#${vehicle.currentStopId}`
-        : 'Not reported'
+        : 'Not reported',
+      '.bus-gps-clock':
+        sourceTime === null ? 'Not reported' : gpsClock.format(sourceTime),
+      '.bus-relative-distance':
+        distance !== null
+          ? `${distanceLabel} · straight line to ${fresh ? 'reported position' : 'last reported position'}`
+          : 'Enable location to compare'
     };
     for (const [selector, value] of Object.entries(reportedValues)) {
       const node = popup.querySelector(selector);

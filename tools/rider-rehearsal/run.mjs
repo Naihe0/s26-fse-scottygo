@@ -270,6 +270,10 @@ try {
     await page.locator('.stop-arrival-board').waitFor();
   });
   await step('UC12 Walk to stop and exit', async () => {
+    await page.locator('#map-popup .stop-arrival-board [data-key]').first().click();
+    fixture.events.arrivalUnavailable = true;
+    await click('#map-popup [data-refresh]');
+    await page.locator('.arrival-recovery').filter({hasText:/paused/i}).waitFor();
     await click('#map-popup [data-directions-label]');
     await page
       .locator('#directions-panel .directions-panel__duration')
@@ -277,11 +281,14 @@ try {
     assert.match(await page.locator('.directions-panel__distance').innerText(), /210 m/);
     await click('[data-walk-action="steps"]');
     assert.match(await page.locator('#walk-details ol').innerText(), /Turn toward the platform/);
+    assert.match(await page.locator('.directions-panel__bus-list').innerText(),/ET · last known/);
+    assert.equal(await page.locator('.directions-panel__connection').count(),0);
     await click('[data-walk-action="compact"]');
     assert.equal(await page.locator('#walk-details').isVisible(), false);
     await click('[data-walk-action="compact"]');
     await click('.directions-panel__close');
     await page.locator('#directions-panel').waitFor({ state: 'hidden' });
+    fixture.events.arrivalUnavailable = false;
   });
   await step('UC08 Nearby stops and arrivals', async () => {
     await click('.nearby-stops__launch');
@@ -331,6 +338,24 @@ try {
     await explorer.getByLabel('Order buses').selectOption('near');
     assert.match(await explorer.locator('[data-buses] li').first().innerText(), /4100[\s\S]*from start/);
     await explorer.locator('[data-buses] button').first().click();
+    const busCard = page.locator('#map-popup');
+    assert.match(await busCard.locator('.map-popup__subheader').innerText(),/Inbound/);
+    assert.match(await busCard.locator('.bus-popup__route-name').innerText(),/McKeesport/);
+    const next = busCard.locator('.bus-popup__next-stop');
+    assert.match(await next.innerText(), /Next stop #7117.*Forbes/);
+    assert.equal(new URL(await next.getAttribute('href'),origin).hash,'#/map?stop=7117');
+    await busCard.locator('summary').click();
+    await busCard.getByLabel('Bus speed unit').selectOption('km/h');
+    assert.match(await busCard.locator('.bus-reported-speed').innerText(),/7\.2 km\/h/);
+    assert.match(await busCard.locator('.bus-gps-clock').innerText(),/E[DS]T/);
+    assert.match(await busCard.locator('.bus-relative-distance').innerText(),/m · straight line to reported position/);
+    await busCard.getByRole('button',{name:'Minimize'}).click();
+    await click('.map-popup-tab[data-type="bus"]');
+    assert.equal(await busCard.getByLabel('Bus speed unit').inputValue(),'km/h');
+    await busCard.getByLabel('Bus speed unit').selectOption('mph');
+    assert.match(await busCard.locator('.bus-reported-speed').innerText(),/4\.5 mph/);
+    assert.match(await busCard.locator('.bus-popup__route-link').getAttribute('href'),/r=61C/);
+    await busCard.locator('summary').click();
     const follow = page.locator('.map-popup__action-btn--follow');
     await follow.click();
     assert.equal(await follow.getAttribute('aria-pressed'), 'true');
@@ -356,6 +381,8 @@ try {
         .waitFor({ state: 'hidden' });
       assert.equal(fixture.events.reports.length, 1);
       assert.equal(fixture.events.reports[0].crowdedness, 'Standing Room');
+      await click('.bus-popup__next-stop');
+      await page.locator('.stop-arrival-board').waitFor();
     }
   );
   await step('UC17 Read and dismiss a foreground notification', async () => {

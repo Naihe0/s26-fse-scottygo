@@ -47,7 +47,7 @@ export function apiFixture() {
   const now = Date.now();
   const iso = minutes => new Date(now + minutes * 60_000).toISOString();
   const subscriptions = new Set(['61C']);
-  const events = { reports: [], checks: 0 };
+  const events = { reports: [], checks: 0, arrivalUnavailable:false };
   const response = (name, payload, status = 200) => ({
     status,
     json: { name, payload }
@@ -120,7 +120,7 @@ export function apiFixture() {
       );
     if (p.endsWith('/predictions')) {
       events.checks++;
-      return response(
+      const result = response(
         'PredictionsRetrieved',
         [3, 8, 15].map((minutes) => ({
           minutes,
@@ -131,6 +131,8 @@ export function apiFixture() {
           isDelayed: false
         }))
       );
+      result.json.metadata = {state:events.arrivalUnavailable ? 'unavailable' : 'ready'};
+      return result;
     }
     if (p.endsWith('/nearbystops'))
       return response('NearbyStopsRetrieved', {
