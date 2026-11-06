@@ -1164,6 +1164,7 @@ function startDirectionsBusTicker(): void {
     panel
       .querySelectorAll<HTMLElement>('.directions-panel__bus')
       .forEach((li) => {
+        if (li.dataset.current === 'false') return;
         const arrival = Number(li.dataset.arrival);
         if (!arrival) return;
         const timeEl = li.querySelector('.directions-panel__bus-time');
@@ -1174,6 +1175,7 @@ function startDirectionsBusTicker(): void {
 
 function formatArrivalCountdown(predictedArrivalTime: number): string {
   const secsLeft = Math.round((predictedArrivalTime - Date.now()) / 1000);
+  if (secsLeft < -60) return 'Estimate passed';
   if (secsLeft <= 0) return 'NOW';
   if (secsLeft < 60) return `${secsLeft}s`;
   return `${Math.ceil(secsLeft / 60)} min`;
@@ -1186,10 +1188,11 @@ function getRouteBadgeColor(routeId: string): string {
 }
 
 /** Feed-supplied route and vehicle IDs are rendered as text, never markup. */
-function createArrivalItem(prediction: IPrediction, walkArrival: number): HTMLLIElement {
+function createArrivalItem(prediction: IPrediction, walkArrival: number, available: boolean): HTMLLIElement {
   const item = document.createElement('li');
   item.className = 'directions-panel__bus';
   item.dataset.arrival = String(prediction.predictedArrivalTime);
+  item.dataset.current = String(available);
 
   const badge = document.createElement('span');
   badge.className = 'directions-panel__bus-badge';
@@ -1198,7 +1201,8 @@ function createArrivalItem(prediction: IPrediction, walkArrival: number): HTMLLI
 
   const time = document.createElement('span');
   time.className = 'directions-panel__bus-time';
-  time.textContent = formatArrivalCountdown(prediction.predictedArrivalTime);
+  time.textContent = available ? formatArrivalCountdown(prediction.predictedArrivalTime)
+    : new Intl.DateTimeFormat('en-US', {hour:'numeric', minute:'2-digit', timeZone:'America/New_York'}).format(prediction.predictedArrivalTime) + ' ET · last known';
 
   item.append(badge, time);
   if (prediction.vid) {
@@ -1207,7 +1211,7 @@ function createArrivalItem(prediction: IPrediction, walkArrival: number): HTMLLI
     vehicle.textContent = `Bus ${prediction.vid}`;
     item.append(vehicle);
   }
-  if (Number.isFinite(prediction.predictedArrivalTime)) {
+  if (available && Number.isFinite(prediction.predictedArrivalTime)) {
     const margin = Math.floor((prediction.predictedArrivalTime - walkArrival) / 60_000);
     const connection = document.createElement('small');
     connection.className = 'directions-panel__connection';
@@ -1270,7 +1274,7 @@ function updateDirectionsPanel(
   if (info !== 'loading') {
     fillWalkingDetails(
       panel, info, directionsController.targetStop?.stopId ?? '',
-      info.predictions.map(p => createArrivalItem(p, info.arrivalTime)),
+      info.predictions.map(p => createArrivalItem(p, info.arrivalTime, info.predictionsAvailable)),
       Boolean(collapsed), Boolean(readingSteps)
     );
   }

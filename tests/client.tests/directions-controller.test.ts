@@ -123,6 +123,14 @@ describe('Walking directions lifecycle', () => {
     expect(jest.getTimerCount()).toBe(1);
   });
 
+  test('a walking refresh keeps unavailable bus predictions separate from a fresh route duration', async () => {
+    request.mockResolvedValue(route);
+    await controller.startDirections(stop, [], false);
+    expect(panel).toHaveBeenLastCalledWith(expect.objectContaining({predictionsAvailable:false}));
+    await jest.advanceTimersByTimeAsync(120_000);
+    expect(panel).toHaveBeenLastCalledWith(expect.objectContaining({predictionsAvailable:false}));
+  });
+
   test('an explicit planned origin remains usable after GPS is cleared', async () => {
     const planned = { lat: 40.46, lng: -79.96 };
     controller.updatePlannedLocation(planned);

@@ -276,7 +276,8 @@ export class PredictionController {
       const selected = ctx.board.selectedPredictions;
       const started = await this.directionsController.startDirections(
         ctx.stop,
-        selected
+        selected,
+        !ctx.unavailable
       );
       if (started && selected.length)
         await this.renderSelectedBusRoutes(selected);

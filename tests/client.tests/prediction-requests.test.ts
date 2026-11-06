@@ -121,6 +121,14 @@ describe('prediction refresh contents', () => {
     ).toBe(false);
   });
 
+  test('directions retain the selected bus and its unavailable-feed status', async () => {
+    mockPredictions.mockResolvedValue({state:'unavailable', rows:[first]});
+    await controller.handleStopClick(stop);
+    document.querySelector<HTMLButtonElement>('[data-key]')!.click();
+    document.querySelector<HTMLButtonElement>('.map-popup__directions-btn')!.click();
+    expect(mockStartDirections).toHaveBeenCalledWith(stop,[first],false);
+  });
+
   test('an initial failure offers retry and coalesces a double tap and reconnect', async () => {
     let finish!: (p: IPrediction[]) => void;
     mockPredictions.mockResolvedValueOnce(null).mockReturnValue(
@@ -164,7 +172,7 @@ describe('prediction refresh contents', () => {
     document
       .querySelector<HTMLButtonElement>('.map-popup__directions-btn')!
       .click();
-    expect(mockStartDirections).toHaveBeenCalledWith(stop, [second]);
+    expect(mockStartDirections).toHaveBeenCalledWith(stop, [second], true);
   });
 
   test('route filtering and paging keep the selected arrivals for directions, including after minimize', async () => {
@@ -205,10 +213,10 @@ describe('prediction refresh contents', () => {
     expect(mockStartDirections).toHaveBeenCalledWith(stop, [
       arrivals[0],
       arrivals[13]
-    ]);
+    ], true);
     document.querySelector<HTMLButtonElement>('[data-clear]')!.click();
     directions.click();
-    expect(mockStartDirections).toHaveBeenLastCalledWith(stop, []);
+    expect(mockStartDirections).toHaveBeenLastCalledWith(stop, [], true);
   });
 
   test('manual refresh updates the checked time and preserves the Pittsburgh time display', async () => {

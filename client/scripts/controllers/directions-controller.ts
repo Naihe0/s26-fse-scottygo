@@ -40,6 +40,7 @@ export interface IWalkingSummary {
   distanceMeters: number;
   steps: IWalkStep[];
   predictions: IPrediction[];
+  predictionsAvailable: boolean;
   warnings: string[];
 }
 
@@ -59,6 +60,7 @@ export class DirectionsController {
   private _isActive = false;
   private selectedStop: IStop | null = null;
   private _selectedPredictions: IPrediction[] = [];
+  private predictionsAvailable = true;
   private walkingPolyline: IMapPolyline | null = null;
   private walkingPath: ILatLng[] = [];
   private userLocation: ILatLng | null = null;
@@ -188,7 +190,8 @@ export class DirectionsController {
    */
   async startDirections(
     stop: IStop,
-    selectedPredictions: IPrediction[] = []
+    selectedPredictions: IPrediction[] = [],
+    predictionsAvailable = true
   ): Promise<boolean> {
     // R1: Tap debounce
     const now = Date.now();
@@ -213,6 +216,7 @@ export class DirectionsController {
     this._isActive = true;
     this.selectedStop = stop;
     this._selectedPredictions = selectedPredictions;
+    this.predictionsAvailable = predictionsAvailable;
 
     // R5: Hide non-selected stops and route overlays
     this.routeRenderer.clearAllRoutes();
@@ -327,6 +331,7 @@ export class DirectionsController {
         distanceMeters: result.distanceMeters,
         steps: result.steps ?? [],
         predictions: this._selectedPredictions,
+        predictionsAvailable: this.predictionsAvailable,
         warnings: result.warnings ?? []
       });
       return true;
