@@ -1,5 +1,6 @@
-import type { IPrediction } from '../../../common/transit.interface';
+import type { IPrediction, IStop } from '../../../common/transit.interface';
 import { keyArrivalRows } from '../utils/arrival-identity';
+import { DepartureWatch } from './departure-watch';
 
 const PAGE_SIZE = 8;
 const localClock = new Intl.DateTimeFormat('en-US', {
@@ -42,16 +43,23 @@ export class StopArrivalBoard {
   private limit = PAGE_SIZE;
   private checkedAt: number | null;
   private unavailable: boolean;
+  private watch?: DepartureWatch;
 
   constructor(
     private predictions: IPrediction[],
     available: boolean,
-    private readonly routeColor: (route: string) => string
+    private readonly routeColor: (route: string) => string,
+    stop?: Pick<IStop, 'stopId' | 'stopName'>
   ) {
     this.predictions = validArrivals(predictions);
     this.keys = keyArrivalRows(this.predictions);
     this.unavailable = !available;
     this.checkedAt = available ? Date.now() : null;
+    if (stop) this.watch = new DepartureWatch(stop, () => {
+      this.syncWatchMode();
+      const trigger = this.host.querySelector<HTMLButtonElement>('[data-watch-selected]');
+      (trigger && !trigger.hidden ? trigger : this.directions).focus({ preventScroll: true });
+    });
   }
 
   get selectedPredictions(): IPrediction[] {
@@ -84,7 +92,16 @@ export class StopArrivalBoard {
       </div>
       <ul class="map-popup__list" aria-label="Upcoming arrivals"></ul>
       <p class="map-popup__empty" hidden>No upcoming arrivals</p>
-      <button type="button" data-reset-view hidden>Show all departures</button>`;
+      <button type="button" data-reset-view hidden>Show all departures</button>
+      <button type="button" data-watch-selected hidden>Watch departure</button>
+      <section class="departure-watch" hidden></section>`;
+    this.watch?.mount(host.querySelector<HTMLElement>('.departure-watch')!);
+    host.querySelector('[data-watch-selected]')!.addEventListener('click', () => {
+      const row = this.selectedPredictions;
+      if (!this.watch || row.length !== 1) return;
+      this.watch.start(this.keys.get(row[0])!, row[0]);
+      this.syncWatchMode();
+    });
     const details = host.querySelector('details')!;
     details.open = this.expanded;
     details.addEventListener('toggle', () => {
@@ -159,12 +176,14 @@ export class StopArrivalBoard {
 
   setUnavailable(value: boolean): void {
     this.unavailable = value;
+    this.syncWatchData();
     const empty = this.host.querySelector<HTMLElement>('.map-popup__empty');
     if (empty) empty.hidden = value;
     this.tick();
   }
 
   tick(): void {
+    this.watch?.tick();
     const now = Date.now();
     if (!this.unavailable && now >= this.nextFilterChange) {
       this.render();
@@ -283,6 +302,7 @@ export class StopArrivalBoard {
         ? 'Refresh'
         : `Checked ${localClock.format(this.checkedAt)} ET`;
     this.syncSelection();
+    this.syncWatchData();
     this.tick();
     list.scrollTop = scroll;
     if (focusedKey) {
@@ -348,11 +368,26 @@ export class StopArrivalBoard {
       row.classList.toggle('map-popup__arrival--selected', selected);
     });
     const count = this.selected.size;
+    this.host.querySelector<HTMLButtonElement>('[data-watch-selected]')!.hidden = !this.watch || count !== 1;
     this.host.querySelector<HTMLButtonElement>('[data-clear]')!.hidden =
       count === 0;
     this.directions.querySelector('[data-directions-label]')!.textContent =
       count
         ? `Directions (${count} ${count === 1 ? 'bus' : 'buses'})`
         : 'Directions';
+  }
+
+  /** A restored/foreground card must fetch current arrivals before reminders resume. */
+  setActive(active: boolean): void { this.watch?.setActive(active); }
+
+  private syncWatchData(): void {
+    this.watch?.update(new Map(this.predictions.map(p => [this.keys.get(p)!, p])), !this.unavailable, this.checkedAt);
+    this.syncWatchMode();
+  }
+
+  private syncWatchMode(): void {
+    const watching = Boolean(this.watch?.isWatching);
+    this.host.dataset.watching = String(watching);
+    this.host.closest('.map-popup')?.classList.toggle('map-popup--watching', watching);
   }
 }

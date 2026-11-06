@@ -39,7 +39,9 @@ export const suiteGroups = {
     'prediction-requests',
     'prediction-shortcuts',
     'stop-boarding',
-    'arrival-identity'
+    'arrival-identity',
+    'departure-watch',
+    'share-departure'
   ],
   UC11: ['vehicle-motion-replay', 'vehicle-motion-tracker', 'vehicle-tracker'],
   UC12: [
@@ -53,7 +55,8 @@ export const suiteGroups = {
     'stop-link-navigation',
     'map-auth-return',
     'url-sync',
-    'map-navigation'
+    'map-navigation',
+    'share-departure'
   ],
   UC15: ['subscriptions', 'map-subscription-session', 'muted-routes'],
   UC16: [
@@ -175,7 +178,11 @@ export const alternateFlows = {
       'Unavailable or warming feed and recovery',
       'unavailable|warming|cached|stale|failed|recover|timeout'
     ],
-    ['Minimize, save and share a platform', 'minimize|restore|save|share']
+    ['Minimize, save and share a platform', 'minimize|restore|save|share'],
+    [
+      'Watch one departure, remind, explicitly choose next and share',
+      'watch|reminder|departure|summary'
+    ]
   ],
   UC11: [
     ['Bus details and actions', 'popup|card|stop|report|detail'],

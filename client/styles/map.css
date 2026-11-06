@@ -1119,6 +1119,29 @@ input:checked + .slider:before {
   overscroll-behavior: contain;
 }
 .stop-arrival-board { flex: 0 0 auto; min-width: 0; }
+.stop-arrival-board [data-watch-selected] { width: 100%; min-height: 44px; border: 1px solid #d7b9c2; border-radius: 10px; color: #8b1734; background: #fff4f7; font: inherit; font-weight: 600; cursor: pointer; margin-top: 8px; }
+.stop-arrival-board [data-watch-selected][hidden], .departure-watch[hidden] { display: none; }
+.stop-arrival-board[data-watching="true"] > :not(.arrival-board__bar):not(.departure-watch),
+.stop-arrival-board[data-watching="true"] .arrival-board__bar details,
+.map-popup--watching > :is(.map-popup__walk-time, .map-popup__directions-btn, .map-popup__shortcut-actions) { display: none !important; }
+.stop-arrival-board[data-watching="true"] .arrival-board__bar { justify-content: flex-end; }
+.map-popup--watching { background: #fff; }
+.departure-watch { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.departure-watch__heading, .departure-watch__actions { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.departure-watch__heading strong { overflow-wrap: anywhere; font-size: 14px; }
+.departure-watch button, .departure-watch select { min-height: 44px; border: 1px solid #d4dce4; border-radius: 10px; background: #f7f8fa; color: #25354a; font: inherit; padding: 8px 10px; cursor: pointer; }
+.departure-watch button:disabled, .departure-watch select:disabled { opacity: .55; cursor: default; }
+.departure-watch__heading button { flex-shrink: 0; color: #8b1734; background: transparent; }
+.departure-watch p { margin: 0; line-height: 1.4; }
+.departure-watch__countdown { font-size: clamp(30px, 8vw, 44px); font-variant-numeric: tabular-nums; line-height: 1.15; letter-spacing: -.03em; color: #172b43; }
+.departure-watch__caption, .departure-watch__clock { font-size: 13px; color: #516075; }
+.departure-watch__status { border-radius: 8px; padding: 8px 10px; background: #f1f4f7; font-size: 13px; color: #394b60; }
+.departure-watch__status[data-reminded="true"] { background: #e5f3e9; color: #215a37; }
+.departure-watch__reminder { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.departure-watch__reminder select { min-width: 0; max-width: 60%; font-size: 16px; }
+.departure-watch__actions button { flex: 1; min-width: 0; font-size: 13px; }
+.departure-watch__note { font-size: 12px; color: #59687c; }
+.departure-watch :is(button, select, [tabindex]):focus-visible { outline: 2px solid #a8163a; outline-offset: 2px; }
 .arrival-board__bar, .arrival-board__hint {
   display: flex;
   align-items: baseline;

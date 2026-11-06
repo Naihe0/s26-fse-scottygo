@@ -9,7 +9,10 @@
 
 .view-link-dialog {
   width: min(28rem, calc(100vw - 3rem));
+  max-height: calc(100dvh - 32px);
   box-sizing: border-box;
+  margin: auto;
+  overflow: auto;
   padding: 1.5rem;
   border: 0;
   border-radius: 1rem;
@@ -30,13 +33,25 @@
   display: block;
   font-weight: 600;
 }
-.view-link-dialog input {
+.view-link-dialog input,
+.view-link-dialog textarea {
   box-sizing: border-box;
   width: 100%;
   margin: 0.5rem 0 1rem;
   padding: 0.75rem;
+  font: inherit;
+  font-size: 16px;
+}
+.view-link-dialog textarea {
+  resize: vertical;
+  min-height: min(8rem, 35dvh);
+  max-height: 40dvh;
+  line-height: 1.5;
 }
 .view-link-dialog button {
+  min-height: 44px;
+  min-width: 44px;
   padding: 0.6rem 1rem;
+  font: inherit;
   cursor: pointer;
 }

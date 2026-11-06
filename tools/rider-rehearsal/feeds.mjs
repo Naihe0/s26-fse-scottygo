@@ -54,6 +54,7 @@ export function apiFixture() {
     reports: [],
     checks: 0,
     arrivalUnavailable: false,
+    arrivalMissingOccurrence: null,
     registrations: [],
     agreements: [],
     accountWrites: []
@@ -170,8 +171,9 @@ export function apiFixture() {
       events.checks++;
       const result = response(
         'PredictionsRetrieved',
-        [3, 8, 15].map((minutes) => ({
+        [3, 8, 15].filter(minutes => minutes !== events.arrivalMissingOccurrence).map((minutes) => ({
           minutes,
+          occurrenceId: 'fixture-visit-' + minutes,
           stopId: stop.stopId,
           routeId: '61C',
           vid: '4100',

@@ -66,6 +66,7 @@ export class PredictionController {
 
   /** Currently minimised stop (for A3 restore). */
   private minimisedStop: IStop | null = null;
+  private activeBoard: StopArrivalBoard | null = null;
 
   /** Stop ID of the currently open prediction popup (for live refresh). */
   private openPopupStopId: string | null = null;
@@ -175,6 +176,8 @@ export class PredictionController {
 
   /** Stop prediction polling and the countdown ticker. */
   stopPolling(): void {
+    this.activeBoard?.setActive(false);
+    this.activeBoard = null;
     this.requestVersion++;
     this.stopSelectionPending = false;
     this.pollingEvents?.abort();
@@ -215,7 +218,8 @@ export class PredictionController {
       board: new StopArrivalBoard(
         snapshot?.rows ?? [],
         snapshot?.state === 'ready',
-        this.getRouteColor
+        this.getRouteColor,
+        stop
       ),
       unavailable: snapshot?.state !== 'ready',
       warming: snapshot?.state === 'warming'
@@ -263,7 +267,7 @@ export class PredictionController {
     this.bindStopCard(popup, ctx);
   }
 
-  private bindStopCard(popup: HTMLElement, ctx: StopPopupContext): void {
+  private bindStopCard(popup: HTMLElement, ctx: StopPopupContext, refreshNow = false): void {
     const directions = popup.querySelector<HTMLButtonElement>(
       '.map-popup__directions-btn'
     )!;
@@ -282,7 +286,7 @@ export class PredictionController {
       if (started && selected.length)
         await this.renderSelectedBusRoutes(selected);
     });
-    this.startPredictionPolling(ctx);
+    this.startPredictionPolling(ctx, refreshNow);
     this.bindStopShortcutActions(popup, ctx.stop);
   }
 
@@ -365,10 +369,12 @@ export class PredictionController {
   // Private — polling
   // -------------------------------------------------------------------------
 
-  private startPredictionPolling(ctx: StopPopupContext): void {
+  private startPredictionPolling(ctx: StopPopupContext, refreshNow = false): void {
     this.stopPolling();
     const popup = document.getElementById(MAP_POPUP_ID);
     if (!popup) return;
+    this.activeBoard = ctx.board;
+    ctx.board.setActive(!refreshNow && !ctx.unavailable && !document.hidden);
     this.openPopupStopId = ctx.stop.stopId;
     this.openPopupRouteId = this.stateManager.getState().selectedRouteId;
     const version = this.requestVersion;
@@ -430,6 +436,7 @@ export class PredictionController {
         ctx.unavailable = fresh?.state !== 'ready' || !navigator.onLine;
         ctx.warming = navigator.onLine && fresh?.state === 'warming';
         if (!ctx.unavailable && fresh) ctx.board.refresh(fresh.rows);
+        ctx.board.setActive(!ctx.unavailable && !document.hidden);
         updateNotice();
         if (retryFocused && !ctx.unavailable)
           popup
@@ -457,10 +464,14 @@ export class PredictionController {
       },
       { signal: events.signal }
     );
-    document.addEventListener('visibilitychange', refresh, {
+    document.addEventListener('visibilitychange', () => {
+      ctx.board.setActive(false);
+      if (!document.hidden) void refresh();
+    }, {
       signal: events.signal
     });
     this.predictionPollInterval = window.setInterval(refresh, 30_000);
+    if (refreshNow) void refresh();
   }
 
   private bindMinimizeButton(popup: Element, ctx: StopPopupContext): void {
@@ -509,7 +520,8 @@ export class PredictionController {
       void this.handleStopClick(selected);
     });
 
-    this.bindStopCard(popup, ctx);
+    ctx.board.setActive(false);
+    this.bindStopCard(popup, ctx, true);
   }
 
   // -------------------------------------------------------------------------

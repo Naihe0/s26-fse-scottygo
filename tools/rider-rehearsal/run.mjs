@@ -13,6 +13,7 @@ import { installMapFixture } from './map-fixture.mjs';
 import { apiFixture } from './feeds.mjs';
 import { socketFixture } from './socket-fixture.mjs';
 import { rehearseMyPlaces } from './my-places.mjs';
+import { rehearseDepartureWatch } from './departure-watch.mjs';
 import { rehearsePopupPreferences } from './subscriptions.mjs';
 import { recordEvidence } from './evidence.mjs';
 
@@ -367,6 +368,7 @@ try {
         'Refresh made no predictions request'
       );
       await pop.locator('.map-popup__save-stop').click();
+      await rehearseDepartureWatch(page, fixture, desktop);
       await pop.getByRole('button', { name: 'Minimize' }).click();
       await click('.map-popup-tab[data-type="stop"]');
       await page.locator('.stop-arrival-board').waitFor();

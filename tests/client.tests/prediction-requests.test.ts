@@ -48,6 +48,10 @@ describe('prediction refresh contents', () => {
   const second: IPrediction = { ...first, vid: '222' };
   beforeEach(() => {
     jest.useFakeTimers();
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      value: false
+    });
     mockPredictions.mockReset();
     mockStartDirections.mockClear();
     document.body.innerHTML = '<div class="map-container"></div>';
@@ -71,14 +75,17 @@ describe('prediction refresh contents', () => {
   });
 
   test('the first successful prediction feed distinguishes warmup, paused cached arrivals and healthy empty service', async () => {
-    mockPredictions.mockResolvedValueOnce({state:'warming', rows:[]})
-      .mockResolvedValueOnce({state:'ready', rows:[first]})
-      .mockResolvedValueOnce({state:'unavailable', rows:[]})
-      .mockResolvedValueOnce({state:'ready', rows:[]});
+    mockPredictions
+      .mockResolvedValueOnce({ state: 'warming', rows: [] })
+      .mockResolvedValueOnce({ state: 'ready', rows: [first] })
+      .mockResolvedValueOnce({ state: 'unavailable', rows: [] })
+      .mockResolvedValueOnce({ state: 'ready', rows: [] });
     await controller.handleStopClick(stop);
     const notice = document.querySelector<HTMLElement>('.arrival-recovery')!;
     expect(notice.textContent).toContain('Waiting for the first');
-    expect(document.querySelector<HTMLElement>('.map-popup__empty')!.hidden).toBe(true);
+    expect(
+      document.querySelector<HTMLElement>('.map-popup__empty')!.hidden
+    ).toBe(true);
     const retry = notice.querySelector('button')!;
     retry.click();
     await jest.advanceTimersByTimeAsync(1);
@@ -89,7 +96,9 @@ describe('prediction refresh contents', () => {
     retry.click();
     await jest.advanceTimersByTimeAsync(1);
     expect(notice.hidden).toBe(true);
-    expect(document.querySelector<HTMLElement>('.map-popup__empty')!.hidden).toBe(false);
+    expect(
+      document.querySelector<HTMLElement>('.map-popup__empty')!.hidden
+    ).toBe(false);
   });
 
   test('failed refresh keeps the selected bus and displays a last-known time until reconnection', async () => {
@@ -122,11 +131,13 @@ describe('prediction refresh contents', () => {
   });
 
   test('directions retain the selected bus and its unavailable-feed status', async () => {
-    mockPredictions.mockResolvedValue({state:'unavailable', rows:[first]});
+    mockPredictions.mockResolvedValue({ state: 'unavailable', rows: [first] });
     await controller.handleStopClick(stop);
     document.querySelector<HTMLButtonElement>('[data-key]')!.click();
-    document.querySelector<HTMLButtonElement>('.map-popup__directions-btn')!.click();
-    expect(mockStartDirections).toHaveBeenCalledWith(stop,[first],false);
+    document
+      .querySelector<HTMLButtonElement>('.map-popup__directions-btn')!
+      .click();
+    expect(mockStartDirections).toHaveBeenCalledWith(stop, [first], false);
   });
 
   test('an initial failure offers retry and coalesces a double tap and reconnect', async () => {
@@ -210,10 +221,11 @@ describe('prediction refresh contents', () => {
       '.map-popup__directions-btn'
     )!;
     directions.click();
-    expect(mockStartDirections).toHaveBeenCalledWith(stop, [
-      arrivals[0],
-      arrivals[13]
-    ], true);
+    expect(mockStartDirections).toHaveBeenCalledWith(
+      stop,
+      [arrivals[0], arrivals[13]],
+      true
+    );
     document.querySelector<HTMLButtonElement>('[data-clear]')!.click();
     directions.click();
     expect(mockStartDirections).toHaveBeenLastCalledWith(stop, [], true);
@@ -260,6 +272,68 @@ describe('prediction refresh contents', () => {
     await request;
     expect(controller.hasActiveSelection).toBe(false);
   });
+
+  test.each(['minimized', 'hidden'] as const)(
+    'a %s departure watch waits for its fresh response before resuming reminders',
+    async (state) => {
+      const startedAt = Date.now();
+      const row = {
+        ...first,
+        occurrenceId: 'watched-visit',
+        predictedArrivalTime: startedAt + 180_000
+      };
+      let finish!: (rows: IPrediction[]) => void;
+      mockPredictions.mockResolvedValueOnce([row]).mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+      );
+      await controller.handleStopClick(stop);
+      document.querySelector<HTMLButtonElement>('[data-key]')!.click();
+      document
+        .querySelector<HTMLButtonElement>('[data-watch-selected]')!
+        .click();
+      const reminder = document.querySelector<HTMLSelectElement>(
+        '[data-watch-reminder]'
+      )!;
+      reminder.value = '2';
+      reminder.dispatchEvent(new Event('change'));
+      if (state === 'minimized')
+        document
+          .querySelector<HTMLButtonElement>('.map-popup__minimize')!
+          .click();
+      else {
+        Object.defineProperty(document, 'hidden', {
+          configurable: true,
+          value: true
+        });
+        document.dispatchEvent(new Event('visibilitychange'));
+      }
+      jest.setSystemTime(startedAt + 60_000);
+      if (state === 'minimized') await controller.handleStopClick(stop);
+      else {
+        Object.defineProperty(document, 'hidden', {
+          configurable: true,
+          value: false
+        });
+        document.dispatchEvent(new Event('visibilitychange'));
+      }
+      expect(mockPredictions).toHaveBeenCalledTimes(2);
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(
+        document.querySelector('[data-watch-status]')?.textContent
+      ).toContain('Waiting for fresh');
+      expect(document.body.textContent).not.toContain('expected within');
+      finish([row]);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(document.querySelector('[data-watch-status]')?.textContent).toBe(
+        'Route 61D is expected within 2 min.'
+      );
+      expect(
+        document.querySelector('[data-watch-countdown]')?.textContent
+      ).toBe('2 min');
+    }
+  );
 });
 
 describe('stop prediction request ownership', () => {
@@ -305,7 +379,7 @@ describe('stop prediction request ownership', () => {
     finishFirst([]);
     await firstRequest;
     expect(show).toHaveBeenCalledTimes(1);
-    expect(show).toHaveBeenCalledWith(second, {rows: [], state: 'ready'});
+    expect(show).toHaveBeenCalledWith(second, { rows: [], state: 'ready' });
   });
 
   test('clearing the map cancels a stop popup that is still loading', async () => {

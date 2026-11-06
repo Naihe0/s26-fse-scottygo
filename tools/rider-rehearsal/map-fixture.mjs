@@ -138,6 +138,7 @@ export function installMapFixture() {
     configurable: true,
     value: async (data) => {
       window.sharedPublicLink = data.url;
+      window.sharedPublicSummary = data;
     }
   });
 }

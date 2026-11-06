@@ -3,13 +3,14 @@ export async function shareTransitLink(
   url: string,
   title: string,
   trigger: HTMLButtonElement,
-  copy: () => Promise<void>
+  copy: () => Promise<void>,
+  text?: string
 ): Promise<void> {
   if (trigger.disabled) return;
   if (typeof navigator.share === 'function') {
     trigger.disabled = true;
     try {
-      await navigator.share({ title, url });
+      await navigator.share({ title, url, ...(text ? { text } : {}) });
       return;
     } catch (error) {
       // Cancel is a deliberate choice. Do not put the link on the clipboard.
