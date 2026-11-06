@@ -2,8 +2,8 @@ import type { ILatLng } from '../../../common/map.interface';
 import type { IStop } from '../../../common/transit.interface';
 import type { IMapState } from '../state/map-state';
 import { getToken } from '../services/session';
-import {validShortcutStopId} from './public-stop-path';
-export {validShortcutStopId} from './public-stop-path';
+import { validShortcutStopId } from './public-stop-path';
+export { validShortcutStopId } from './public-stop-path';
 
 export type ShortcutFilters = Pick<
   IMapState,
@@ -435,6 +435,69 @@ export function clearRecentShortcuts(): void {
   const data = getRiderShortcuts();
   data.recent = [];
   write(data);
+}
+
+/** Undo removes/restores one entry, without rolling back newer edits or accounts. */
+export function removeShortcutWithUndo(
+  kind: 'stop' | 'place' | 'view' | 'recent',
+  id: string
+): { undo: () => ShortcutResult } | null {
+  const collection = (
+    { stop: 'stops', place: 'places', view: 'views', recent: 'recent' } as const
+  )[kind];
+  const data = getRiderShortcuts();
+  const owner = storageScope().key;
+  type Entry = RiderShortcuts[keyof RiderShortcuts][number];
+  const identity = (entry: Entry): string =>
+    'stopId' in entry ? entry.stopId : entry.id;
+  const entries: Entry[] = data[collection];
+  const index = entries.findIndex((entry) => identity(entry) === id);
+  if (index < 0) return null;
+  const removed = entries[index];
+  const previous = index > 0 ? identity(entries[index - 1]) : null;
+  const next = index + 1 < entries.length ? identity(entries[index + 1]) : null;
+  let consumed = false;
+  write({
+    ...data,
+    [collection]: entries.filter((entry) => identity(entry) !== id)
+  });
+  return {
+    undo: () => {
+      if (consumed)
+        return { ok: false, message: 'This undo has already been used.' };
+      consumed = true;
+      if (storageScope().key !== owner)
+        return {
+          ok: false,
+          message: 'The account changed. Nothing was restored.'
+        };
+      const latest = getRiderShortcuts();
+      const current: Entry[] = latest[collection];
+      if (current.some((entry) => identity(entry) === id))
+        return {
+          ok: false,
+          message: 'This item is already in your shortcuts.'
+        };
+      if (current.length >= SHORTCUT_LIMITS[collection])
+        return {
+          ok: false,
+          message: 'Your list is full. The item could not be restored.'
+        };
+      const nextIndex = current.findIndex((entry) => identity(entry) === next);
+      const previousIndex = current.findIndex(
+        (entry) => identity(entry) === previous
+      );
+      const position =
+        nextIndex >= 0
+          ? nextIndex
+          : previousIndex >= 0
+            ? previousIndex + 1
+            : Math.min(index, current.length);
+      current.splice(position, 0, removed);
+      write({ ...latest, [collection]: current });
+      return { ok: true, message: 'Shortcut restored.' };
+    }
+  };
 }
 
 function recordRecent(item: RecentShortcut): void {

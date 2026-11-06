@@ -6,6 +6,7 @@ import {
   recordRecentRoute,
   recordRecentStop,
   removeShortcut,
+  removeShortcutWithUndo,
   renameShortcut,
   saveFilterView,
   savePlace,
@@ -53,6 +54,60 @@ describe('browser-local account-scoped rider shortcuts', () => {
     expect(localStorage.getItem(key())).not.toContain('secret');
     expect(toggleSavedStop(stop).saved).toBe(false);
     expect(getRiderShortcuts().stops).toEqual([]);
+  });
+
+  test('undo restores one removed stop between its neighbors, preserving newer saves and edits', () => {
+    for (const id of ['1', '2', '3']) toggleSavedStop({ ...stop, stopId: id });
+    renameShortcut('stop', '2', 'Home platform');
+    const removed = removeShortcutWithUndo('stop', '2')!;
+    toggleSavedStop({ ...stop, stopId: '4' });
+    renameShortcut('stop', '3', 'Office');
+    expect(removed.undo().ok).toBe(true);
+    expect(getRiderShortcuts().stops.map((s) => s.stopId)).toEqual([
+      '4',
+      '3',
+      '2',
+      '1'
+    ]);
+    expect(
+      getRiderShortcuts().stops.find((s) => s.stopId === '3')?.nickname
+    ).toBe('Office');
+    expect(
+      getRiderShortcuts().stops.find((s) => s.stopId === '2')?.nickname
+    ).toBe('Home platform');
+    expect(removed.undo().ok).toBe(false);
+  });
+
+  test('undo cannot cross account boundaries or replace an explicitly resaved stop', () => {
+    toggleSavedStop(stop);
+    const first = removeShortcutWithUndo('stop', stop.stopId)!;
+    signIn('different-account');
+    expect(first.undo().ok).toBe(false);
+    expect(getRiderShortcuts().stops).toEqual([]);
+    toggleSavedStop(stop);
+    const second = removeShortcutWithUndo('stop', stop.stopId)!;
+    toggleSavedStop({ ...stop, stopName: 'New public name' });
+    expect(second.undo().ok).toBe(false);
+    expect(getRiderShortcuts().stops[0].stopName).toBe('New public name');
+  });
+
+  test('undo respects capacity and supports places, views and recent selections', () => {
+    savePlace('Home', { lat: 40, lng: -80 });
+    const placeId = getRiderShortcuts().places[0].id;
+    const place = removeShortcutWithUndo('place', placeId)!;
+    for (let i = 0; i < 8; i++) savePlace('Other ' + i, { lat: 40, lng: -80 });
+    expect(place.undo().ok).toBe(false);
+    expect(getRiderShortcuts().places).toHaveLength(8);
+    saveFilterView('Commute', filters);
+    const viewId = getRiderShortcuts().views[0].id;
+    expect(removeShortcutWithUndo('view', viewId)!.undo().ok).toBe(true);
+    expect(getRiderShortcuts().views[0].filters).toEqual(filters);
+    recordRecentStop(stop);
+    expect(
+      removeShortcutWithUndo('recent', 'stop:' + stop.stopId)!.undo().ok
+    ).toBe(true);
+    expect(getRiderShortcuts().recent[0].kind).toBe('stop');
+    expect(removeShortcutWithUndo('stop', 'missing')).toBeNull();
   });
 
   test('enforces caps without silently deleting a rider saved item', () => {
