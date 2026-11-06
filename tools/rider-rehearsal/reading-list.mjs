@@ -13,7 +13,8 @@ export async function rehearseReadingList({ page, fixture }) {
   await page.locator('#notif-reading-list').click();
   assert.equal(await page.locator('.notif-card').count(), 1);
   assert.equal(await card.locator('.notif-saved-copy').count(), 0);
-  await card.locator('.notif-window summary').click();
+  if (await card.locator('.notif-window').getAttribute('open') === null)
+    await card.locator('.notif-window summary').click();
   const offset = await card.evaluate(el => el.getBoundingClientRect().top);
   await card.getByRole('link', { name: 'View Route 61C on map', exact: true }).click();
   await page.locator('#map[data-ready]').waitFor();
