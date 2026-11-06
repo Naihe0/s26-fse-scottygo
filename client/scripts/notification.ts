@@ -27,12 +27,14 @@ import {
 import { agencyWindowState } from './utils/agency-window';
 import { authHeaders, getToken, isSameSession } from './services/session';
 import { showToast } from './utils/toast';
+import { SavedUpdateStore } from './utils/saved-updates';
 import {
   INBOX_READ_LIMIT,
   NotificationReadStore,
   buildInboxShare,
   groupInbox,
   inboxKey,
+  inboxAccount,
   inboxRoutes,
   shareInboxSummary,
   sortInbox,
@@ -71,6 +73,10 @@ const groupSelect = document.getElementById(
 const scopeStatus = document.getElementById('notif-scope-status');
 const inboxAnnouncement = document.getElementById('notif-inbox-announcement');
 const readStore = new NotificationReadStore();
+const savedUpdates = new SavedUpdateStore();
+const readingListBtn = document.getElementById('notif-reading-list');
+const main = document.querySelector<HTMLElement>('main.content');
+let readingListOnly = false;
 let savedOnly = false;
 let unreadOnly = false;
 let sort: InboxSort = 'priority';
@@ -116,11 +122,109 @@ const resolveRouteDisplay = (id: string) =>
 const formatMessage = (message: string) =>
   formatNotificationMessage(message, routeDisplayById);
 
+function feedEntries(): InboxEntry[] {
+  return [
+    ...alerts.items.map((value): InboxEntry => ({ kind: 'service', value })),
+    ...notifications.items.map((value): InboxEntry => ({ kind: 'live', value }))
+  ];
+}
+
+function currentReadingAnchor(): { key: string; offset: number } | null {
+  if (!main || main.scrollTop < 20) return null;
+  const top = main.getBoundingClientRect().top;
+  const card = [...list.querySelectorAll<HTMLElement>('.notif-card')].find(
+    (item) => item.getBoundingClientRect().bottom > top + 4
+  );
+  return card?.dataset.key
+    ? { key: card.dataset.key, offset: card.getBoundingClientRect().top - top }
+    : null;
+}
+
+function restoreAnchor(anchor: { key: string; offset: number } | null): void {
+  if (!main || !anchor) return;
+  const card = [...list.querySelectorAll<HTMLElement>('.notif-card')].find(
+    (item) => item.dataset.key === anchor.key
+  );
+  if (card) main.scrollTop += card.getBoundingClientRect().top - main.getBoundingClientRect().top - anchor.offset;
+}
+
+type ReadingContext = {
+  account: string; url: string; at: number; view: View; query: string;
+  savedOnly: boolean; unreadOnly: boolean; readingListOnly: boolean;
+  sort: InboxSort; grouped: boolean; selections: string[]; moreOpen: boolean;
+  expanded: string[]; anchor: { key: string; offset: number } | null; scrollTop: number;
+  prefill: { route?: string; bus?: string } | null;
+};
+let pendingReading: ReadingContext | null = null;
+const readingSelects = [routeSelect, severitySelect, windowSelect, topicSelect];
+
+function saveReadingContext(): void {
+  const account = inboxAccount();
+  if (!account) return;
+  const state: ReadingContext = {
+    account, url: location.pathname + location.search, at: Date.now(), view,
+    query: searchInput.value.slice(0, 300), savedOnly, unreadOnly, readingListOnly,
+    sort, grouped, selections: readingSelects.map((select) => select?.value ?? ''),
+    moreOpen: Boolean(document.querySelector<HTMLDetailsElement>('#notif-more-options')?.open),
+    expanded: [...list.querySelectorAll('details[open]')].slice(0, 50).map((details) =>
+      `${details.closest<HTMLElement>('[data-key]')?.dataset.key}:${details.querySelector<HTMLElement>('summary')?.dataset.action}`),
+    anchor: currentReadingAnchor(), scrollTop: main?.scrollTop ?? 0, prefill: prefillContext
+  };
+  try { history.replaceState({ ...history.state, scottygoInbox: state }, ''); } catch { /* Reading still works when history storage is unavailable. */ }
+}
+
+function loadReadingContext(): void {
+  const state = history.state?.scottygoInbox as ReadingContext | undefined;
+  if (!state || state.account !== inboxAccount() || state.url !== location.pathname + location.search ||
+      !Number.isFinite(state.at) || Date.now() - state.at < 0 || Date.now() - state.at > 30 * 60_000 ||
+      !['all', 'service', 'live'].includes(state.view) || typeof state.query !== 'string' ||
+      state.query.length > 300 || !Array.isArray(state.selections) || state.selections.length !== 4 ||
+      !state.selections.every((value) => typeof value === 'string' && value.length < 200) ||
+      !Array.isArray(state.expanded) || state.expanded.length > 50 || !state.expanded.every((value) => typeof value === 'string') ||
+      !Number.isFinite(state.scrollTop) || state.scrollTop < 0 || state.scrollTop > 2_000_000) return;
+  pendingReading = state;
+  view = state.view;
+  searchInput.value = state.query;
+  savedOnly = state.savedOnly === true;
+  unreadOnly = state.unreadOnly === true;
+  readingListOnly = state.readingListOnly === true;
+  sort = state.sort === 'newest' ? 'newest' : 'priority';
+  grouped = state.grouped === true;
+  prefillContext = state.prefill &&
+    (!state.prefill.route || typeof state.prefill.route === 'string') &&
+    (!state.prefill.bus || typeof state.prefill.bus === 'string') ? state.prefill : null;
+  if (sortSelect) sortSelect.value = sort;
+  if (groupSelect) groupSelect.value = grouped ? 'route' : 'flat';
+  readingSelects.forEach((select, index) => {
+    if (!select) return;
+    const value = state.selections[index];
+    if (value && ![...select.options].some((option) => option.value === value)) select.append(new Option(value, value));
+    select.value = value;
+  });
+  const more = document.querySelector<HTMLDetailsElement>('#notif-more-options');
+  if (more) more.open = state.moreOpen === true;
+}
+
+function restoreReadingContext(): void {
+  const state = pendingReading;
+  if (!state || loading || (savedOnly && savedLoading)) return;
+  pendingReading = null;
+  for (const details of list.querySelectorAll<HTMLDetailsElement>('details')) {
+    const key = `${details.closest<HTMLElement>('[data-key]')?.dataset.key}:${details.querySelector<HTMLElement>('summary')?.dataset.action}`;
+    details.open = state.expanded.includes(key);
+  }
+  if (main) {
+    main.scrollTop = state.scrollTop;
+    if (state.anchor && typeof state.anchor.key === 'string' && Number.isFinite(state.anchor.offset)) restoreAnchor(state.anchor);
+  }
+}
+
 function renderCards(entries: InboxEntry[]): void {
   const signature = JSON.stringify([
     entries,
     [...routeDisplayById],
     entries.map((entry) => readStore.isRead(entry)),
+    savedUpdates.list(),
     entries.map((entry) =>
       entry.kind === 'service'
         ? agencyWindowState(entry.value.activePeriods)
@@ -137,6 +241,7 @@ function renderCards(entries: InboxEntry[]): void {
     return;
   }
   renderSignature = signature;
+  const anchor = currentReadingAnchor();
   // Background refreshes preserve expanded descriptions and keyboard focus.
   const expanded = new Set(
     [...list.querySelectorAll('details[open]')].map((details) => {
@@ -156,6 +261,25 @@ function renderCards(entries: InboxEntry[]): void {
   const cards = entries.map((entry) => {
     const actions: NotificationCardActions = {
       read: readStore.isRead(entry),
+      saved: savedUpdates.has(entry),
+      savedCopy: (() => {
+        if (!readingListOnly) return undefined;
+        const record = savedUpdates.list().find((item) => item.key === inboxKey(entry));
+        return record?.current === false
+          ? 'Saved copy · No longer in the current feed. Check the agency for current service.'
+          : record?.current === null
+            ? 'Saved copy · Current availability has not been verified.'
+            : undefined;
+      })(),
+      onSaveChange: () => {
+        const result = savedUpdates.toggle(entry);
+        savedUpdates.reconcile(feedEntries(), new Set([
+          ...(alerts.loaded && !alerts.failed ? ['service' as const] : []),
+          ...(notifications.loaded && !notifications.failed ? ['live' as const] : [])
+        ]));
+        render();
+        if (inboxAnnouncement) inboxAnnouncement.textContent = result.message;
+      },
       onReadChange: (read) => {
         lastBatch = lastBatch.filter(
           (item) => inboxKey(item) !== inboxKey(entry)
@@ -233,10 +357,11 @@ function renderCards(entries: InboxEntry[]): void {
     const next = cards[Math.max(0, Math.min(focusedIndex, cards.length - 1))];
     (
       next?.querySelector<HTMLButtonElement>('[data-action="read"]') ??
-      unreadOnlyBtn ??
+      (readingListOnly ? readingListBtn : unreadOnlyBtn) ??
       searchInput
     )?.focus({ preventScroll: true });
   }
+  restoreAnchor(anchor);
 }
 
 function syncRouteChoices(): void {
@@ -244,6 +369,7 @@ function syncRouteChoices(): void {
   const selection = routeSelect.value;
   const ids = new Set(alerts.items.flatMap((item) => item.routeIds || []));
   notifications.items.forEach((item) => ids.add(item.routeId));
+  if (readingListOnly) savedUpdates.list().forEach(({ entry }) => inboxRoutes(entry).forEach((id) => ids.add(id)));
   if (selection) ids.add(selection);
   const rows = [...ids]
     .filter(Boolean)
@@ -266,7 +392,7 @@ function syncTopicChoices(): void {
   if (!group || !topicSelect) return;
   const chosen = topicSelect.value;
   const effects = new Set(
-    alerts.items
+    [...alerts.items, ...(readingListOnly ? savedUpdates.list().flatMap(({ entry }) => entry.kind === 'service' ? [entry.value] : []) : [])]
       .map((alert) => alert.effect)
       .filter((value): value is string =>
         Boolean(value && formatAlertMetadata(value))
@@ -293,7 +419,8 @@ function render(): void {
   const query = searchInput.value.trim();
   clearBtn.classList.toggle('is-visible', query.length > 0);
   clearBtn.setAttribute('aria-hidden', String(query.length === 0));
-  const visibleAlerts = alerts.items.filter((alert) => {
+  const sourceEntries = readingListOnly ? savedUpdates.list().map((record) => record.entry) : feedEntries();
+  const visibleAlerts = sourceEntries.flatMap((entry) => entry.kind === 'service' ? [entry.value] : []).filter((alert) => {
     if (prefillContext?.route)
       return alert.routeIds.some(
         (id) => id.toLowerCase() === prefillContext!.route!.toLowerCase()
@@ -301,7 +428,7 @@ function render(): void {
     if (prefillContext?.bus) return false;
     return matchesAlertQuery(alert, query, resolveRouteDisplay);
   });
-  const visibleNotifications = notifications.items
+  const visibleNotifications = sourceEntries.flatMap((entry) => entry.kind === 'live' ? [entry.value] : [])
     .filter((notification) => {
       if (prefillContext)
         return (
@@ -393,6 +520,7 @@ function render(): void {
       query ||
       view !== 'all' ||
       savedOnly ||
+      readingListOnly ||
       unreadOnly ||
       routeSelect?.value ||
       severitySelect?.value === 'elevated' ||
@@ -417,6 +545,8 @@ function render(): void {
   countEl.textContent = `${count} ${count === 1 ? 'update' : 'updates'}${query ? ' found' : ''} · ${unread} unread`;
   savedOnlyBtn?.setAttribute('aria-pressed', String(savedOnly));
   unreadOnlyBtn?.setAttribute('aria-pressed', String(unreadOnly));
+  readingListBtn?.setAttribute('aria-pressed', String(readingListOnly));
+  if (readingListBtn) readingListBtn.textContent = `Reading list${savedUpdates.list().length ? ` (${savedUpdates.list().length})` : ''}`;
   if (scopeStatus) {
     scopeStatus.hidden = !savedOnly;
     scopeStatus.textContent = savedLoading
@@ -433,7 +563,11 @@ function render(): void {
         : [alerts, notifications];
   const allFailed = relevant.every((source) => source.failed && !source.loaded);
   emptyEl.classList.toggle('is-visible', count === 0);
-  if (loading && relevant.every((source) => !source.loaded)) {
+  if (readingListOnly) {
+    emptyEl.textContent = savedUpdates.list().length
+      ? 'No saved updates match these filters. Clear filters to see all updates.'
+      : 'Your reading list is empty. Use Save update on a notice to keep a copy here.';
+  } else if (loading && relevant.every((source) => !source.loaded)) {
     emptyEl.textContent = 'Gathering transit updates…';
   } else if (allFailed) {
     emptyEl.textContent =
@@ -493,7 +627,7 @@ function render(): void {
       (notifications.failed && notifications.loaded);
     statusEl.textContent = `${failedNames.join(' and ')} could not refresh.${hasSnapshot ? ' Showing the last available updates.' : ''} Try Refresh.`;
   } else if (lastSuccessfulRefresh) {
-    statusEl.textContent = `Updated ${new Date(lastSuccessfulRefresh).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}. Refreshes automatically while this page is open.`;
+    statusEl.textContent = `Updated ${new Date(lastSuccessfulRefresh).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · Auto-refresh on`;
   } else {
     statusEl.textContent = 'Updates have not loaded yet.';
   }
@@ -558,6 +692,7 @@ async function loadSavedRoutes(): Promise<void> {
       savedLoading = false;
       savedRequest = null;
       render();
+      restoreReadingContext();
     }
   }
 }
@@ -592,8 +727,13 @@ async function refresh(): Promise<void> {
       : { ...notifications, failed: true };
   if (results.some((result) => result.status === 'fulfilled'))
     lastSuccessfulRefresh = Date.now();
+  savedUpdates.reconcile(feedEntries(), new Set([
+    ...(alertResult.status === 'fulfilled' ? ['service' as const] : []),
+    ...(notificationResult.status === 'fulfilled' ? ['live' as const] : [])
+  ]));
   loading = false;
   render();
+  restoreReadingContext();
 }
 
 function scheduleRefresh(): void {
@@ -624,6 +764,33 @@ function init(): void {
       route: params.get('route') || undefined,
       bus: params.get('bus') || undefined
     };
+  loadReadingContext();
+  // A fresh interaction wins over a slow returning page's saved scroll/focus.
+  const cancelPendingReading = () => { pendingReading = null; };
+  let departing = false;
+  const rememberReading = () => {
+    if (!disposed && !departing && isSameSession(token) && !pendingReading) saveReadingContext();
+  };
+  const rememberBeforeLink = (event: Event) => {
+    const link = (event.target as Element | null)?.closest<HTMLAnchorElement>('a[href]');
+    const click = event as MouseEvent;
+    if (!link || click.button || click.metaKey || click.ctrlKey || click.shiftKey || click.altKey || link.target === '_blank') return;
+    if (isSameSession(token)) saveReadingContext();
+    departing = true;
+    if (readingScrollTimer) clearTimeout(readingScrollTimer);
+    readingScrollTimer = null;
+  };
+  let readingScrollTimer: ReturnType<typeof setTimeout> | null = null;
+  const rememberScroll = () => {
+    if (readingScrollTimer) clearTimeout(readingScrollTimer);
+    readingScrollTimer = setTimeout(() => { readingScrollTimer = null; rememberReading(); }, 500);
+  };
+  main?.addEventListener('input', cancelPendingReading, true);
+  main?.addEventListener('click', cancelPendingReading, true);
+  main?.addEventListener('change', cancelPendingReading, true);
+  main?.addEventListener('click', rememberBeforeLink, true);
+  for (const type of ['input', 'change', 'click', 'toggle']) main?.addEventListener(type, rememberReading, type === 'toggle');
+  main?.addEventListener('scroll', rememberScroll);
   searchInput.addEventListener('input', () => {
     prefillContext = null;
     render();
@@ -640,7 +807,7 @@ function init(): void {
   windowSelect?.addEventListener('change', render);
   topicSelect?.addEventListener('change', render);
   resetFilters?.addEventListener('click', () => {
-    savedOnly = unreadOnly = false;
+    savedOnly = unreadOnly = readingListOnly = false;
     view = 'all';
     prefillContext = null;
     searchInput.value = '';
@@ -696,6 +863,10 @@ function init(): void {
     unreadOnly = !unreadOnly;
     render();
   });
+  readingListBtn?.addEventListener('click', () => {
+    readingListOnly = !readingListOnly;
+    render();
+  });
   sortSelect?.addEventListener('change', () => {
     sort = sortSelect.value === 'newest' ? 'newest' : 'priority';
     render();
@@ -709,9 +880,11 @@ function init(): void {
       return;
     if (
       event.key?.startsWith('scottygo:notification-inbox:') ||
+      event.key?.startsWith('scottygo:saved-updates:') ||
       event.key === null
     ) {
       readStore.reload();
+      savedUpdates.reload();
       lastBatch = [];
       render();
     }
@@ -736,6 +909,7 @@ function init(): void {
     if (!document.hidden && !loading) void refresh();
   }, 60_000);
   const restorePage = (event: PageTransitionEvent) => {
+    departing = false;
     if (event.persisted && !disposed) {
       if (reloadChangedSession()) return;
       socket.connect();
@@ -743,7 +917,9 @@ function init(): void {
       void loadSavedRoutes();
     }
   };
-  const hidePage = (event: PageTransitionEvent) => cleanup(!event.persisted);
+  const hidePage = (event: PageTransitionEvent) => {
+    cleanup(!event.persisted);
+  };
   function reloadChangedSession(): boolean {
     if (isSameSession(token)) return false;
     cleanup(true);
@@ -760,9 +936,17 @@ function init(): void {
     loading = false;
     if (socketRefreshTimer) clearTimeout(socketRefreshTimer);
     socketRefreshTimer = null;
+    if (readingScrollTimer) clearTimeout(readingScrollTimer);
+    readingScrollTimer = null;
     // BFCache freezes timers; retain one set of listeners for restoration.
     if (!permanent) return;
     disposed = true;
+    main?.removeEventListener('input', cancelPendingReading, true);
+    main?.removeEventListener('click', cancelPendingReading, true);
+    main?.removeEventListener('change', cancelPendingReading, true);
+    main?.removeEventListener('click', rememberBeforeLink, true);
+    for (const type of ['input', 'change', 'click', 'toggle']) main?.removeEventListener(type, rememberReading, type === 'toggle');
+    main?.removeEventListener('scroll', rememberScroll);
     clearInterval(timer);
     document.removeEventListener('scottygo:notification', scheduleRefresh);
     document.removeEventListener('visibilitychange', visibilityRefresh);

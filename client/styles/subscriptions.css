@@ -91,6 +91,34 @@
   line-height: 1.5;
 }
 
+.card-time-toggle {
+  display: block;
+  max-width: 100%;
+  min-height: 44px;
+  border: 0;
+  padding: 4px 0;
+  background: transparent;
+  color: var(--app-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.card-time-toggle::after { content: ' ⌄'; }
+.card-time-toggle[aria-expanded='true']::after { content: ' ⌃'; }
+.card-time-exact {
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--app-muted);
+  overflow-wrap: anywhere;
+}
+.card-time-exact[hidden] { display: none; }
+.card-time-toggle:focus-visible { outline: 2px solid var(--app-brand); outline-offset: 2px; }
+
 .card-popup-state {
   margin-top: 4px;
   font-size: 12px;
@@ -219,6 +247,7 @@
   border: none;
   border-radius: 999px;
   padding: 14px 32px;
+  font: inherit;
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
@@ -567,4 +596,21 @@
   width: 18px;
   height: 18px;
   accent-color: #86142b;
+}
+
+/* Let route information use the space that a decorative icon occupied on phones. */
+@media (max-width: 520px) {
+  .content { padding-top: 20px; }
+  .content > .page-title { font-size: 26px; margin-bottom: 6px; }
+  .content > .page-intro { margin-bottom: 12px; font-size: 14px; line-height: 1.5; }
+  .saved-route-options { width: 100%; margin-block: 0 12px; }
+  .saved-route-options summary { font-size: 14px; }
+  .subscription-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px 12px; }
+  .card-icon-circle { display: none; }
+  .card-info { grid-column: 1; }
+  .card-actions { grid-column: 2; align-self: start; gap: 4px; }
+  .card-destinations, .card-popup-options { grid-column: 1 / -1; }
+  .card-route-title { font-size: 18px; }
+  .card-time-toggle { margin-block: 0; }
+  .add-route-btn { width: 100%; justify-content: center; min-height: 48px; margin-top: 0; }
 }

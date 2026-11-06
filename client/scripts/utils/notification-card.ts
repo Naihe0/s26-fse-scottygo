@@ -20,6 +20,9 @@ export interface NotificationCardActions {
   read: boolean;
   onReadChange(read: boolean): void;
   onShare(trigger: HTMLButtonElement): void;
+  saved?: boolean;
+  savedCopy?: string;
+  onSaveChange?(): void;
 }
 
 function appendInboxActions(
@@ -50,6 +53,16 @@ function appendInboxActions(
   share.dataset.action = 'share';
   share.addEventListener('click', () => actions.onShare(share));
   footer.append(read, share);
+  if (actions.onSaveChange) {
+    const save = element('button', 'notif-save-action', actions.saved ? 'Saved' : 'Save update');
+    save.type = 'button';
+    save.dataset.action = 'save';
+    save.setAttribute('aria-pressed', String(Boolean(actions.saved)));
+    save.setAttribute('aria-label', actions.saved ? 'Remove from reading list' : 'Save update to reading list');
+    save.addEventListener('click', actions.onSaveChange);
+    footer.append(save);
+  }
+  if (actions.savedCopy) card.append(element('p', 'notif-saved-copy', actions.savedCopy));
   card.append(footer);
 }
 

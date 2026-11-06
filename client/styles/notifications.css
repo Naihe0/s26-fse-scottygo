@@ -700,3 +700,33 @@
 .notif-routes[aria-label="Affected stops"] .notif-route {
   display: inline-flex; align-items: center; min-height: 44px; box-sizing: border-box;
 }
+
+/* Keep the first notice in reach; secondary controls expand on demand. */
+.content { padding-top: 18px; }
+.notif-intro { align-items: center; gap: 12px; margin-bottom: 14px; }
+.content .page-title { margin: 0; font-size: clamp(24px, 4vw, 32px); }
+.notif-controls { padding: 12px; }
+.notif-view-controls { margin-top: 6px; }
+.notif-inbox-controls { margin-top: 6px; padding-top: 6px; gap: 6px; }
+.notif-more-options { flex: 1 1 auto; }
+.notif-secondary-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding-top: 12px; }
+.notif-secondary-actions > button {
+  min-height: 44px; padding: 8px 12px; border: 1px solid #dfe5eb;
+  border-radius: 8px; background: #fff; color: #4f6172; font: inherit;
+  font-size: 13px; cursor: pointer;
+}
+.notif-secondary-actions > button[aria-pressed='true'], .notif-save-action[aria-pressed='true'] {
+  background: #eaf4f6; color: #235a6c; border-color: #6391a0;
+}
+.notif-results-meta { margin-top: 12px; margin-bottom: 12px; gap: 4px; }
+.notif-saved-copy { color: #665226; background: #fff8e8; border-radius: 7px; padding: 9px 11px; font-size: 12px; line-height: 1.5; margin-top: 12px; }
+.notif-save-action { font: inherit; }
+@media (max-width: 600px) {
+  .notif-intro { flex-direction: row; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .notif-refresh { min-width: 76px; align-self: center; padding-inline: 10px; }
+  .notif-filters { width: 100%; }
+  .notif-inbox-controls > button, .notif-more-options > summary { padding-inline: 9px; font-size: 12px; }
+  .notif-more-options > summary { width: 100%; }
+  .notif-results-meta { margin-top: 10px; gap: 2px; }
+  .notif-card-actions { gap: 6px; }
+}

@@ -55,6 +55,7 @@ export function apiFixture() {
     checks: 0,
     arrivalUnavailable: false,
     emptyStopRoute: null,
+    hideAgencyAlerts: false,
     arrivalMissingOccurrence: null,
     registrations: [],
     agreements: [],
@@ -244,7 +245,7 @@ export function apiFixture() {
       );
     }
     if (p === '/notifications/alerts')
-      return response('AlertsRetrieved', [
+      return response('AlertsRetrieved', events.hideAgencyAlerts ? [] : [
         {
           id: '61C-test',
           headerText: 'Forbes stop relocated',

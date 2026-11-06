@@ -1,3 +1,4 @@
+import { rehearseReadingList } from './reading-list.mjs';
 /**
  * Run against built pages with deterministic buses, GPS, accounts and SDK responses.
  * Set PLAYWRIGHT_MODULE to a Playwright installation if it isn't in node_modules.
@@ -658,6 +659,7 @@ try {
     await click('#notif-mark-shown-read');
     await click('#notif-undo');
     await click('#notif-reset');
+      await rehearseReadingList({ page, fixture });
   });
   await step(
     'UC19 Edit and persist profile then cancel a separate draft',

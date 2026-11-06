@@ -13,15 +13,9 @@
     <main class="content" aria-labelledby="page-title">
       <div class="notif-intro">
         <div>
-          <p class="notif-eyebrow">Stay one step ahead</p>
           <h1 class="page-title" id="page-title">Transit updates</h1>
-          <p class="notif-lead"
-            >Service changes and rider reports, in one place.</p
-          >
         </div>
-        <a class="notif-manage" href="/subscriptions"
-          >Manage followed routes <span aria-hidden="true">↗</span></a
-        >
+        <button type="button" id="notif-refresh" class="notif-refresh">Refresh</button>
       </div>
       <div class="notif-controls">
         <div class="notif-search">
@@ -80,23 +74,24 @@
               >Live updates</button
             >
           </div>
-          <button type="button" id="notif-refresh" class="notif-refresh"
-            >Refresh</button
-          >
         </div>
         <div
           class="notif-inbox-controls"
           role="group"
           aria-label="Personal inbox filters"
         >
-          <button type="button" id="notif-saved-only" aria-pressed="false"
-            >Saved routes</button
-          >
+          <button type="button" id="notif-reading-list" aria-pressed="false">Reading list</button>
           <button type="button" id="notif-unread-only" aria-pressed="false"
             >Unread</button
           >
           <details class="notif-more-options" id="notif-more-options">
             <summary>More options</summary>
+            <div class="notif-secondary-actions">
+              <button type="button" id="notif-saved-only" aria-pressed="false">Saved routes</button>
+              <button type="button" id="notif-mark-shown-read" hidden>Mark shown as read</button>
+              <button type="button" id="notif-undo" hidden>Undo mark as read</button>
+              <a class="notif-manage" href="/subscriptions">Manage followed routes ↗</a>
+            </div>
             <div class="notif-option-fields">
               <label>Affected route<select id="notif-route"><option value="">Any route</option></select></label>
               <label>Agency severity<select id="notif-severity"><option value="all">Any severity</option><option value="elevated">Warnings &amp; severe only</option></select></label>
@@ -119,6 +114,10 @@
               >Agency dates use alert-window starts. Shared notices appear once
               under their route group.</p
             >
+        <p class="notif-context"
+          >Agency alerts from PRT · Rider reports from the last 30 minutes. Read
+          status is saved in this browser.</p
+        >
           </details>
         </div>
         <p
@@ -133,19 +132,11 @@
           role="status"
           aria-live="polite"
         ></p>
-        <p class="notif-context"
-          >Agency alerts from PRT · Rider reports from the last 30 minutes. Read
-          status is saved in this browser.</p
-        >
       </div>
       <div class="notif-results-meta">
         <div class="notif-result-actions">
           <span id="notif-count">0 updates</span>
           <button type="button" id="notif-reset" hidden>Clear filters</button>
-          <button type="button" id="notif-mark-shown-read" hidden
-            >Mark shown as read</button
-          >
-          <button type="button" id="notif-undo" hidden>Undo mark as read</button>
         </div>
         <p id="notif-status" role="status" aria-live="polite"
           >Loading transit updates…</p

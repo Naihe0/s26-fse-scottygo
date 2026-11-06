@@ -22,6 +22,7 @@ import {
 } from './utils/route-display';
 import { authHeaders, getToken, isSameSession } from './services/session';
 import { MAX_SUBSCRIPTIONS_PER_USER } from '../../common/limits';
+import { describeRiderTime } from './utils/rider-time';
 
 function routeIdsEqual(a: string, b: string): boolean {
   return normalizeRouteId(a) === normalizeRouteId(b);
@@ -53,6 +54,8 @@ const currentSession = (version = pageVersion) =>
   !sessionChanged &&
   isSameSession(pageToken);
 let stopPreferenceWatch: (() => void) | undefined;
+let dateTimer: number | undefined;
+let dateEvents: AbortController | undefined;
 let lastRemoval: {
   subscription: Subscription;
   preference: RoutePopupPreference;
@@ -217,15 +220,6 @@ function updateCount(): void {
   btn.classList.toggle('is-disabled', btn.disabled);
 }
 
-function formatAgo(isoTimestamp: string): string {
-  const mins = Math.round(
-    (Date.now() - new Date(isoTimestamp).getTime()) / 60_000
-  );
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  return `${Math.floor(mins / 60)}h ago`;
-}
-
 function createCard(sub: Subscription): HTMLLIElement {
   const muted = isRouteMuted(sub.routeId);
   const popupPreference = getRoutePopupPreference(sub.routeId);
@@ -246,10 +240,14 @@ function createCard(sub: Subscription): HTMLLIElement {
   li.dataset.routeId = sub.routeId;
 
   const notifTime = latestNotifTime.get(sub.routeId);
-  const updatedText = notifTime
-    ? `Updated ${formatAgo(notifTime)}`
-    : sub.createdAt
-      ? `Subscribed ${formatAgo(sub.createdAt)}`
+  const timestamp = notifTime || sub.createdAt;
+  const date = timestamp ? describeRiderTime(timestamp) : null;
+  const dateLabel = notifTime ? 'Updated' : 'Saved';
+  const dateId = `route-date-${encodeURIComponent(routeId)}`;
+  const dateMarkup = date
+    ? `<button type="button" class="card-time-toggle" data-date-label="${dateLabel}" aria-expanded="false" aria-controls="${dateId}">${dateLabel} ${escapeHtml(date.label)}</button><time class="card-time-exact" id="${dateId}" datetime="${date.iso}" hidden>${dateLabel} ${escapeHtml(date.absolute)}</time>`
+    : timestamp
+      ? '<span class="card-last-updated">Date unavailable</span>'
       : '';
 
   li.innerHTML = `
@@ -257,7 +255,7 @@ function createCard(sub: Subscription): HTMLLIElement {
     <div class="card-info">
       <h2 class="card-route-title">${escapeHtml(display.title)}</h2>
       <div class="card-last-updated">${escapeHtml(routeSubtitle(route, display.subtitle))}</div>
-      ${updatedText ? `<div class="card-last-updated">${updatedText}</div>` : ''}
+      ${dateMarkup}
       <div class="card-popup-state" data-mode="${popupPreference.mode}">${escapeHtml(popupState)}</div>
     </div>
     <div class="card-actions">
@@ -277,6 +275,16 @@ function createCard(sub: Subscription): HTMLLIElement {
       <p>Applies to your account in this browser while ScottyGo is open. Route updates stay available.</p>
     </details>
   `;
+
+  li.querySelector<HTMLButtonElement>('.card-time-toggle')?.addEventListener(
+    'click',
+    (event) => {
+      const button = event.currentTarget as HTMLButtonElement;
+      const expanded = button.getAttribute('aria-expanded') !== 'true';
+      button.setAttribute('aria-expanded', String(expanded));
+      li.querySelector<HTMLElement>('.card-time-exact')!.hidden = !expanded;
+    }
+  );
 
   // Remove subscription (A7)
   li.querySelector<HTMLButtonElement>('.card-remove')!.addEventListener(
@@ -396,6 +404,7 @@ function renderList(): void {
     'card-bell',
     'card-updates-link',
     'card-route-link',
+    'card-time-toggle',
     'card-popup-summary',
     'card-pause-popups',
     'card-resume-popups'
@@ -409,6 +418,16 @@ function renderList(): void {
     )
   );
   const content = document.querySelector<HTMLElement>('main')!;
+  const expandedDates = new Set(
+    [
+      ...list.querySelectorAll<HTMLButtonElement>(
+        '.card-time-toggle[aria-expanded="true"]'
+      )
+    ].map(
+      (button) =>
+        button.closest<HTMLElement>('[data-route-id]')!.dataset.routeId
+    )
+  );
   const scrollTop = content.scrollTop;
   list.innerHTML = '';
   const visible = subscriptions.filter(
@@ -430,6 +449,13 @@ function renderList(): void {
   list.querySelectorAll<HTMLElement>('.subscription-card').forEach((card) => {
     if (expanded.has(card.dataset.routeId))
       card.querySelector<HTMLDetailsElement>('details')!.open = true;
+    if (expandedDates.has(card.dataset.routeId)) {
+      card
+        .querySelector('.card-time-toggle')
+        ?.setAttribute('aria-expanded', 'true');
+      const exact = card.querySelector<HTMLElement>('.card-time-exact');
+      if (exact) exact.hidden = false;
+    }
   });
   document.getElementById('saved-route-options')!.hidden =
     !subscriptions.length;
@@ -878,6 +904,7 @@ async function init(): Promise<void> {
 
   initSheet();
   watchPopupPreferences();
+  startDateClock();
   document
     .getElementById('undo-remove-btn')!
     .addEventListener('click', () => void undoRemoval());
@@ -902,11 +929,43 @@ async function init(): Promise<void> {
   ]);
 }
 
+function refreshDateLabels(): void {
+  if (!currentSession() || document.hidden) return;
+  document
+    .querySelectorAll<HTMLButtonElement>('.card-time-toggle')
+    .forEach((button) => {
+      const time = document.getElementById(
+        button.getAttribute('aria-controls')!
+      ) as HTMLTimeElement | null;
+      const date = time && describeRiderTime(time.dateTime);
+      if (date)
+        button.textContent = `${button.dataset.dateLabel} ${date.label}`;
+    });
+}
+
+function stopDateClock(): void {
+  if (dateTimer !== undefined) window.clearInterval(dateTimer);
+  dateTimer = undefined;
+  dateEvents?.abort();
+  dateEvents = undefined;
+}
+
+function startDateClock(): void {
+  stopDateClock();
+  dateEvents = new AbortController();
+  document.addEventListener('visibilitychange', refreshDateLabels, {
+    signal: dateEvents.signal
+  });
+  dateTimer = window.setInterval(refreshDateLabels, 60_000);
+  refreshDateLabels();
+}
+
 function watchPopupPreferences(): void {
   stopPreferenceWatch?.();
   stopPreferenceWatch = subscribeRoutePopupPreferences((reason) => {
     if (suspended) return;
     if (reason === 'session' || !isSameSession(pageToken)) {
+      stopDateClock();
       sessionChanged = true;
       pageVersion++;
       lastRemoval = null;
@@ -929,6 +988,7 @@ function watchPopupPreferences(): void {
 }
 
 window.addEventListener('pagehide', () => {
+  stopDateClock();
   suspended = true;
   pageVersion++;
   mutationPending = false;
@@ -947,6 +1007,7 @@ window.addEventListener('pageshow', (event) => {
     return;
   }
   watchPopupPreferences();
+  startDateClock();
   void loadSubscriptions();
   void loadRoutes();
   void fetchRecentNotifications();

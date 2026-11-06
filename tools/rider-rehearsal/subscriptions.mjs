@@ -8,15 +8,21 @@ export async function rehearsePopupPreferences({
   socket
 }) {
   const card = page.locator('.subscription-card[data-route-id="61C"]');
+  const date = card.locator('.card-time-toggle');
+  assert.doesNotMatch(await date.innerText(), /\d{3,}h/);
+  await date.click();
+  await card.locator('.card-time-exact:visible').waitFor();
+  assert.match(await card.locator('.card-time-exact').innerText(), /20\d{2}.*(EST|EDT)/);
   await card.locator('.card-popup-summary').click();
   await card.getByRole('button', { name: 'Pause for 1 hour' }).click();
   await card.locator('.card-popup-state[data-mode="paused"]').waitFor();
+  assert.equal(await date.getAttribute('aria-expanded'), 'true');
   const deadline = await card.locator('.card-popup-state').innerText();
   assert.match(deadline, /^Paused until /);
   await page.reload();
   await card.locator('.card-popup-state[data-mode="paused"]').waitFor();
   assert.equal(await card.locator('.card-popup-state').innerText(), deadline);
-  assert.equal(await card.locator('details').getAttribute('open'), null);
+  assert.equal(await card.locator('.card-popup-options').getAttribute('open'), null);
   await card.locator('.card-popup-summary').click();
   await card.getByRole('button', { name: 'Resume popups now' }).click();
   await card.locator('.card-popup-state[data-mode="enabled"]').waitFor();

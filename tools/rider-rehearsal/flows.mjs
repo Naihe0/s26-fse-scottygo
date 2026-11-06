@@ -58,10 +58,11 @@ export const suiteGroups = {
     'map-navigation',
     'share-departure'
   ],
-  UC15: ['subscriptions', 'map-subscription-session', 'muted-routes'],
+  UC15: ['subscriptions', 'rider-time', 'map-subscription-session', 'muted-routes'],
   UC16: [
     'notification-rendering',
     'notification-inbox',
+    'saved-updates',
     'agency-window',
     'alert-content',
     'alert-metadata.unit'
@@ -236,8 +237,8 @@ export const alternateFlows = {
   ],
   UC15: [
     [
-      'Subscription filters and operator picker',
-      'filter|sort|system|operator|saved'
+      'Subscription filters, date disclosure and operator picker',
+      'filter|sort|system|operator|saved|date|Pittsburgh|hours|minute'
     ],
     [
       'Account popup settings, timed pause and undo removal',
@@ -255,7 +256,15 @@ export const alternateFlows = {
     ],
     ['Expand, follow links and share', 'link|expand|share|source|platform'],
     ['Read state and changed notices', 'read|changed|updated|receipt'],
-    ['Failure and retained reading state', 'fail|retry|refresh|retain|preserv']
+    ['Failure and retained reading state', 'fail|retry|refresh|retain|preserv'],
+    [
+      'Reading list snapshots, account isolation and storage recovery',
+      'sav|snapshot|reading list|account|storage|import|feed|thirtieth'
+    ],
+    [
+      'Return to inbox filters, open notices and reading position',
+      'return|restor|another account|slow'
+    ]
   ],
   UC17: [
     ['Foreground reading and dismissal', 'focus|pause|dismiss|reading'],

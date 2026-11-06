@@ -37,7 +37,7 @@ function changeSearch(text: string): void {
     'notif-search-input'
   ) as HTMLInputElement;
   input.value = text;
-  input.dispatchEvent(new Event('input'));
+  input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 function choose(view: string): void {
   document
@@ -799,6 +799,175 @@ describe('notification center rendering and refresh ownership', () => {
       document.querySelector<HTMLDetailsElement>('.notif-details')!.open
     ).toBe(true);
     expect((document.activeElement as HTMLElement).dataset.action).toBe('read');
+  });
+
+  function readingPage(): void {
+    localStorage.setItem('token', 'x.' + btoa(JSON.stringify({ userId: 'reader-a' })) + '.x');
+    document.body.innerHTML = '<main class="content">' + document.body.innerHTML +
+      '<button id="notif-reading-list">Reading list</button><details id="notif-more-options"><summary>More options</summary></details></main>';
+  }
+
+  test('saving retains a readable copy after it leaves a successful feed', async () => {
+    readingPage();
+    useSnapshots([service()], []);
+    await import('../../client/scripts/notification');
+    await flush();
+    document.querySelector<HTMLButtonElement>('[data-action="save"]')!.click();
+    document.getElementById('notif-reading-list')!.click();
+    expect(document.querySelector('.notif-saved-copy')).toBeNull();
+    useSnapshots([], []);
+    document.getElementById('notif-refresh')!.click();
+    await flush();
+    expect(document.querySelector('.notif-title')?.textContent).toBe('Agency one');
+    expect(document.querySelector('.notif-saved-copy')?.textContent).toContain('No longer in the current feed');
+    const remove = document.querySelector<HTMLButtonElement>('[data-action="save"]')!;
+    expect(remove.getAttribute('aria-pressed')).toBe('true');
+    remove.focus();
+    remove.click();
+    expect(document.querySelectorAll('.notif-card')).toHaveLength(0);
+    expect(document.getElementById('notif-empty')?.textContent).toContain('reading list is empty');
+    expect(document.activeElement).toBe(document.getElementById('notif-reading-list'));
+  });
+
+  test('saved content refreshes while failed source has unverified availability', async () => {
+    readingPage();
+    useSnapshots([service()], []);
+    await import('../../client/scripts/notification');
+    await flush();
+    document.querySelector<HTMLButtonElement>('[data-action="save"]')!.click();
+    document.getElementById('notif-reading-list')!.click();
+    useSnapshots([{ ...service(), headerText: 'Changed diversion' }], []);
+    document.getElementById('notif-refresh')!.click();
+    await flush();
+    expect(document.querySelector('.notif-title')?.textContent).toBe('Changed diversion');
+    mockFetch.mockImplementation((url: string) => url === '/notifications/alerts'
+      ? Promise.reject(new Error('offline')) : Promise.resolve(result([])));
+    document.getElementById('notif-refresh')!.click();
+    await flush();
+    expect(document.querySelector('.notif-saved-copy')?.textContent).toContain('not been verified');
+    expect(document.querySelector('.notif-saved-copy')?.textContent).not.toContain('No longer');
+  });
+
+  test('return restores search, type, expanded notice and reading scroll', async () => {
+    readingPage();
+    useSnapshots([{ ...service(), descriptionText: 'Long notice. '.repeat(50) }], []);
+    await import('../../client/scripts/notification');
+    await flush();
+    choose('service');
+    changeSearch('Agency');
+    document.querySelector<HTMLDetailsElement>('.notif-details')!.open = true;
+    document.querySelector<HTMLDetailsElement>('#notif-more-options')!.open = true;
+    const main = document.querySelector<HTMLElement>('main')!;
+    main.scrollTop = 250;
+    main.dispatchEvent(new Event('scroll'));
+    jest.advanceTimersByTime(500);
+    jest.runAllTicks();
+    pageTransition('pagehide', false);
+    jest.resetModules();
+    document.querySelector<HTMLInputElement>('#notif-search-input')!.value = '';
+    document.querySelector('#notif-list')!.replaceChildren();
+    main.scrollTop = 0;
+    await import('../../client/scripts/notification');
+    await flush();
+    expect(document.querySelector<HTMLInputElement>('#notif-search-input')!.value).toBe('Agency');
+    expect(document.querySelector('[data-notif-view="service"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(document.querySelector<HTMLDetailsElement>('.notif-details')!.open).toBe(true);
+    expect(document.querySelector<HTMLDetailsElement>('#notif-more-options')!.open).toBe(true);
+    expect(main.scrollTop).toBe(250);
+  });
+
+  test('a new search wins over restored scroll during a slow return', async () => {
+    readingPage();
+    useSnapshots([service()], []);
+    await import('../../client/scripts/notification');
+    await flush();
+    document.querySelector<HTMLElement>('main')!.scrollTop = 300;
+    document.querySelector<HTMLElement>('main')!.dispatchEvent(new Event('scroll'));
+    jest.advanceTimersByTime(500);
+    jest.runAllTicks();
+    pageTransition('pagehide', false);
+    jest.resetModules();
+    let finish!: (value: unknown) => void;
+    mockFetch.mockImplementation((url: string) => url === '/notifications/alerts'
+      ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(result([])));
+    document.querySelector('#notif-list')!.replaceChildren();
+    document.querySelector<HTMLElement>('main')!.scrollTop = 0;
+    await import('../../client/scripts/notification');
+    changeSearch('different');
+    document.querySelector<HTMLInputElement>('#notif-search-input')!.focus();
+    finish(result([service()]));
+    await flush();
+    expect(document.querySelector<HTMLInputElement>('#notif-search-input')!.value).toBe('different');
+    expect(document.querySelector<HTMLElement>('main')!.scrollTop).toBe(0);
+    expect(document.activeElement).toBe(document.getElementById('notif-search-input'));
+  });
+
+  test('another account cannot inherit the reading list or restored query', async () => {
+    readingPage();
+    useSnapshots([service()], []);
+    await import('../../client/scripts/notification');
+    await flush();
+    document.querySelector<HTMLButtonElement>('[data-action="save"]')!.click();
+    changeSearch('Agency');
+    jest.runAllTicks();
+    pageTransition('pagehide', false);
+    localStorage.setItem('token', 'x.' + btoa(JSON.stringify({ userId: 'reader-b' })) + '.x');
+    jest.resetModules();
+    await import('../../client/scripts/notification');
+    await flush();
+    expect(document.querySelector<HTMLInputElement>('#notif-search-input')!.value).toBe('');
+    document.getElementById('notif-reading-list')!.click();
+    expect(document.querySelectorAll('.notif-card')).toHaveLength(0);
+  });
+
+  test('a departing link saves once before navigation and never mutates history during unload', async () => {
+    readingPage();
+    useSnapshots([service()], []);
+    await import('../../client/scripts/notification');
+    await flush();
+    const replace = jest.spyOn(history, 'replaceState');
+    changeSearch('Agency');
+    replace.mockClear();
+    const link = document.querySelector<HTMLAnchorElement>('.notif-route')!;
+    link.addEventListener('click', event => event.preventDefault()); // JSDOM has no navigation.
+    link.click();
+    jest.runAllTicks();
+    expect(replace).toHaveBeenCalledTimes(1);
+    pageTransition('pagehide', false);
+    expect(replace).toHaveBeenCalledTimes(1);
+    replace.mockRestore();
+  });
+
+  test('reading list honors another tab removing a saved update', async () => {
+    readingPage();
+    useSnapshots([service()], []);
+    await import('../../client/scripts/notification');
+    await flush();
+    document.querySelector<HTMLButtonElement>('[data-action="save"]')!.click();
+    document.getElementById('notif-reading-list')!.click();
+    const key = Object.keys(localStorage).find(key => key.startsWith('scottygo:saved-updates:'))!;
+    localStorage.setItem(key, '[]');
+    window.dispatchEvent(new StorageEvent('storage', { key }));
+    expect(document.querySelectorAll('.notif-card')).toHaveLength(0);
+  });
+
+  test.each(['expired', 'future', 'different-url'])('ignores %s reading context on return', async (reason) => {
+    readingPage();
+    useSnapshots([service()], []);
+    await import('../../client/scripts/notification');
+    await flush();
+    changeSearch('Agency');
+    const state = history.state.scottygoInbox;
+    expect(state.query).toBe('Agency');
+    pageTransition('pagehide', false);
+    if (reason === 'expired') state.at = Date.now() - 31 * 60_000;
+    if (reason === 'future') state.at = Date.now() + 60_000;
+    if (reason === 'different-url') state.url = '/notifications?route=61C';
+    history.replaceState({ scottygoInbox: state }, '');
+    jest.resetModules();
+    await import('../../client/scripts/notification');
+    await flush();
+    expect(document.querySelector<HTMLInputElement>('#notif-search-input')!.value).toBe('');
   });
 
   test('copying an update gives a visible dismissible success message', async () => {

@@ -112,6 +112,70 @@ describe('saved routes interactions and recovery', () => {
     jest.useRealTimers();
   });
 
+  test('old saved dates reveal an exact Pittsburgh timestamp and retain focus through preference updates', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: '2026-09-19T18:00:00Z' }];
+    await boot();
+    const date =
+      document.querySelector<HTMLButtonElement>('.card-time-toggle')!;
+    expect(date.textContent).toBe('Saved Sep 19');
+    date.focus();
+    date.click();
+    expect(
+      document.querySelector<HTMLTimeElement>('.card-time-exact')!.hidden
+    ).toBe(false);
+    expect(document.querySelector('.card-time-exact')!.textContent).toMatch(
+      /Sep 19, 2026.*2:00 PM EDT/
+    );
+    const { setRoutePopupPreference } =
+      await import('../../client/scripts/utils/muted-routes');
+    setRoutePopupPreference('61D', { mode: 'muted' });
+    const restored =
+      document.querySelector<HTMLButtonElement>('.card-time-toggle')!;
+    expect(restored.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(restored);
+    restored.click();
+    expect(
+      document.querySelector<HTMLTimeElement>('.card-time-exact')!.hidden
+    ).toBe(true);
+  });
+
+  test('relative date labels age while visible and refresh after returning from the background', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: new Date().toISOString() }];
+    await boot();
+    const date =
+      document.querySelector<HTMLButtonElement>('.card-time-toggle')!;
+    expect(date.textContent).toBe('Saved just now');
+    jest.advanceTimersByTime(120000);
+    expect(date.textContent).toBe('Saved 2 min ago');
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      value: true
+    });
+    jest.advanceTimersByTime(3600000);
+    expect(date.textContent).toBe('Saved 2 min ago');
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      value: false
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+    const foregroundDate =
+      document.querySelector<HTMLButtonElement>('.card-time-toggle')!;
+    expect(foregroundDate.textContent).toBe('Saved 1 hr ago');
+    window.dispatchEvent(new Event('pagehide'));
+    jest.advanceTimersByTime(3600000);
+    expect(foregroundDate.textContent).toBe('Saved 1 hr ago');
+  });
+
+  test('an invalid saved date stays unavailable without a broken date disclosure', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: 'invalid' }];
+    await boot();
+    expect(document.querySelector('.subscription-card')!.textContent).toContain(
+      'Date unavailable'
+    );
+    expect(document.querySelector('.card-time-toggle')).toBeNull();
+    expect(document.body.textContent).not.toMatch(/NaN|Invalid Date/);
+  });
+
   test('combines agency and unsaved filters including after a successful save', async () => {
     routes.push(
       { id: 'CMU-1', name: 'Campus Shuttle', system: 'CMU' },
