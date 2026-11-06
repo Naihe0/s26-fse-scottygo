@@ -51,6 +51,11 @@ let explorer: RouteExplorer;
 let selectedStop: jest.Mock;
 beforeEach(() => {
   jest.clearAllMocks();
+  localStorage.clear();
+  localStorage.setItem(
+    'token',
+    `fixture.${btoa(JSON.stringify({ userId: 'explorer-rider' }))}.fixture`
+  );
   state.resetFilters();
   state.updateFilters({
     plannedLocation: null,
@@ -151,7 +156,9 @@ test('searches by stop name and ID while maintaining input focus', async () => {
 
 test('selecting a stop closes the explorer and calls the configured map action', async () => {
   await open();
-  explorer.querySelector<HTMLButtonElement>('[data-stops] button')!.click();
+  explorer
+    .querySelector<HTMLButtonElement>('[data-stops] [data-explorer-stop]')!
+    .click();
   expect(selectedStop).toHaveBeenCalledWith(stop('s1', 'Alpha', 40.441));
   expect(explorer.querySelector('dialog')!.open).toBe(false);
 });
@@ -395,14 +402,16 @@ test('finds a transfer on the correct platform and ranks stops by distance', asy
   )!;
   sort.value = 'distance';
   sort.dispatchEvent(new Event('change'));
-  expect(explorer.querySelector('[data-stops] button')?.textContent).toContain(
-    'ZuluStop near · 0 mTransfer to 71A'
-  );
+  expect(
+    explorer.querySelector('[data-stops] [data-explorer-stop]')?.textContent
+  ).toContain('ZuluStop near · 0 mTransfer to 71A');
   const input = explorer.querySelector('input')!;
   input.value = '71a';
   input.dispatchEvent(new Event('input'));
   expect(explorer.querySelectorAll('[data-stops] li')).toHaveLength(1);
-  explorer.querySelector<HTMLButtonElement>('[data-stops] button')!.click();
+  explorer
+    .querySelector<HTMLButtonElement>('[data-stops] [data-explorer-stop]')!
+    .click();
   expect(selectedStop.mock.calls[0][0].stopId).toBe('near');
 });
 
@@ -437,6 +446,17 @@ test('full-route overview emits the selected route and dismisses the panel', asy
   const listener = jest.fn();
   explorer.addEventListener('routeOverview', listener);
   explorer.querySelector<HTMLButtonElement>('[data-overview]')!.click();
+  expect(listener.mock.calls[0][0].detail).toEqual({ routeId: '61C' });
+  expect(explorer.querySelector('dialog')!.open).toBe(false);
+});
+
+test('the Buses tab can show the full route and dismisses the explorer with the current route', async () => {
+  await open();
+  const listener = jest.fn();
+  explorer.addEventListener('routeOverview', listener);
+  explorer.querySelector<HTMLButtonElement>('[data-view="buses"]')!.click();
+  explorer.querySelector<HTMLButtonElement>('[data-bus-overview]')!.click();
+  expect(listener).toHaveBeenCalledTimes(1);
   expect(listener.mock.calls[0][0].detail).toEqual({ routeId: '61C' });
   expect(explorer.querySelector('dialog')!.open).toBe(false);
 });
@@ -517,4 +537,292 @@ test('detaching cancels pending renders and disconnects state listeners', async 
   await flush();
   expect(explorer.querySelector('[data-stops]')!.textContent).toBe('');
   expect(explorer.querySelector('h2')!.textContent).toBe('Route 61C');
+});
+
+test('stop search is immediately available while secondary options start collapsed and the published route name is shown', async () => {
+  state.setAvailableRoutes([{ ...route(), name: 'MCKEESPORT-HOMESTEAD' }]);
+  await open();
+  const options = explorer.querySelector<HTMLDetailsElement>(
+    '[data-stop-options]'
+  )!;
+  expect(options.open).toBe(false);
+  expect(options.contains(explorer.querySelector('input'))).toBe(false);
+  expect(options.contains(explorer.querySelector('[data-refresh-stops]'))).toBe(
+    true
+  );
+  expect(explorer.querySelector('[data-route-name]')!.textContent).toContain(
+    'MCKEESPORT-HOMESTEAD'
+  );
+});
+
+test('nearest matching stop follows search and Clear restores all stops with search focus', async () => {
+  await open();
+  const input = explorer.querySelector<HTMLInputElement>(
+    '[aria-label="Search route stops"]'
+  )!;
+  const nearest = explorer.querySelector<HTMLElement>(
+    '.route-explorer__nearest'
+  )!;
+  input.value = 'Alpha';
+  input.dispatchEvent(new Event('input'));
+  expect(nearest.textContent).toContain('Nearest matching stop');
+  expect(nearest.querySelector('button')!.textContent).toContain('Alpha');
+  expect(nearest.textContent).not.toContain('Zeta');
+  input.value = 'No matching platform';
+  input.dispatchEvent(new Event('input'));
+  expect(nearest.hidden).toBe(true);
+  explorer.querySelector<HTMLButtonElement>('[data-clear-stops]')!.click();
+  expect(input.value).toBe('');
+  expect(document.activeElement).toBe(input);
+  expect(explorer.querySelectorAll('[data-explorer-stop]')).toHaveLength(2);
+  expect(nearest.hidden).toBe(false);
+});
+
+test('nearest boarding uses the supplied default-area label rather than claiming GPS', async () => {
+  explorer.configure({
+    getOrigin: () => ({ lat: 40.44, lng: -79.94 }),
+    getOriginLabel: () => 'CMU Campus · default area',
+    onSelectStop: selectedStop
+  });
+  await open();
+  const text = explorer.querySelector('.route-explorer__nearest')!.textContent;
+  expect(text).toContain('CMU Campus · default area');
+  expect(text).not.toContain('your location');
+});
+
+test('a healthy empty single-direction route can be refreshed when stops become available', async () => {
+  getStops
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([stop('ready', 'Now available')]);
+  chooseRoute('CMU-1');
+  explorer.open();
+  await flush();
+  expect(explorer.querySelectorAll('[data-explorer-stop]')).toHaveLength(0);
+  expect(explorer.querySelector('select')!.disabled).toBe(true);
+  const refresh = explorer.querySelector<HTMLButtonElement>(
+    '[data-refresh-empty]'
+  )!;
+  expect(refresh.hidden).toBe(false);
+  refresh.click();
+  await flush();
+  expect(getStops).toHaveBeenCalledTimes(2);
+  expect(explorer.querySelector('[data-explorer-stop]')!.textContent).toContain(
+    'Now available'
+  );
+  expect(explorer.querySelector('dialog')!.open).toBe(true);
+});
+
+test('platform More actions save and share in place without opening its arrivals or losing the menu', async () => {
+  const writeText = jest.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText }
+  });
+  await open();
+  const details = explorer.querySelector<HTMLDetailsElement>(
+    '.route-stop-actions'
+  )!;
+  details.open = true;
+  const save = details.querySelector<HTMLButtonElement>(
+    '[data-explorer-save]'
+  )!;
+  save.focus();
+  save.click();
+  expect(save.getAttribute('aria-pressed')).toBe('true');
+  expect(details.open).toBe(true);
+  expect(document.activeElement).toBe(save);
+  details.querySelector<HTMLButtonElement>('[data-explorer-share]')!.click();
+  await flush();
+  expect(writeText).toHaveBeenCalledWith('http://localhost/#/map?stop=s1');
+  expect(selectedStop).not.toHaveBeenCalled();
+  expect(explorer.querySelector('dialog')!.open).toBe(true);
+  save.click();
+  expect(save.getAttribute('aria-pressed')).toBe('false');
+});
+
+test('exploring a connecting route and Back restore the original query, direction, order and scroll', async () => {
+  const platform = {
+    ...stop('transfer', 'Alpha junction'),
+    routes: ['61C', '61D']
+  };
+  getStops.mockResolvedValue([platform, stop('other', 'Other platform')]);
+  await open();
+  direction('OUTBOUND');
+  await flush();
+  const input = explorer.querySelector<HTMLInputElement>(
+    '[aria-label="Search route stops"]'
+  )!;
+  input.value = 'Alpha';
+  input.dispatchEvent(new Event('input'));
+  const options = explorer.querySelector<HTMLDetailsElement>(
+    '[data-stop-options]'
+  )!;
+  options.open = true;
+  const order = explorer.querySelector<HTMLSelectElement>(
+    '[data-stop-sort] select'
+  )!;
+  order.value = 'distance';
+  order.dispatchEvent(new Event('change'));
+  const body = explorer.querySelector<HTMLElement>('.route-explorer__body')!;
+  body.scrollTop = 137;
+  explorer
+    .querySelector<HTMLButtonElement>('[data-explore-transfer="61D"]')!
+    .click();
+  await flush();
+  expect(state.getState().selectedRouteId).toBe('61D');
+  expect(input.value).toBe('transfer');
+  expect(
+    explorer.querySelector('[data-connection-context]')!.textContent
+  ).toContain('Alpha junction');
+  explorer.querySelector<HTMLButtonElement>('[data-route-back]')!.click();
+  await flush();
+  expect(state.getState().selectedRouteId).toBe('61C');
+  expect(input.value).toBe('Alpha');
+  expect(explorer.querySelector('select')!.value).toBe('OUTBOUND');
+  expect(order.value).toBe('distance');
+  expect(options.open).toBe(true);
+  expect(body.scrollTop).toBe(137);
+  expect(selectedStop).not.toHaveBeenCalled();
+  expect(explorer.querySelector('dialog')!.open).toBe(true);
+});
+
+test('an unrelated route change clears connection history instead of offering Back to an obsolete journey', async () => {
+  getStops.mockResolvedValue([
+    { ...stop('transfer', 'Junction'), routes: ['61C', '61D'] }
+  ]);
+  await open();
+  explorer
+    .querySelector<HTMLButtonElement>('[data-explore-transfer="61D"]')!
+    .click();
+  await flush();
+  state.updateFilter('selectedRouteId', 'CMU-1');
+  await flush();
+  expect(explorer.querySelector<HTMLElement>('[data-route-back]')!.hidden).toBe(
+    true
+  );
+  expect(
+    explorer.querySelector<HTMLElement>('[data-connection-context]')!.hidden
+  ).toBe(true);
+});
+
+test('Back while a connection is loading ignores its late stops and restores the original route', async () => {
+  const platform = {
+    ...stop('transfer', 'Alpha junction'),
+    routes: ['61C', '61D']
+  };
+  let complete!: (value: IStop[]) => void;
+  getStops.mockImplementation((id: string) =>
+    id === '61D'
+      ? new Promise((resolve) => {
+          complete = resolve;
+        })
+      : Promise.resolve([platform])
+  );
+  await open();
+  explorer
+    .querySelector<HTMLButtonElement>('[data-explore-transfer="61D"]')!
+    .click();
+  await flush();
+  explorer.querySelector<HTMLButtonElement>('[data-route-back]')!.click();
+  await flush();
+  complete([stop('wrong', 'Late connecting platform')]);
+  await flush();
+  expect(state.getState().selectedRouteId).toBe('61C');
+  expect(explorer.querySelector('[data-stops]')!.textContent).toContain(
+    'Alpha junction'
+  );
+  expect(explorer.querySelector('[data-stops]')!.textContent).not.toContain(
+    'Late connecting platform'
+  );
+});
+
+test.each(['[data-explorer-share]', '[data-explore-transfer="61D"]'])(
+  'a moving origin keeps the open platform menu and focused action %s',
+  async (selector) => {
+    getStops.mockResolvedValue([
+      { ...stop('junction', 'Junction'), routes: ['61C', '61D'] }
+    ]);
+    let origin = { lat: 40.44, lng: -79.94 };
+    explorer.configure({ getOrigin: () => origin, onSelectStop: selectedStop });
+    await open();
+    explorer.querySelector<HTMLDetailsElement>('.route-stop-actions')!.open =
+      true;
+    explorer.querySelector<HTMLButtonElement>(selector)!.focus();
+    origin = { lat: 40.441, lng: -79.94 };
+    state.setActiveVehicles([vehicle()]);
+    expect(
+      explorer.querySelector<HTMLDetailsElement>('.route-stop-actions')!.open
+    ).toBe(true);
+    expect(document.activeElement).toBe(explorer.querySelector(selector));
+    expect(selectedStop).not.toHaveBeenCalled();
+    expect(getStops).toHaveBeenCalledTimes(1);
+  }
+);
+
+test('late route catalog adds transfer choices and the published name without closing More or losing Share focus', async () => {
+  state.setAvailableRoutes([]);
+  getStops.mockResolvedValue([
+    { ...stop('junction', 'Junction'), routes: ['61C', '61D'] }
+  ]);
+  await open();
+  explorer.querySelector<HTMLDetailsElement>('.route-stop-actions')!.open =
+    true;
+  explorer.querySelector<HTMLButtonElement>('[data-explorer-share]')!.focus();
+  expect(explorer.querySelector('[data-explore-transfer]')).toBeNull();
+  state.setAvailableRoutes([{ ...route(), name: 'McKeesport' }, route('61D')]);
+  await flush();
+  expect(
+    explorer.querySelector('[data-explore-transfer="61D"]')
+  ).not.toBeNull();
+  expect(explorer.querySelector('[data-route-name]')!.textContent).toContain(
+    'McKeesport'
+  );
+  expect(
+    explorer.querySelector<HTMLDetailsElement>('.route-stop-actions')!.open
+  ).toBe(true);
+  expect(document.activeElement).toBe(
+    explorer.querySelector('[data-explorer-share]')
+  );
+  expect(getStops).toHaveBeenCalledTimes(1);
+});
+
+test('editing search during a slow Back reload cancels old focus and menu restoration', async () => {
+  const platform = {
+    ...stop('junction', 'Alpha junction'),
+    routes: ['61C', '61D']
+  };
+  const other = stop('other', 'Beta stop');
+  let originalLoads = 0;
+  let finishBack!: (value: IStop[]) => void;
+  getStops.mockImplementation((id: string) => {
+    if (id === '61C' && ++originalLoads === 2)
+      return new Promise((resolve) => {
+        finishBack = resolve;
+      });
+    return Promise.resolve([platform, other]);
+  });
+  await open();
+  const input = explorer.querySelector<HTMLInputElement>(
+    '[aria-label="Search route stops"]'
+  )!;
+  input.value = 'Alpha';
+  input.dispatchEvent(new Event('input'));
+  explorer
+    .querySelector<HTMLButtonElement>('[data-explore-transfer="61D"]')!
+    .click();
+  await flush();
+  explorer.querySelector<HTMLButtonElement>('[data-route-back]')!.click();
+  await flush();
+  input.value = 'Beta';
+  input.focus();
+  input.dispatchEvent(new Event('input'));
+  finishBack([platform, other]);
+  await flush();
+  expect(input.value).toBe('Beta');
+  expect(document.activeElement).toBe(input);
+  expect(explorer.querySelectorAll('[data-explorer-stop]')).toHaveLength(1);
+  expect(explorer.querySelector('[data-explorer-stop]')!.textContent).toContain(
+    'Beta stop'
+  );
+  expect(explorer.querySelector('.route-stop-actions[open]')).toBeNull();
 });

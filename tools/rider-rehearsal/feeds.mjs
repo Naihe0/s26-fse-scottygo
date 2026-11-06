@@ -54,6 +54,7 @@ export function apiFixture() {
     reports: [],
     checks: 0,
     arrivalUnavailable: false,
+    emptyStopRoute: null,
     arrivalMissingOccurrence: null,
     registrations: [],
     agreements: [],
@@ -199,7 +200,12 @@ export function apiFixture() {
         }))
       });
     if (p.startsWith('/transit/stops/'))
-      return response('StopsRetrieved', [stop, farther]);
+      return response(
+        'StopsRetrieved',
+        decodeURIComponent(p.split('/').at(-1)) === events.emptyStopRoute
+          ? []
+          : [stop, farther]
+      );
     if (p.endsWith('/schedule'))
       return response('RouteScheduleRetrieved', {
         routeId: route.id,

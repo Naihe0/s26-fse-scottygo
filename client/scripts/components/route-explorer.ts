@@ -1,13 +1,34 @@
 import type { ILatLng } from '../../../common/map.interface';
-import type { IStop, IVehicle } from '../../../common/transit.interface';
+import type {
+  IRoute,
+  IStop,
+  IVehicle
+} from '../../../common/transit.interface';
 import { MapStateManager, type IMapState } from '../state/map-state';
 import { transitApiService } from '../services/transit-api.service';
 import { getRouteTitle } from '../utils/route-display';
 import { haversineMeters } from '../../../common/geo';
+import {
+  createRouteStopActions,
+  refreshRouteStopActions
+} from './route-stop-actions';
+import { subscribeRiderShortcuts } from '../utils/rider-shortcuts';
 
 export interface RouteExplorerConfiguration {
   getOrigin: () => ILatLng | null;
   onSelectStop: (stop: IStop) => void;
+  getOriginLabel?: () => string;
+  onSelectRoute?: (routeId: string) => void;
+}
+
+interface ExplorerVisit {
+  routeId: string;
+  direction: string;
+  query: string;
+  order: string;
+  scroll: number;
+  optionsOpen: boolean;
+  stopId: string;
 }
 
 /** Great-circle distance is a comparison aid, not a walking-route estimate. */
@@ -37,6 +58,15 @@ export class RouteExplorer extends HTMLElement {
     onSelectStop: () => undefined
   };
   private unsubscribe: (() => void) | null = null;
+  private stopShortcuts?: () => void;
+  private visits: ExplorerVisit[] = [];
+  private navigation?: {
+    routeId: string;
+    restore?: ExplorerVisit;
+    stop?: IStop;
+  };
+  private restoreAfterLoad?: ExplorerVisit;
+  private routeCatalog: IRoute[] | null = null;
   private selectedRoute: string | null = null;
   private direction = '';
   private directionOptionsKey = '';
@@ -63,11 +93,16 @@ export class RouteExplorer extends HTMLElement {
       this.updateState(state)
     );
     this.updateState(this.stateManager.getState());
+    this.stopShortcuts = subscribeRiderShortcuts(() =>
+      refreshRouteStopActions(this)
+    );
   }
 
   disconnectedCallback(): void {
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.stopShortcuts?.();
+    this.stopShortcuts = undefined;
     this.cancelRequest();
     this.close(false);
     this.selectedRoute = null;
@@ -92,6 +127,11 @@ export class RouteExplorer extends HTMLElement {
     if (dialog.close) dialog.close();
     else dialog.removeAttribute('open');
     this.trigger.setAttribute('aria-expanded', 'false');
+    this.cancelRequest();
+    this.visits = [];
+    this.navigation = undefined;
+    this.restoreAfterLoad = undefined;
+    this.updateBackAction();
     if (restoreFocus && this.isConnected && !this.hidden) this.trigger.focus();
   }
 
@@ -106,7 +146,7 @@ export class RouteExplorer extends HTMLElement {
       </button>
       <dialog id="${this.panelId}" class="route-explorer__dialog" aria-labelledby="${this.panelId}-title">
         <header class="route-explorer__header">
-          <div><p>Explore route</p><h2 id="${this.panelId}-title"></h2></div>
+          <div><p>Explore route</p><h2 id="${this.panelId}-title"></h2><span data-route-name class="route-explorer__route-name"></span></div>
           <button type="button" data-close aria-label="Close route explorer">×</button>
         </header>
         <div class="route-explorer__views" role="tablist" aria-label="Route details">
@@ -114,23 +154,29 @@ export class RouteExplorer extends HTMLElement {
           <button type="button" role="tab" data-view="buses" id="${this.panelId}-buses-tab" aria-controls="${this.panelId}-buses-view" aria-selected="false" tabindex="-1">Buses <span data-bus-count></span></button>
         </div>
         <div class="route-explorer__body">
-          <button type="button" data-overview class="route-explorer__overview"><span class="material-icons-outlined" aria-hidden="true">zoom_out_map</span>Show full route</button>
           <div role="tabpanel" id="${this.panelId}-stops-view" aria-labelledby="${this.panelId}-stops-tab">
-          <label class="route-explorer__field">Stop direction<select aria-label="Route direction"></select></label>
+          <button type="button" data-route-back hidden></button>
+          <p data-connection-context class="route-explorer__note" hidden></p>
+          <div class="route-explorer__searchbar"><label class="route-explorer__field route-explorer__search"><span class="route-explorer__sr-only">Search route stops</span><input type="search" placeholder="Street, stop number or transfer route" aria-label="Search route stops" autocomplete="off" /></label><button type="button" data-clear-stops aria-label="Clear stop search" hidden>Clear</button></div>
           <section class="route-explorer__nearest" aria-label="Nearest boarding stop"></section>
-          <section aria-labelledby="${this.panelId}-stops">
-            <h3 id="${this.panelId}-stops">Stops</h3>
-            <label class="route-explorer__field route-explorer__search"><span class="route-explorer__sr-only">Search route stops</span><input type="search" placeholder="Street, stop number or transfer route" aria-label="Search route stops" autocomplete="off" /></label>
+          <details data-stop-options class="route-explorer__stop-options"><summary>Stop options <span data-stop-options-summary></span></summary>
+            <label class="route-explorer__field">Stop direction<select aria-label="Route direction"></select></label>
             <label class="route-explorer__field" data-stop-sort>Order stops<select aria-label="Order stops"><option value="name">Stop name (A–Z)</option><option value="distance">Nearest first</option></select></label>
             <p class="route-explorer__note" data-order-note></p>
+            <div class="route-explorer__tools"><button type="button" data-overview>Show full route</button><button type="button" data-refresh-stops>Refresh stops</button></div>
+          </details>
+          <section aria-labelledby="${this.panelId}-stops">
+            <h3 id="${this.panelId}-stops" class="route-explorer__sr-only">Stops</h3>
             <p data-status role="status"></p>
+            <p data-action-status role="status" class="route-explorer__note"></p>
             <button type="button" data-retry hidden>Retry loading stops</button>
+            <button type="button" data-refresh-empty hidden>Refresh stops</button>
             <ul data-stops></ul>
           </section>
           </div>
           <div role="tabpanel" id="${this.panelId}-buses-view" aria-labelledby="${this.panelId}-buses-tab" hidden>
             <section class="route-explorer__vehicles" aria-labelledby="${this.panelId}-buses">
-              <h3 id="${this.panelId}-buses">Buses shown on map</h3>
+              <div class="route-explorer__bus-heading"><h3 id="${this.panelId}-buses">Buses shown on map</h3><button type="button" data-overview data-bus-overview>Show full route</button></div>
               <details data-vehicle-tools><summary>Find a bus</summary>
                 <label class="route-explorer__field">Find bus or reported stop<input type="search" data-bus-query placeholder="Bus number, stop ID or name" autocomplete="off"></label>
                 <label class="route-explorer__field">Order buses<select data-bus-order><option value="feed">Agency order</option><option value="near">Closest to start</option><option value="recent">Newest GPS first</option></select></label>
@@ -188,7 +234,7 @@ export class RouteExplorer extends HTMLElement {
         this.close();
       }
     });
-    this.querySelector('[data-overview]')!.addEventListener('click', () => {
+    const showOverview = () => {
       const routeId = this.selectedRoute;
       this.close(false);
       this.dispatchEvent(
@@ -198,18 +244,46 @@ export class RouteExplorer extends HTMLElement {
           composed: true
         })
       );
-    });
+    };
+    this.querySelectorAll('[data-overview]').forEach((button) =>
+      button.addEventListener('click', showOverview)
+    );
     this.querySelector('select')!.addEventListener('change', () => {
+      this.restoreAfterLoad = undefined;
       this.direction = this.querySelector('select')!.value;
       this.renderVehicles(this.stateManager.getState().activeVehicles);
       void this.loadStops();
     });
-    this.querySelector('input')!.addEventListener('input', () =>
-      this.renderStops()
+    this.querySelector('input')!.addEventListener('input', () => {
+      this.restoreAfterLoad = undefined;
+      this.querySelector('[data-action-status]')!.textContent = '';
+      this.renderStops();
+      this.renderNearestStop();
+    });
+    this.querySelector('[data-clear-stops]')!.addEventListener('click', () => {
+      this.restoreAfterLoad = undefined;
+      this.querySelector('[data-action-status]')!.textContent = '';
+      this.querySelector('input')!.value = '';
+      this.renderStops();
+      this.renderNearestStop();
+      this.querySelector<HTMLElement>('.route-explorer__body')!.scrollTop = 0;
+      this.querySelector('input')!.focus();
+    });
+    this.querySelector('[data-route-back]')!.addEventListener('click', () =>
+      this.goBack()
     );
+    for (const button of this.querySelectorAll<HTMLButtonElement>(
+      '[data-refresh-stops], [data-refresh-empty]'
+    ))
+      button.addEventListener('click', () => {
+        if (!this.isLoading) void this.loadStops(true);
+      });
     this.querySelector('[data-stop-sort] select')!.addEventListener(
       'change',
-      () => this.renderStops()
+      () => {
+        this.restoreAfterLoad = undefined;
+        this.renderStops();
+      }
     );
     this.querySelector('[data-bus-filter] select')!.addEventListener(
       'change',
@@ -241,15 +315,33 @@ export class RouteExplorer extends HTMLElement {
   }
 
   private updateState(state: Readonly<IMapState>): void {
+    const catalogChanged = this.routeCatalog !== state.availableRoutes;
+    this.routeCatalog = state.availableRoutes;
     this.hidden = !state.selectedRouteId;
     const routeChanged = this.selectedRoute !== state.selectedRouteId;
+    const navigation =
+      routeChanged && this.navigation?.routeId === state.selectedRouteId
+        ? this.navigation
+        : undefined;
     if (routeChanged) {
+      this.querySelector('[data-action-status]')!.textContent = '';
+      if (!navigation) this.visits = [];
+      this.navigation = undefined;
+      this.restoreAfterLoad = navigation?.restore;
       this.cancelRequest();
       this.selectedRoute = state.selectedRouteId;
       this.stops = [];
       this.loaded = false;
       this.hasError = false;
       this.querySelector('input')!.value = '';
+      const context = this.querySelector<HTMLElement>(
+        '[data-connection-context]'
+      )!;
+      context.hidden = !navigation?.stop;
+      context.textContent = navigation?.stop
+        ? `Connection at ${navigation.stop.stopName} · Stop ${navigation.stop.stopId}. Check the listed direction.`
+        : '';
+      this.querySelector<HTMLElement>('.route-explorer__body')!.scrollTop = 0;
       this.resetBusTools();
       if (!this.selectedRoute) {
         this.close(false);
@@ -291,6 +383,20 @@ export class RouteExplorer extends HTMLElement {
       select.value = this.direction;
       select.disabled = directions.length === 1;
     }
+    if (navigation) {
+      const restore = navigation.restore;
+      if (restore && directions.includes(restore.direction)) {
+        this.direction = restore.direction;
+        this.querySelector('select')!.value = this.direction;
+      }
+      this.querySelector('input')!.value =
+        restore?.query ?? navigation.stop?.stopId ?? '';
+      this.querySelector<HTMLSelectElement>('[data-stop-sort] select')!.value =
+        restore?.order ?? 'name';
+      this.querySelector<HTMLDetailsElement>('[data-stop-options]')!.open =
+        restore?.optionsOpen ?? false;
+    }
+    this.updateBackAction();
     if (
       this.querySelector('dialog')!.open &&
       (routeChanged || previousDirection !== this.direction)
@@ -300,7 +406,14 @@ export class RouteExplorer extends HTMLElement {
       this.selectedRoute,
       state.availableRoutes
     );
+    const name = this.querySelector<HTMLElement>('[data-route-name]')!;
+    name.textContent =
+      route?.name && route.name !== this.querySelector('h2')!.textContent
+        ? route.name
+        : '';
+    name.hidden = !name.textContent;
     if (this.querySelector('dialog')!.open) {
+      if (catalogChanged && !this.isLoading) this.renderStops();
       this.renderVehicles(state.activeVehicles);
       this.renderNearestStop();
     }
@@ -317,7 +430,7 @@ export class RouteExplorer extends HTMLElement {
     this.isLoading = false;
   }
 
-  private async loadStops(): Promise<void> {
+  private async loadStops(retain = false): Promise<void> {
     if (!this.selectedRoute) return;
     this.cancelRequest();
     const request = this.request;
@@ -328,7 +441,7 @@ export class RouteExplorer extends HTMLElement {
     this.isLoading = true;
     this.loaded = false;
     this.hasError = false;
-    this.stops = [];
+    if (!retain) this.stops = [];
     this.renderStops();
     this.renderNearestStop();
     try {
@@ -346,9 +459,10 @@ export class RouteExplorer extends HTMLElement {
       for (const stop of result ?? [])
         if (validStop(stop))
           unique.set(`${stop.stopId}:${stop.lat}:${stop.lon}`, stop);
-      this.stops = [...unique.values()].sort((a, b) =>
-        a.stopName.localeCompare(b.stopName, undefined, { numeric: true })
-      );
+      if (result !== null)
+        this.stops = [...unique.values()].sort((a, b) =>
+          a.stopName.localeCompare(b.stopName, undefined, { numeric: true })
+        );
       this.loaded = !this.hasError;
     } catch {
       if (request !== this.request || !this.isConnected) return;
@@ -364,6 +478,26 @@ export class RouteExplorer extends HTMLElement {
         this.renderStops();
         this.renderVehicles(this.stateManager.getState().activeVehicles);
         this.renderNearestStop();
+        const restore = this.restoreAfterLoad;
+        if (restore && restore.routeId === this.selectedRoute) {
+          this.restoreAfterLoad = undefined;
+          const body = this.querySelector<HTMLElement>(
+            '.route-explorer__body'
+          )!;
+          const item = [
+            ...this.querySelectorAll<HTMLElement>('[data-explorer-stop]')
+          ]
+            .find((node) => node.dataset.explorerStop === restore.stopId)
+            ?.closest('li');
+          const details = item?.querySelector<HTMLDetailsElement>(
+            '.route-stop-actions'
+          );
+          if (details) details.open = true;
+          item
+            ?.querySelector<HTMLElement>('summary')
+            ?.focus({ preventScroll: true });
+          body.scrollTop = restore.scroll;
+        }
       }
     }
   }
@@ -371,6 +505,60 @@ export class RouteExplorer extends HTMLElement {
   private selectStop(stop: IStop): void {
     this.close(false);
     this.configuration.onSelectStop(stop);
+  }
+
+  private matchingStops(): IStop[] {
+    const query = this.querySelector('input')!.value.trim().toLocaleLowerCase();
+    return this.stops.filter((stop) =>
+      [stop.stopName, stop.stopId, ...(stop.routes ?? [])].some((text) =>
+        text.toLowerCase().includes(query)
+      )
+    );
+  }
+
+  private exploreConnection(routeId: string, stop: IStop): void {
+    if (!this.selectedRoute || routeId === this.selectedRoute) return;
+    this.visits.push({
+      routeId: this.selectedRoute,
+      direction: this.direction,
+      query: this.querySelector('input')!.value,
+      order: this.querySelector<HTMLSelectElement>('[data-stop-sort] select')!
+        .value,
+      scroll: this.querySelector<HTMLElement>('.route-explorer__body')!
+        .scrollTop,
+      optionsOpen: this.querySelector<HTMLDetailsElement>(
+        '[data-stop-options]'
+      )!.open,
+      stopId: stop.stopId
+    });
+    this.visits = this.visits.slice(-8);
+    this.navigation = { routeId, stop };
+    if (this.configuration.onSelectRoute)
+      this.configuration.onSelectRoute(routeId);
+    else this.stateManager.updateFilter('selectedRouteId', routeId);
+  }
+
+  private goBack(): void {
+    const restore = this.visits.pop();
+    if (!restore) return;
+    this.navigation = { routeId: restore.routeId, restore };
+    if (this.configuration.onSelectRoute)
+      this.configuration.onSelectRoute(restore.routeId);
+    else this.stateManager.updateFilter('selectedRouteId', restore.routeId);
+  }
+
+  private updateBackAction(): void {
+    const button = this.querySelector<HTMLButtonElement>('[data-route-back]');
+    if (!button) return;
+    const previous = this.visits.at(-1);
+    button.hidden = !previous;
+    button.textContent = previous
+      ? 'Back to ' +
+        getRouteTitle(
+          previous.routeId,
+          this.stateManager.getState().availableRoutes
+        )
+      : '';
   }
 
   private renderStops(): void {
@@ -397,22 +585,21 @@ export class RouteExplorer extends HTMLElement {
     )
       ? note + ' Transfer listings are incomplete.'
       : note;
-    const visible = this.stops
-      .filter((stop) =>
-        [stop.stopName, stop.stopId, ...(stop.routes ?? [])].some((text) =>
-          text.toLowerCase().includes(query)
-        )
-      )
-      .map((stop) => ({
-        stop,
-        meters: byDistance ? distanceMeters(origin, stop) : 0
-      }));
+    this.querySelector<HTMLElement>('[data-clear-stops]')!.hidden = !query;
+    this.querySelector('[data-stop-options-summary]')!.textContent =
+      `${this.direction.charAt(0).toUpperCase() + this.direction.slice(1).toLowerCase()} · ${byDistance ? 'Nearest first' : 'A–Z'}`;
+    const visible = this.matchingStops().map((stop) => ({
+      stop,
+      meters: byDistance ? distanceMeters(origin, stop) : 0
+    }));
     if (byDistance) visible.sort((a, b) => a.meters - b.meters);
     const status = this.querySelector<HTMLElement>('[data-status]')!;
     status.textContent = this.isLoading
       ? 'Loading stops…'
       : this.hasError
-        ? 'Stops could not be loaded. Please retry.'
+        ? this.stops.length
+          ? 'Refresh failed. Showing the last loaded stops.'
+          : 'Stops could not be loaded. Please retry.'
         : !visible.length
           ? query
             ? 'No stops match your search.'
@@ -420,11 +607,42 @@ export class RouteExplorer extends HTMLElement {
           : `${visible.length} ${visible.length === 1 ? 'stop' : 'stops'}`;
     this.querySelector<HTMLButtonElement>('[data-retry]')!.hidden =
       !this.hasError;
+    this.querySelector<HTMLButtonElement>('[data-refresh-empty]')!.hidden =
+      this.isLoading ||
+      this.hasError ||
+      Boolean(this.stops.length) ||
+      !this.loaded;
+    for (const button of this.querySelectorAll<HTMLButtonElement>(
+      '[data-refresh-stops], [data-refresh-empty]'
+    ))
+      button.disabled = this.isLoading;
     const list = this.querySelector<HTMLElement>('[data-stops]')!;
+    const openActions = new Set(
+      [...list.querySelectorAll<HTMLDetailsElement>('details[open]')].map(
+        (details) => details.closest('li')?.dataset.stopId
+      )
+    );
+    const focusedStop = (
+      document.activeElement as HTMLElement | null
+    )?.closest<HTMLElement>('li[data-stop-id]')?.dataset.stopId;
+    const activeAction = document.activeElement as HTMLElement | null;
+    const focusedTransfer = activeAction?.dataset.exploreTransfer;
+    const focusedAction = (
+      document.activeElement as HTMLElement | null
+    )?.hasAttribute('data-explorer-save')
+      ? '[data-explorer-save]'
+      : activeAction?.hasAttribute('data-explorer-share')
+        ? '[data-explorer-share]'
+        : focusedTransfer
+          ? '[data-explore-transfer]'
+          : document.activeElement?.tagName === 'SUMMARY'
+            ? 'summary'
+            : '[data-explorer-stop]';
     list.setAttribute('aria-busy', String(this.isLoading));
     list.replaceChildren(
       ...visible.map(({ stop, meters }) => {
         const item = document.createElement('li');
+        item.dataset.stopId = stop.stopId;
         const button = document.createElement('button');
         button.type = 'button';
         button.dataset.explorerStop = stop.stopId;
@@ -448,9 +666,38 @@ export class RouteExplorer extends HTMLElement {
         }
         button.addEventListener('click', () => this.selectStop(stop));
         item.appendChild(button);
+        const actions = createRouteStopActions(
+          stop,
+          this.selectedRoute!,
+          this.stateManager.getState().availableRoutes,
+          (routeId, platform) => this.exploreConnection(routeId, platform),
+          (message) => {
+            if (item.isConnected)
+              this.querySelector('[data-action-status]')!.textContent = message;
+          }
+        );
+        if (
+          openActions.has(stop.stopId) &&
+          actions instanceof HTMLDetailsElement
+        )
+          actions.open = true;
+        item.append(actions);
         return item;
       })
     );
+    if (focusedStop) {
+      const item = [...list.querySelectorAll<HTMLElement>('li')].find(
+        (row) => row.dataset.stopId === focusedStop
+      );
+      const action = focusedTransfer
+        ? [
+            ...(item?.querySelectorAll<HTMLElement>(
+              '[data-explore-transfer]'
+            ) ?? [])
+          ].find((button) => button.dataset.exploreTransfer === focusedTransfer)
+        : item?.querySelector<HTMLElement>(focusedAction);
+      action?.focus({ preventScroll: true });
+    }
   }
 
   private renderNearestStop(): void {
@@ -476,7 +723,7 @@ export class RouteExplorer extends HTMLElement {
       Math.abs(origin.lat) > 90 ||
       !Number.isFinite(origin.lng) ||
       Math.abs(origin.lng) > 180 ||
-      !this.stops.length ||
+      !this.matchingStops().length ||
       this.isLoading ||
       this.hasError
     ) {
@@ -486,29 +733,34 @@ export class RouteExplorer extends HTMLElement {
       return;
     }
     container.hidden = false;
-    const ranked = this.stops
+    const ranked = this.matchingStops()
       .map((stop) => ({ stop, distance: distanceMeters(origin, stop) }))
       .sort((a, b) => a.distance - b.distance);
     const nearest = ranked[0];
     const state = this.stateManager.getState();
     const context =
-      state.plannedLocationLabel &&
+      this.configuration.getOriginLabel?.() ||
+      (state.plannedLocationLabel &&
       state.plannedLocationLabel !== 'Current Location'
         ? state.plannedLocationLabel
-        : 'your location';
+        : 'your starting point');
     const heading = document.createElement('h3');
-    heading.textContent = 'Nearest boarding stop';
+    const query = this.querySelector('input')!.value.trim();
+    heading.textContent = query
+      ? 'Nearest matching stop'
+      : 'Nearest boarding stop';
+    container.setAttribute('aria-label', heading.textContent);
     const note = document.createElement('p');
     note.className = 'route-explorer__note';
     const distance =
       nearest.distance < 1000
         ? `${Math.round(nearest.distance / 10) * 10} m`
         : `${(nearest.distance / 1000).toFixed(1)} km`;
-    const nearestKey = `${nearest.stop.stopId}:${nearest.stop.lat}:${nearest.stop.lon}:${nearest.stop.stopName}:${distance}:${context}`;
+    const nearestKey = `${nearest.stop.stopId}:${nearest.stop.lat}:${nearest.stop.lon}:${nearest.stop.stopName}:${distance}:${context}:${query}`;
     if (nearestKey === this.nearestKey) return;
     this.nearestKey = nearestKey;
     const restoreFocus = container.contains(document.activeElement);
-    note.textContent = `${distance} from ${context} · straight-line distance`;
+    note.textContent = `${query ? 'Nearest match' : 'Nearest'} · ${distance} from ${context} · straight-line distance`;
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = nearest.stop.stopName;

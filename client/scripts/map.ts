@@ -243,7 +243,15 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
     });
     document.querySelector<RouteExplorer>('route-explorer')?.configure({
       getOrigin: () => getEffectiveLocation(),
-      onSelectStop: openStop
+      getOriginLabel: () => {
+        const state = mapStateManager.getState();
+        if (mapStateManager.hasCustomPlannedLocation())
+          return state.plannedLocationLabel || 'Chosen starting point';
+        return state.currentLocation && state.gpsPermissionGranted
+          ? 'Your location' : 'CMU Campus · default area';
+      },
+      onSelectStop: openStop,
+      onSelectRoute: (id) => selectRoute(id, true)
     });
     sharedStopNavigation = new SharedStopNavigation({
       openStop,

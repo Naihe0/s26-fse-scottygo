@@ -34,7 +34,7 @@ export const suiteGroups = {
   ],
   UC07: ['transit-search'],
   UC08: ['nearby-stops-panel', 'nearby-stop-actions', 'transit-api-errors'],
-  UC09: ['route-explorer'],
+  UC09: ['route-explorer', 'route-stop-actions'],
   UC10: [
     'prediction-requests',
     'prediction-shortcuts',
@@ -165,7 +165,11 @@ export const alternateFlows = {
     ],
     [
       'Empty, failed or cancelled route data',
-      'empty|failed|hanging|late|detach|cancel'
+      'empty|failed|hanging|late|detach|cancel|refresh'
+    ],
+    [
+      'Platform actions and connecting-route return',
+      'platform|connection|transfer|saved|share|return|back'
     ]
   ],
   UC10: [

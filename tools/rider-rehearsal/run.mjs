@@ -15,6 +15,7 @@ import { socketFixture } from './socket-fixture.mjs';
 import { rehearseMyPlaces } from './my-places.mjs';
 import { rehearseDepartureWatch } from './departure-watch.mjs';
 import { rehearsePopupPreferences } from './subscriptions.mjs';
+import { rehearseRouteExplorer } from './route-explorer.mjs';
 import { recordEvidence } from './evidence.mjs';
 
 const require = createRequire(import.meta.url);
@@ -504,7 +505,7 @@ try {
     await go('/#/map?r=61C');
     await click('.route-explorer__trigger');
     const explorer = page.locator('route-explorer dialog[open]');
-    await explorer.locator('[data-stops] button').first().waitFor();
+    await rehearseRouteExplorer({ page, fixture, origin });
     await explorer
       .getByRole('combobox', { name: 'Order stops' })
       .selectOption('distance');
