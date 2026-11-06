@@ -13,6 +13,8 @@ const result = (payload: unknown, status = 200) => ({
 type SavedRoute = { routeId: string; createdAt: string };
 let savedRoutes: SavedRoute[];
 let routes: { id: string; name: string; system: 'PRT' | 'CMU' }[];
+let pageListeners: Array<[string, EventListenerOrEventListenerObject]>;
+let listenSpy: jest.SpyInstance;
 async function flush(): Promise<void> {
   for (let i = 0; i < 30; i++) await Promise.resolve();
 }
@@ -28,12 +30,51 @@ function openSheet(): HTMLButtonElement {
   return document.querySelector<HTMLButtonElement>('.result-add-btn')!;
 }
 
+const accountToken = (id: string) =>
+  `header.${btoa(JSON.stringify({ userId: id }))}.signature`;
+const preferenceKey = (id: string) =>
+  'scottygo:route-popups:v2:' + encodeURIComponent('user:' + id);
+function buttonNamed(text: string): HTMLButtonElement {
+  const found = Array.from(document.querySelectorAll('button')).find(
+    (button) => button.textContent?.trim() === text && !button.hidden
+  );
+  if (!found) throw new Error('Missing button: ' + text);
+  return found;
+}
+function popupState(): string {
+  return document.querySelector('.card-popup-state')?.textContent || '';
+}
+function apiError(name: string, message: string, status = 409) {
+  return { ok: false, status, json: async () => ({ name, message }) };
+}
+function cachedPageTransition(type: 'pagehide' | 'pageshow'): void {
+  const event = new Event(type);
+  Object.defineProperty(event, 'persisted', { value: true });
+  window.dispatchEvent(event);
+}
+
 describe('saved routes interactions and recovery', () => {
   beforeEach(() => {
     jest.resetModules();
+    // Each import represents a separate page. Do not revive prior test pages
+    // when a BFCache case dispatches pageshow on this shared JSDOM window.
+    pageListeners = [];
+    const listen = window.addEventListener.bind(window);
+    listenSpy = jest
+      .spyOn(window, 'addEventListener')
+      .mockImplementation((type, listener, options) => {
+        if (type === 'pagehide' || type === 'pageshow')
+          pageListeners.push([type, listener]);
+        listen(type, listener, options);
+      });
     jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-11-06T12:00:00Z'));
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      value: false
+    });
     localStorage.clear();
-    localStorage.setItem('token', 'test-token');
+    localStorage.setItem('token', accountToken('rider-a'));
     global.fetch = mockFetch;
     savedRoutes = [];
     routes = [{ id: '61D', name: 'Murray', system: 'PRT' }];
@@ -63,6 +104,10 @@ describe('saved routes interactions and recovery', () => {
     ).match(/<body>([\s\S]*)<\/body>/)![1];
   });
   afterEach(() => {
+    window.dispatchEvent(new Event('pagehide'));
+    for (const [type, listener] of pageListeners)
+      window.removeEventListener(type, listener);
+    listenSpy.mockRestore();
     jest.clearAllTimers();
     jest.useRealTimers();
   });
@@ -381,5 +426,350 @@ describe('saved routes interactions and recovery', () => {
       document.querySelector('.card-route-link')
     );
     expect(el<HTMLButtonElement>('add-route-btn').disabled).toBe(true);
+  });
+
+  test('a one-hour popup pause displays its expiry, resumes on time and keeps the saved route', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: new Date().toISOString() }];
+    await boot();
+    expect(popupState()).toBe('Popups on while open');
+    buttonNamed('Pause for 1 hour').click();
+    expect(popupState()).toContain('Paused until');
+    expect(
+      document.querySelector('.card-bell')?.getAttribute('aria-pressed')
+    ).toBe('true');
+    expect(el('route-count').textContent).toBe('1/10');
+    expect(mockFetch.mock.calls.some(([, options]) => options?.method)).toBe(
+      false
+    );
+    jest.advanceTimersByTime(3_599_999);
+    expect(popupState()).toContain('Paused until');
+    jest.advanceTimersByTime(1);
+    await flush();
+    expect(popupState()).toBe('Popups on while open');
+    expect(
+      document.querySelector('.card-bell')?.getAttribute('aria-pressed')
+    ).toBe('false');
+    expect(el('route-count').textContent).toBe('1/10');
+  });
+
+  test('the permanent mute toggle and immediate resume update visible state without removing a route', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: new Date().toISOString() }];
+    await boot();
+    document.querySelector<HTMLButtonElement>('.card-bell')!.click();
+    expect(popupState()).toBe('Popups muted');
+    jest.advanceTimersByTime(3_600_000);
+    expect(popupState()).toBe('Popups muted');
+    buttonNamed('Resume popups now').click();
+    expect(popupState()).toBe('Popups on while open');
+    expect(mockFetch.mock.calls.some(([, options]) => options?.method)).toBe(
+      false
+    );
+  });
+
+  test('a current-account preference change in another tab refreshes the visible popup state and preserves focus', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: new Date().toISOString() }];
+    await boot();
+    document.querySelector<HTMLElement>('.card-route-link')!.focus();
+    const key = preferenceKey('rider-a');
+    const newValue = JSON.stringify([['61d', { mode: 'muted' }]]);
+    localStorage.setItem(key, newValue);
+    window.dispatchEvent(new StorageEvent('storage', { key, newValue }));
+    expect(popupState()).toBe('Popups muted');
+    expect(document.activeElement?.classList.contains('card-route-link')).toBe(
+      true
+    );
+    const otherKey = preferenceKey('rider-b');
+    localStorage.setItem(otherKey, '[]');
+    window.dispatchEvent(
+      new StorageEvent('storage', { key: otherKey, newValue: '[]' })
+    );
+    expect(popupState()).toBe('Popups muted');
+  });
+
+  test('undo removal restores the route and its original pause deadline with one guarded server mutation', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: new Date().toISOString() }];
+    await boot();
+    buttonNamed('Pause for 1 hour').click();
+    const captured = localStorage.getItem(preferenceKey('rider-a'));
+    document.querySelector<HTMLButtonElement>('.card-remove')!.click();
+    await flush();
+    expect(el('subscription-undo').hidden).toBe(false);
+    expect(el('route-count').textContent).toBe('0/10');
+    let finish!: (value: ReturnType<typeof result>) => void;
+    mockFetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+    el('undo-remove-btn').click();
+    el('undo-remove-btn').click();
+    expect(
+      mockFetch.mock.calls.filter(([, options]) => options?.method === 'POST')
+    ).toHaveLength(1);
+    jest.advanceTimersByTime(60_000);
+    finish(
+      result({ routeId: '61D', createdAt: new Date().toISOString() }, 201)
+    );
+    await flush();
+    expect(el('route-count').textContent).toBe('1/10');
+    expect(popupState()).toContain('Paused until');
+    expect(localStorage.getItem(preferenceKey('rider-a'))).toBe(captured);
+    expect(el('subscription-undo').hidden).toBe(true);
+    expect(document.activeElement?.classList.contains('card-route-link')).toBe(
+      true
+    );
+  });
+
+  test('undo after a pause expires restores the saved route with popups enabled', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: new Date().toISOString() }];
+    await boot();
+    buttonNamed('Pause for 1 hour').click();
+    document.querySelector<HTMLButtonElement>('.card-remove')!.click();
+    await flush();
+    jest.advanceTimersByTime(3_600_001);
+    el('undo-remove-btn').click();
+    await flush();
+    expect(popupState()).toBe('Popups on while open');
+    expect(el('route-count').textContent).toBe('1/10');
+  });
+
+  test('failed undo keeps recovery available and retry restores exactly one saved route', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: new Date().toISOString() }];
+    await boot();
+    document.querySelector<HTMLButtonElement>('.card-remove')!.click();
+    await flush();
+    mockFetch.mockRejectedValueOnce(new Error('offline'));
+    el('undo-remove-btn').click();
+    await flush();
+    expect(el('subscription-undo').hidden).toBe(false);
+    expect(el<HTMLButtonElement>('undo-remove-btn').disabled).toBe(false);
+    expect(el('route-count').textContent).toBe('0/10');
+    el('undo-remove-btn').click();
+    await flush();
+    expect(document.querySelectorAll('.subscription-card')).toHaveLength(1);
+    expect(el('subscription-undo').hidden).toBe(true);
+  });
+
+  test('duplicate undo reconciles the server copy and restores mute only when the route is confirmed', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: new Date().toISOString() }];
+    await boot();
+    document.querySelector<HTMLButtonElement>('.card-bell')!.click();
+    document.querySelector<HTMLButtonElement>('.card-remove')!.click();
+    await flush();
+    mockFetch.mockResolvedValueOnce(
+      apiError('DuplicateSubscription', 'Already subscribed')
+    );
+    savedRoutes = [{ routeId: '61d', createdAt: new Date().toISOString() }];
+    el('undo-remove-btn').click();
+    await flush();
+    expect(document.querySelectorAll('.subscription-card')).toHaveLength(1);
+    expect(popupState()).toBe('Popups muted');
+    expect(el('subscription-undo').hidden).toBe(true);
+  });
+
+  test('server capacity rejection during undo retains the route count and a retry instead of inventing a saved route', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: new Date().toISOString() }];
+    await boot();
+    document.querySelector<HTMLButtonElement>('.card-remove')!.click();
+    await flush();
+    mockFetch.mockResolvedValueOnce(
+      apiError(
+        'SubscriptionLimitReached',
+        '10 routes saved. Remove a route first.'
+      )
+    );
+    el('undo-remove-btn').click();
+    await flush();
+    expect(document.querySelector('.subscription-card')).toBeNull();
+    expect(el('route-count').textContent).toBe('0/10');
+    expect(el('subscription-undo').hidden).toBe(false);
+    expect(el<HTMLButtonElement>('undo-remove-btn').disabled).toBe(false);
+  });
+
+  test('undo cannot exceed ten routes when a different route filled the last slot', async () => {
+    savedRoutes = Array.from({ length: 10 }, (_, i) => ({
+      routeId: `71${i}`,
+      createdAt: new Date().toISOString()
+    }));
+    await boot();
+    document.querySelector<HTMLButtonElement>('.card-remove')!.click();
+    await flush();
+    openSheet().click();
+    await flush();
+    el('sheet-close').click();
+    expect(el('route-count').textContent).toBe('10/10');
+    const before = mockFetch.mock.calls.filter(
+      ([, options]) => options?.method === 'POST'
+    ).length;
+    el('undo-remove-btn').click();
+    await flush();
+    expect(
+      mockFetch.mock.calls.filter(([, options]) => options?.method === 'POST')
+    ).toHaveLength(before);
+    expect(el('route-count').textContent).toBe('10/10');
+    expect(el('subscription-undo').hidden).toBe(false);
+  });
+
+  test('an unconfirmed duplicate undo response keeps recovery available without claiming a saved route', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: new Date().toISOString() }];
+    await boot();
+    document.querySelector<HTMLButtonElement>('.card-remove')!.click();
+    await flush();
+    savedRoutes = [];
+    mockFetch.mockResolvedValueOnce(
+      apiError('DuplicateSubscription', 'Already subscribed')
+    );
+    el('undo-remove-btn').click();
+    await flush();
+    expect(document.querySelector('.subscription-card')).toBeNull();
+    expect(el('subscription-undo').hidden).toBe(false);
+    expect(el('route-count').textContent).toBe('0/10');
+  });
+
+  test('a later removal replaces the previous undo target', async () => {
+    savedRoutes = ['61D', '61A'].map((routeId) => ({
+      routeId,
+      createdAt: new Date().toISOString()
+    }));
+    await boot();
+    document
+      .querySelector<HTMLButtonElement>('[data-route-id="61D"] .card-remove')!
+      .click();
+    await flush();
+    document
+      .querySelector<HTMLButtonElement>('[data-route-id="61A"] .card-remove')!
+      .click();
+    await flush();
+    el('undo-remove-btn').click();
+    await flush();
+    const post = mockFetch.mock.calls.find(
+      ([, options]) => options?.method === 'POST'
+    );
+    expect(JSON.parse(post![1].body)).toEqual({ routeId: '61A' });
+    expect(document.querySelectorAll('.subscription-card')).toHaveLength(1);
+    expect(
+      document
+        .querySelector('.subscription-card')
+        ?.getAttribute('data-route-id')
+    ).toBe('61A');
+  });
+
+  test('a stale undo completion after account switch cannot restore the previous rider route or mute preference', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: new Date().toISOString() }];
+    await boot();
+    document.querySelector<HTMLButtonElement>('.card-bell')!.click();
+    document.querySelector<HTMLButtonElement>('.card-remove')!.click();
+    await flush();
+    let finish!: (value: ReturnType<typeof result>) => void;
+    mockFetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+    el('undo-remove-btn').click();
+    localStorage.setItem('token', accountToken('rider-b'));
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'token',
+        newValue: accountToken('rider-b')
+      })
+    );
+    finish(
+      result({ routeId: '61D', createdAt: new Date().toISOString() }, 201)
+    );
+    await flush();
+    expect(document.querySelector('.subscription-card')).toBeNull();
+    expect(el('subscription-undo').hidden).toBe(true);
+    expect(localStorage.getItem(preferenceKey('rider-b'))).toBeNull();
+  });
+
+  test('leaving the page discards undo and its pending completion without changing the next page', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: new Date().toISOString() }];
+    await boot();
+    document.querySelector<HTMLButtonElement>('.card-remove')!.click();
+    await flush();
+    let finish!: (value: ReturnType<typeof result>) => void;
+    mockFetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+    el('undo-remove-btn').click();
+    window.dispatchEvent(new Event('pagehide'));
+    document.body.innerHTML = '<main>Next page</main>';
+    finish(
+      result({ routeId: '61D', createdAt: new Date().toISOString() }, 201)
+    );
+    await flush();
+    expect(document.body.textContent).toBe('Next page');
+  });
+
+  test('returning from the back-forward cache discards previous undo and reloads current routes with usable remove controls', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: new Date().toISOString() }];
+    await boot();
+    document.querySelector<HTMLButtonElement>('.card-remove')!.click();
+    await flush();
+    expect(el('subscription-undo').hidden).toBe(false);
+    cachedPageTransition('pagehide');
+    savedRoutes = [{ routeId: '61A', createdAt: new Date().toISOString() }];
+    cachedPageTransition('pageshow');
+    await flush();
+    expect(el('subscription-undo').hidden).toBe(true);
+    const cards = document.querySelectorAll<HTMLElement>('.subscription-card');
+    expect(cards).toHaveLength(1);
+    expect(cards[0].dataset.routeId).toBe('61A');
+    const remove = cards[0].querySelector<HTMLButtonElement>('.card-remove')!;
+    expect(remove.disabled).toBe(false);
+    remove.click();
+    await flush();
+    expect(document.querySelector('.subscription-card')).toBeNull();
+    expect(el('subscription-undo-label').textContent).toContain('61A');
+  });
+
+  test('a late pre-cache removal cannot overwrite the restored list or unlock a new pending removal', async () => {
+    savedRoutes = [{ routeId: '61D', createdAt: new Date().toISOString() }];
+    await boot();
+    let finishOld!: (value: ReturnType<typeof result>) => void;
+    mockFetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOld = resolve;
+        })
+    );
+    document.querySelector<HTMLButtonElement>('.card-remove')!.click();
+    cachedPageTransition('pagehide');
+    savedRoutes = [{ routeId: '61A', createdAt: new Date().toISOString() }];
+    cachedPageTransition('pageshow');
+    await flush();
+    const remove = document.querySelector<HTMLButtonElement>(
+      '[data-route-id="61A"] .card-remove'
+    )!;
+    expect(remove.disabled).toBe(false);
+    let finishNew!: (value: ReturnType<typeof result>) => void;
+    mockFetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishNew = resolve;
+        })
+    );
+    remove.click();
+    expect(remove.disabled).toBe(true);
+    finishOld(result(null));
+    await flush();
+    expect(el('subscription-undo').hidden).toBe(true);
+    expect(document.querySelectorAll('.subscription-card')).toHaveLength(1);
+    expect(
+      document.querySelector<HTMLElement>('.subscription-card')?.dataset.routeId
+    ).toBe('61A');
+    expect(remove.disabled).toBe(true);
+    finishNew(result(null));
+    await flush();
+    expect(document.querySelector('.subscription-card')).toBeNull();
+    expect(el('subscription-undo-label').textContent).toContain('61A');
+    expect(el('subscription-undo-label').textContent).not.toContain('61D');
+    expect(el<HTMLButtonElement>('add-route-btn').disabled).toBe(false);
   });
 });

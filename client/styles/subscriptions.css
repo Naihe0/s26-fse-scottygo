@@ -91,6 +91,76 @@
   line-height: 1.5;
 }
 
+.card-popup-state {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #36624f;
+}
+.card-popup-state[data-mode='muted'],
+.card-popup-state[data-mode='paused'] {
+  color: #76571f;
+}
+.card-popup-options {
+  flex-basis: 100%;
+  border-top: 1px solid var(--app-border);
+}
+.card-popup-summary {
+  min-height: 44px;
+  padding: 12px 2px;
+  cursor: pointer;
+  color: var(--app-muted);
+  font-size: 13px;
+}
+.card-popup-options > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.card-popup-options button,
+.subscription-undo button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 9px;
+  background: var(--app-canvas);
+  color: var(--app-text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.card-popup-options button[hidden],
+.subscription-undo[hidden] {
+  display: none;
+}
+.card-popup-options p {
+  margin: 8px 0 0;
+  color: var(--app-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.subscription-undo {
+  box-sizing: border-box;
+  max-width: 520px;
+  width: 100%;
+  padding: 12px;
+  margin: -8px 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--app-brand-soft);
+  border-radius: 12px;
+  font-size: 14px;
+}
+.subscription-undo span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.subscription-undo button {
+  flex-shrink: 0;
+}
+
 .card-actions {
   display: flex;
   align-items: center;

@@ -6,14 +6,21 @@ import './components/live-notifications';
 import { escapeHtml } from './utils/html';
 import { routeMapUrl } from './utils/alert-content';
 import { showToast } from './utils/toast';
-import { isRouteMuted } from './utils/muted-routes';
+import {
+  getRoutePopupPreference,
+  isRouteMuted,
+  setRouteMuted,
+  setRoutePopupPreference,
+  subscribeRoutePopupPreferences,
+  type RoutePopupPreference
+} from './utils/muted-routes';
 import {
   buildRouteDisplayMap,
   getRouteDisplay,
   normalizeRouteId,
   type IRouteDisplayMeta
 } from './utils/route-display';
-import { authHeaders, getToken } from './services/session';
+import { authHeaders, getToken, isSameSession } from './services/session';
 import { MAX_SUBSCRIPTIONS_PER_USER } from '../../common/limits';
 
 function routeIdsEqual(a: string, b: string): boolean {
@@ -36,6 +43,24 @@ type LoadState = 'loading' | 'ready' | 'error';
 let subscriptionsState: LoadState = 'loading';
 let routesState: LoadState = 'loading';
 let pendingRouteId: string | null = null;
+const pageToken = getToken();
+let suspended = false;
+let sessionChanged = false;
+let pageVersion = 0;
+const currentSession = (version = pageVersion) =>
+  version === pageVersion &&
+  !suspended &&
+  !sessionChanged &&
+  isSameSession(pageToken);
+let stopPreferenceWatch: (() => void) | undefined;
+let lastRemoval: {
+  subscription: Subscription;
+  preference: RoutePopupPreference;
+} | null = null;
+const popupClock = new Intl.DateTimeFormat(undefined, {
+  hour: 'numeric',
+  minute: '2-digit'
+});
 /** Most recent notification createdAt per routeId (from last 30 min). */
 const latestNotifTime = new Map<string, string>();
 const alertScope =
@@ -70,20 +95,24 @@ function routeSubtitle(
 // ── API helpers ────────────────────────────────────────────────────────────────
 
 async function fetchSubscriptions(): Promise<void> {
+  const lifecycle = pageVersion;
   const res = await fetch('/notifications/subscriptions', {
     headers: authHeaders()
   });
   if (!res.ok) throw new Error('Could not load saved routes.');
   const data = await res.json();
+  if (!currentSession(lifecycle)) return;
   subscriptions = data.payload ?? [];
 }
 
 async function fetchRecentNotifications(): Promise<void> {
+  const lifecycle = pageVersion;
   const res = await fetch('/notifications/notifications', {
     headers: authHeaders()
   });
   if (!res.ok) return;
   const data = await res.json();
+  if (!currentSession(lifecycle)) return;
   const notifs: { routeId: string; createdAt: string }[] = data.payload ?? [];
   latestNotifTime.clear();
   // Notifications are sorted newest-first, so first hit per route is the latest
@@ -95,9 +124,11 @@ async function fetchRecentNotifications(): Promise<void> {
 }
 
 async function fetchRoutes(): Promise<void> {
+  const lifecycle = pageVersion;
   const res = await fetch('/transit/routes', { headers: authHeaders() });
   if (!res.ok) throw new Error('Could not load routes.');
   const data = await res.json();
+  if (!currentSession(lifecycle)) return;
   // Payload is IRoute[] — extract id and name
   allRoutes = (data.payload ?? []).map(
     (r: { id: string; name: string; system?: 'PRT' | 'CMU' }) => ({
@@ -109,9 +140,12 @@ async function fetchRoutes(): Promise<void> {
   routeDisplayById = buildRouteDisplayMap(allRoutes);
 }
 
-async function apiSubscribe(
-  routeId: string
-): Promise<{ ok: boolean; subscription?: Subscription; error?: string }> {
+async function apiSubscribe(routeId: string): Promise<{
+  ok: boolean;
+  subscription?: Subscription;
+  error?: string;
+  errorName?: string;
+}> {
   const res = await fetch('/notifications/subscriptions', {
     method: 'POST',
     headers: { ...authHeaders(), 'Content-Type': 'application/json' },
@@ -121,7 +155,11 @@ async function apiSubscribe(
   });
   const data = await res.json();
   if (res.status === 201) return { ok: true, subscription: data.payload };
-  return { ok: false, error: data.message ?? 'Failed to subscribe.' };
+  return {
+    ok: false,
+    error: data.message ?? 'Failed to subscribe.',
+    errorName: data.name
+  };
 }
 
 async function apiUnsubscribe(routeId: string): Promise<{ ok: boolean }> {
@@ -190,6 +228,13 @@ function formatAgo(isoTimestamp: string): string {
 
 function createCard(sub: Subscription): HTMLLIElement {
   const muted = isRouteMuted(sub.routeId);
+  const popupPreference = getRoutePopupPreference(sub.routeId);
+  const popupState =
+    popupPreference.mode === 'paused'
+      ? `Paused until ${popupClock.format(popupPreference.resumeAt)}`
+      : muted
+        ? 'Popups muted'
+        : 'Popups on while open';
   const display = getRouteDisplay(sub.routeId, routeDisplayById);
   const route = routeDisplayById.get(normalizeRouteId(sub.routeId));
   const routeId = route?.id ?? sub.routeId;
@@ -213,6 +258,7 @@ function createCard(sub: Subscription): HTMLLIElement {
       <h2 class="card-route-title">${escapeHtml(display.title)}</h2>
       <div class="card-last-updated">${escapeHtml(routeSubtitle(route, display.subtitle))}</div>
       ${updatedText ? `<div class="card-last-updated">${updatedText}</div>` : ''}
+      <div class="card-popup-state" data-mode="${popupPreference.mode}">${escapeHtml(popupState)}</div>
     </div>
     <div class="card-actions">
       <button class="card-bell ${muted ? 'muted' : ''}" aria-label="${muted ? 'Unmute' : 'Mute'} notifications for ${escapeHtml(display.title)}" aria-pressed="${muted}">
@@ -224,13 +270,20 @@ function createCard(sub: Subscription): HTMLLIElement {
       <a class="card-route-link" href="${escapeHtml(routeMapUrl(routeId, system))}" aria-label="View ${escapeHtml(display.title)} on the live map">Live map</a>
       <a class="card-updates-link" href="/notifications?route=${encodeURIComponent(routeId)}" aria-label="View updates for ${escapeHtml(display.title)}">Route updates</a>
     </div>
+    <details class="card-popup-options">
+      <summary class="card-popup-summary" aria-label="Popup options for ${escapeHtml(display.title)}">Popup options</summary>
+      <div><button type="button" class="card-pause-popups">Pause for 1 hour</button>
+      <button type="button" class="card-resume-popups" ${muted ? '' : 'hidden'}>Resume popups now</button></div>
+      <p>Applies to your account in this browser while ScottyGo is open. Route updates stay available.</p>
+    </details>
   `;
 
   // Remove subscription (A7)
   li.querySelector<HTMLButtonElement>('.card-remove')!.addEventListener(
     'click',
     async () => {
-      if (mutationPending) return;
+      const lifecycle = pageVersion;
+      if (mutationPending || !currentSession(lifecycle)) return;
       mutationPending = true;
       const button = li.querySelector<HTMLButtonElement>('.card-remove')!;
       const cardIndex = subscriptions.findIndex((s) =>
@@ -240,7 +293,12 @@ function createCard(sub: Subscription): HTMLLIElement {
       let removed = false;
       try {
         const { ok } = await apiUnsubscribe(sub.routeId);
+        if (!currentSession(lifecycle)) return;
         if (!ok) throw new Error('Unsubscribe failed');
+        lastRemoval = {
+          subscription: sub,
+          preference: getRoutePopupPreference(sub.routeId)
+        };
         subscriptions = subscriptions.filter(
           (s) => !routeIdsEqual(s.routeId, sub.routeId)
         );
@@ -251,25 +309,30 @@ function createCard(sub: Subscription): HTMLLIElement {
           })
         );
         showToast(`${display.title} removed.`);
+        renderUndo();
       } catch {
-        showToast('Failed to remove subscription. Please try again.');
+        if (currentSession(lifecycle))
+          showToast('Failed to remove subscription. Please try again.');
       } finally {
-        mutationPending = false;
-        const restoreFocus =
-          document.activeElement === button ||
-          document.activeElement === document.body;
-        if (removed) {
-          renderList();
-          if (restoreFocus) {
-            const buttons =
-              document.querySelectorAll<HTMLButtonElement>('.card-remove');
-            (
-              buttons[Math.min(cardIndex, buttons.length - 1)] ??
-              document.getElementById('add-route-btn')
-            )?.focus({ preventScroll: true });
+        refreshAfterPriorLifecycle(lifecycle);
+        if (currentSession(lifecycle)) {
+          mutationPending = false;
+          const restoreFocus =
+            document.activeElement === button ||
+            document.activeElement === document.body;
+          if (removed) {
+            renderList();
+            if (restoreFocus) {
+              const buttons =
+                document.querySelectorAll<HTMLButtonElement>('.card-remove');
+              (
+                buttons[Math.min(cardIndex, buttons.length - 1)] ??
+                document.getElementById('add-route-btn')
+              )?.focus({ preventScroll: true });
+            }
           }
+          updateMutationControls();
         }
-        updateMutationControls();
       }
     }
   );
@@ -277,27 +340,31 @@ function createCard(sub: Subscription): HTMLLIElement {
   // Bell toggle — mute/unmute popups (A6), no server call
   const bellBtn = li.querySelector<HTMLButtonElement>('.card-bell')!;
   bellBtn.addEventListener('click', () => {
-    // The live-notifications module persists the choice and updates rooms.
+    if (!currentSession()) return;
     const nowMuted = !isRouteMuted(sub.routeId);
-    document.dispatchEvent(
-      new CustomEvent(nowMuted ? 'notifRouteMute' : 'notifRouteUnmute', {
-        detail: { routeId: sub.routeId }
-      })
-    );
-    bellBtn.classList.toggle('muted', nowMuted);
-    bellBtn.innerHTML = nowMuted ? bellOffSVG : bellOnSVG;
-    bellBtn.setAttribute(
-      'aria-label',
-      `${nowMuted ? 'Unmute' : 'Mute'} notifications for ${display.title}`
-    );
-    bellBtn.setAttribute('aria-pressed', String(nowMuted));
+    setRouteMuted(sub.routeId, nowMuted);
     showToast(`${display.title} alerts ${nowMuted ? 'muted' : 'unmuted'}.`);
     if (alertScope.value !== 'all') {
       renderList();
       if (!li.isConnected) alertScope.focus({ preventScroll: true });
     }
   });
+  li.querySelector('.card-pause-popups')!.addEventListener('click', () => {
+    if (!currentSession()) return;
+    setRoutePopupPreference(sub.routeId, {
+      mode: 'paused',
+      resumeAt: Date.now() + 60 * 60_000
+    });
+    showToast(`${display.title} popups paused for 1 hour.`);
+  });
+  li.querySelector('.card-resume-popups')!.addEventListener('click', () => {
+    if (!currentSession()) return;
+    setRouteMuted(sub.routeId, false);
+    showToast(`${display.title} popups resumed.`);
+  });
 
+  li.querySelector<HTMLButtonElement>('.card-remove')!.disabled =
+    mutationPending || !currentSession();
   return li;
 }
 
@@ -328,8 +395,19 @@ function renderList(): void {
     'card-remove',
     'card-bell',
     'card-updates-link',
-    'card-route-link'
+    'card-route-link',
+    'card-popup-summary',
+    'card-pause-popups',
+    'card-resume-popups'
   ].find((name) => active?.classList.contains(name));
+  const expanded = new Set(
+    [
+      ...list.querySelectorAll<HTMLDetailsElement>('.card-popup-options[open]')
+    ].map(
+      (detail) =>
+        detail.closest<HTMLElement>('[data-route-id]')!.dataset.routeId
+    )
+  );
   const content = document.querySelector<HTMLElement>('main')!;
   const scrollTop = content.scrollTop;
   list.innerHTML = '';
@@ -349,6 +427,10 @@ function renderList(): void {
     );
   }
   visible.forEach((sub) => list.appendChild(createCard(sub)));
+  list.querySelectorAll<HTMLElement>('.subscription-card').forEach((card) => {
+    if (expanded.has(card.dataset.routeId))
+      card.querySelector<HTMLDetailsElement>('details')!.open = true;
+  });
   document.getElementById('saved-route-options')!.hidden =
     !subscriptions.length;
   updateCount();
@@ -366,12 +448,95 @@ function renderList(): void {
   document.getElementById('subscriptions-retry')!.hidden =
     subscriptionsState !== 'error';
   if (focusedRoute && focusedClass) {
-    Array.from(list.querySelectorAll<HTMLElement>('.subscription-card'))
-      .find((card) => card.dataset.routeId === focusedRoute)
-      ?.querySelector<HTMLElement>(`.${focusedClass}`)
-      ?.focus({ preventScroll: true });
+    const card = Array.from(
+      list.querySelectorAll<HTMLElement>('.subscription-card')
+    ).find((card) => card.dataset.routeId === focusedRoute);
+    const target =
+      card?.querySelector<HTMLElement>(`.${focusedClass}:not([hidden])`) ??
+      card?.querySelector<HTMLElement>('.card-popup-summary');
+    (target ?? alertScope).focus({ preventScroll: true });
   }
   content.scrollTop = scrollTop;
+}
+
+function renderUndo(message?: string): void {
+  const panel = document.getElementById('subscription-undo')!;
+  panel.hidden = !lastRemoval || !currentSession();
+  if (!lastRemoval || panel.hidden) return;
+  document.getElementById('subscription-undo-label')!.textContent =
+    message ??
+    `${getRouteDisplay(lastRemoval.subscription.routeId, routeDisplayById).title} removed.`;
+  (document.getElementById('undo-remove-btn') as HTMLButtonElement).disabled =
+    mutationPending;
+}
+
+async function undoRemoval(): Promise<void> {
+  const lifecycle = pageVersion;
+  const removed = lastRemoval;
+  if (!removed || mutationPending || !currentSession(lifecycle)) return;
+  if (subscriptions.length >= MAX_SUBSCRIPTIONS_PER_USER) {
+    renderUndo('Remove another saved route before undoing.');
+    return;
+  }
+  mutationPending = true;
+  updateMutationControls();
+  renderUndo('Restoring route…');
+  try {
+    const result = await apiSubscribe(removed.subscription.routeId);
+    if (!currentSession(lifecycle) || lastRemoval !== removed) return;
+    if (result.ok)
+      subscriptions.push(result.subscription ?? removed.subscription);
+    else if (
+      result.errorName === 'DuplicateSubscription' ||
+      result.error?.includes('already subscribed')
+    ) {
+      await fetchSubscriptions();
+      if (!currentSession(lifecycle) || lastRemoval !== removed) return;
+      if (
+        !subscriptions.some((s) =>
+          routeIdsEqual(s.routeId, removed.subscription.routeId)
+        )
+      )
+        throw new Error('Could not confirm the saved route. Try again.');
+    } else
+      throw new Error(
+        result.error ?? 'Could not restore this route. Try again.'
+      );
+    document.dispatchEvent(
+      new CustomEvent('notifRouteJoin', {
+        detail: { routeId: removed.subscription.routeId }
+      })
+    );
+    setRoutePopupPreference(removed.subscription.routeId, removed.preference);
+    lastRemoval = null;
+    renderList();
+    renderUndo();
+    const card = [
+      ...document.querySelectorAll<HTMLElement>('.subscription-card')
+    ].find((c) =>
+      routeIdsEqual(c.dataset.routeId!, removed.subscription.routeId)
+    );
+    card
+      ?.querySelector<HTMLElement>('.card-route-link')
+      ?.focus({ preventScroll: true });
+    showToast('Saved route restored.');
+  } catch (error) {
+    if (currentSession(lifecycle) && lastRemoval === removed)
+      renderUndo(
+        error instanceof Error
+          ? error.message
+          : 'Could not restore this route. Try again.'
+      );
+  } finally {
+    refreshAfterPriorLifecycle(lifecycle);
+    if (currentSession(lifecycle)) {
+      mutationPending = false;
+      updateMutationControls();
+      (
+        document.getElementById('undo-remove-btn') as HTMLButtonElement
+      ).disabled = false;
+    }
+  }
 }
 
 function getFilteredRoutes(query: string): IRouteDisplayMeta[] {
@@ -388,7 +553,10 @@ function getFilteredRoutes(query: string): IRouteDisplayMeta[] {
 }
 
 async function saveRoute(routeId: string): Promise<void> {
+  const lifecycle = pageVersion;
+  if (!currentSession(lifecycle)) return;
   const { ok, subscription, error } = await apiSubscribe(routeId);
+  if (!currentSession(lifecycle)) return;
   if (ok) {
     subscriptions.push(
       subscription ?? { routeId, createdAt: new Date().toISOString() }
@@ -404,6 +572,7 @@ async function saveRoute(routeId: string): Promise<void> {
 
   if (error?.includes('already subscribed')) {
     await fetchSubscriptions();
+    if (!currentSession(lifecycle)) return;
     setSheetFeedback('This route is already saved.');
     return;
   }
@@ -419,10 +588,14 @@ function setSheetFeedback(message: string, error = false): void {
 
 /** Update controls in place so saving never resets the list or its focus. */
 function updateMutationControls(): void {
+  const undo = document.getElementById(
+    'undo-remove-btn'
+  ) as HTMLButtonElement | null;
+  if (undo) undo.disabled = mutationPending || !currentSession();
   document
     .querySelectorAll<HTMLButtonElement>('.card-remove')
     .forEach((button) => {
-      button.disabled = mutationPending;
+      button.disabled = mutationPending || !currentSession();
     });
   const atLimit = subscriptions.length >= MAX_SUBSCRIPTIONS_PER_USER;
   document
@@ -457,6 +630,12 @@ function updateMutationControls(): void {
     });
   updateCount();
   updateSheetStatus();
+}
+
+function refreshAfterPriorLifecycle(version: number): void {
+  if (version === pageVersion || !currentSession()) return;
+  void loadSubscriptions();
+  document.dispatchEvent(new Event('notifSubscriptionsRefresh'));
 }
 
 function currentQuery(): string {
@@ -513,7 +692,9 @@ function renderSheetResults(query: string): void {
 
     const addBtn = li.querySelector<HTMLButtonElement>('.result-add-btn')!;
     addBtn.addEventListener('click', async () => {
+      const lifecycle = pageVersion;
       if (
+        !currentSession(lifecycle) ||
         mutationPending ||
         subscriptionsState !== 'ready' ||
         subscriptions.some((s) => routeIdsEqual(s.routeId, route.id)) ||
@@ -531,22 +712,25 @@ function renderSheetResults(query: string): void {
           error instanceof Error
             ? error.message
             : 'Could not save this route. Please try again.';
-        setSheetFeedback(message, true);
+        if (currentSession(lifecycle)) setSheetFeedback(message, true);
       } finally {
-        mutationPending = false;
-        pendingRouteId = null;
-        renderList();
-        if (
-          hideSaved.checked &&
-          subscriptions.some((sub) => routeIdsEqual(sub.routeId, route.id))
-        ) {
-          const restoreFocus = document.activeElement === addBtn;
-          renderSheetResults(currentQuery());
-          if (restoreFocus)
-            document
-              .getElementById('route-search-input')
-              ?.focus({ preventScroll: true });
-        } else updateMutationControls();
+        refreshAfterPriorLifecycle(lifecycle);
+        if (currentSession(lifecycle)) {
+          mutationPending = false;
+          pendingRouteId = null;
+          renderList();
+          if (
+            hideSaved.checked &&
+            subscriptions.some((sub) => routeIdsEqual(sub.routeId, route.id))
+          ) {
+            const restoreFocus = document.activeElement === addBtn;
+            renderSheetResults(currentQuery());
+            if (restoreFocus)
+              document
+                .getElementById('route-search-input')
+                ?.focus({ preventScroll: true });
+          } else updateMutationControls();
+        }
       }
     });
 
@@ -628,14 +812,18 @@ function initSheet(): void {
 // ── Init ───────────────────────────────────────────────────────────────────────
 
 async function loadSubscriptions(): Promise<void> {
+  const lifecycle = pageVersion;
+  if (!currentSession(lifecycle)) return;
   const retry = document.getElementById('subscriptions-retry')!;
   const restoreFocus = document.activeElement === retry;
   subscriptionsState = 'loading';
   renderList();
   try {
     await fetchSubscriptions();
+    if (!currentSession(lifecycle)) return;
     subscriptionsState = 'ready';
   } catch {
+    if (!currentSession(lifecycle)) return;
     subscriptionsState = 'error';
   }
   renderList();
@@ -653,14 +841,18 @@ async function loadSubscriptions(): Promise<void> {
 }
 
 async function loadRoutes(): Promise<void> {
+  const lifecycle = pageVersion;
+  if (!currentSession(lifecycle)) return;
   const retry = document.getElementById('routes-retry')!;
   const restoreFocus = document.activeElement === retry;
   routesState = 'loading';
   renderSheetResults(currentQuery());
   try {
     await fetchRoutes();
+    if (!currentSession(lifecycle)) return;
     routesState = 'ready';
   } catch {
+    if (!currentSession(lifecycle)) return;
     routesState = 'error';
   }
   renderList();
@@ -678,15 +870,24 @@ async function loadRoutes(): Promise<void> {
 }
 
 async function init(): Promise<void> {
+  const lifecycle = pageVersion;
   if (!getToken()) {
     window.location.replace('/auth');
     return;
   }
 
   initSheet();
+  watchPopupPreferences();
+  document
+    .getElementById('undo-remove-btn')!
+    .addEventListener('click', () => void undoRemoval());
   document
     .getElementById('subscriptions-retry')!
     .addEventListener('click', () => {
+      if (sessionChanged) {
+        window.location.reload();
+        return;
+      }
       void loadSubscriptions();
     });
   document.getElementById('routes-retry')!.addEventListener('click', () => {
@@ -695,8 +896,60 @@ async function init(): Promise<void> {
   await Promise.allSettled([
     loadSubscriptions(),
     loadRoutes(),
-    fetchRecentNotifications().then(() => renderList())
+    fetchRecentNotifications().then(() => {
+      if (currentSession(lifecycle)) renderList();
+    })
   ]);
 }
+
+function watchPopupPreferences(): void {
+  stopPreferenceWatch?.();
+  stopPreferenceWatch = subscribeRoutePopupPreferences((reason) => {
+    if (suspended) return;
+    if (reason === 'session' || !isSameSession(pageToken)) {
+      sessionChanged = true;
+      pageVersion++;
+      lastRemoval = null;
+      subscriptions = [];
+      allRoutes = [];
+      latestNotifTime.clear();
+      subscriptionsState = 'error';
+      routesState = 'error';
+      document.getElementById('sheet-close')?.click();
+      renderUndo();
+      renderList();
+      document.getElementById('subscription-status')!.textContent =
+        'Your account changed. Reload saved routes to continue.';
+      document.getElementById('subscriptions-retry')!.textContent =
+        'Reload saved routes';
+      return;
+    }
+    renderList();
+  });
+}
+
+window.addEventListener('pagehide', () => {
+  suspended = true;
+  pageVersion++;
+  mutationPending = false;
+  pendingRouteId = null;
+  const undo = document.getElementById('subscription-undo');
+  if (undo) undo.hidden = true;
+  stopPreferenceWatch?.();
+  stopPreferenceWatch = undefined;
+  lastRemoval = null;
+});
+window.addEventListener('pageshow', (event) => {
+  if (!event.persisted) return;
+  suspended = false;
+  if (!isSameSession(pageToken)) {
+    window.location.reload();
+    return;
+  }
+  watchPopupPreferences();
+  void loadSubscriptions();
+  void loadRoutes();
+  void fetchRecentNotifications();
+});
 
 init();

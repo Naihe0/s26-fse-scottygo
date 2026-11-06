@@ -13,6 +13,7 @@ import { installMapFixture } from './map-fixture.mjs';
 import { apiFixture } from './feeds.mjs';
 import { socketFixture } from './socket-fixture.mjs';
 import { rehearseMyPlaces } from './my-places.mjs';
+import { rehearsePopupPreferences } from './subscriptions.mjs';
 import { recordEvidence } from './evidence.mjs';
 
 const require = createRequire(import.meta.url);
@@ -618,6 +619,7 @@ try {
     await page.locator('.result-add-btn').first().click();
     await click('#sheet-close');
     assert.equal(await page.locator('.card-bell').count(), 2);
+    await rehearsePopupPreferences({ page, context, origin, socket });
   });
   await step('UC16 Filter and read a service alert', async () => {
     await go('/notifications');

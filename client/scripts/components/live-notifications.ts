@@ -28,8 +28,12 @@ import {
   getRouteTitle,
   type IRouteDisplayMeta
 } from '../utils/route-display';
-import { isRouteMuted, setRouteMuted } from '../utils/muted-routes';
-import { authHeaders, getToken } from '../services/session';
+import {
+  isRouteMuted,
+  setRouteMuted,
+  subscribeRoutePopupPreferences
+} from '../utils/muted-routes';
+import { authHeaders, getToken, isSameSession } from '../services/session';
 
 // ── Socket management ─────────────────────────────────────────────────────────
 
@@ -37,27 +41,66 @@ let socket: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;
 let routeDisplayById = new Map<string, IRouteDisplayMeta>();
 let suspended = false;
 let initializationVersion = 0;
+let socketToken: string | null = null;
+let stopPreferenceWatch: (() => void) | undefined;
+const subscribedRoutes = new Set<string>();
 
 // Routes we want to be in — joined when socket connects (and on reconnect).
 const activeRoutes = new Set<string>();
 
 function joinRoute(routeId: string): void {
+  subscribedRoutes.add(routeId);
+  if (isRouteMuted(routeId) || activeRoutes.has(routeId)) return;
   activeRoutes.add(routeId);
   socket?.emit('subscribeRoute', { routeId });
 }
 
 function leaveRoute(routeId: string): void {
+  subscribedRoutes.delete(routeId);
   activeRoutes.delete(routeId);
   socket?.emit('unsubscribeRoute', { routeId });
+}
+
+function synchronizePopupRooms(): void {
+  if (suspended || !isSameSession(socketToken)) return;
+  for (const routeId of subscribedRoutes) {
+    if (isRouteMuted(routeId)) {
+      if (activeRoutes.delete(routeId))
+        socket?.emit('unsubscribeRoute', { routeId });
+    } else if (!activeRoutes.has(routeId)) {
+      activeRoutes.add(routeId);
+      socket?.emit('subscribeRoute', { routeId });
+    }
+  }
+}
+
+function watchPopupPreferences(): void {
+  stopPreferenceWatch?.();
+  stopPreferenceWatch = subscribeRoutePopupPreferences((reason) => {
+    if (suspended) return;
+    if (reason === 'session' || !isSameSession(socketToken)) {
+      initializationVersion++;
+      socket?.disconnect();
+      socket = null;
+      socketToken = null;
+      subscribedRoutes.clear();
+      activeRoutes.clear();
+      popupStack?.destroy();
+      popupStack = null;
+      void init();
+    } else synchronizePopupRooms();
+  });
 }
 
 function connect(): void {
   const token = getToken();
   if (!token || socket) return;
 
+  socketToken = token;
   socket = io({ auth: { token } });
 
   socket.on('connect', () => {
+    if (suspended || !isSameSession(token)) return;
     // Rejoin all tracked rooms on (re)connect
     activeRoutes.forEach((routeId) => {
       socket!.emit('subscribeRoute', { routeId });
@@ -65,7 +108,7 @@ function connect(): void {
   });
 
   socket.on('liveNotification', (notif: INotification) => {
-    if (suspended) return;
+    if (suspended || !isSameSession(token)) return;
     document.dispatchEvent(
       new CustomEvent('scottygo:notification', { detail: notif })
     );
@@ -77,24 +120,36 @@ function connect(): void {
 
 // ── DOM events from other scripts ─────────────────────────────────────────────
 
+document.addEventListener('notifSubscriptionsRefresh', () => {
+  if (!suspended && isSameSession(socketToken)) void init();
+});
+
 document.addEventListener('notifRouteJoin', (e: Event) => {
+  if (suspended || !isSameSession(socketToken)) return;
+  initializationVersion++;
   const { routeId } = (e as CustomEvent<{ routeId: string }>).detail;
   setRouteMuted(routeId, false);
   joinRoute(routeId);
+  void init();
 });
 
 document.addEventListener('notifRouteLeave', (e: Event) => {
+  if (suspended || !isSameSession(socketToken)) return;
+  initializationVersion++;
   const { routeId } = (e as CustomEvent<{ routeId: string }>).detail;
   leaveRoute(routeId);
+  void init();
 });
 
 document.addEventListener('notifRouteMute', (e: Event) => {
+  if (suspended || !isSameSession(socketToken)) return;
   const { routeId } = (e as CustomEvent<{ routeId: string }>).detail;
   setRouteMuted(routeId, true);
-  leaveRoute(routeId);
+  synchronizePopupRooms();
 });
 
 document.addEventListener('notifRouteUnmute', (e: Event) => {
+  if (suspended || !isSameSession(socketToken)) return;
   const { routeId } = (e as CustomEvent<{ routeId: string }>).detail;
   setRouteMuted(routeId, false);
   joinRoute(routeId);
@@ -115,6 +170,8 @@ function showPopup(notif: INotification): void {
 window.addEventListener('pagehide', () => {
   suspended = true;
   initializationVersion++;
+  stopPreferenceWatch?.();
+  stopPreferenceWatch = undefined;
   socket?.disconnect();
   popupStack?.destroy();
   popupStack = null;
@@ -123,6 +180,13 @@ window.addEventListener('pagehide', () => {
 window.addEventListener('pageshow', (event) => {
   if (!event.persisted) return;
   suspended = false;
+  watchPopupPreferences();
+  if (!isSameSession(socketToken)) {
+    socket?.disconnect();
+    socket = null;
+    activeRoutes.clear();
+    subscribedRoutes.clear();
+  }
   socket?.connect();
   void init();
 });
@@ -130,15 +194,18 @@ window.addEventListener('pageshow', (event) => {
 
 async function init(): Promise<void> {
   if (suspended) return;
+  if (!stopPreferenceWatch) watchPopupPreferences();
   const version = ++initializationVersion;
+  const token = getToken();
   connect();
 
-  if (!getToken()) return;
+  if (!token) return;
 
   // Fetch active subscriptions and join their socket rooms (skipping muted ones)
   try {
     const routes = await fetchRouteDisplayMap(authHeaders());
-    if (suspended || version !== initializationVersion) return;
+    if (suspended || version !== initializationVersion || !isSameSession(token))
+      return;
     routeDisplayById = routes;
 
     const res = await fetch('/notifications/subscriptions', {
@@ -146,13 +213,16 @@ async function init(): Promise<void> {
     });
     if (!res.ok) return;
     const data = await res.json();
-    if (suspended || version !== initializationVersion) return;
+    if (suspended || version !== initializationVersion || !isSameSession(token))
+      return;
     const subs: { routeId: string }[] = data.payload ?? [];
+    const updated = new Set(subs.map((s) => s.routeId));
+    for (const routeId of subscribedRoutes)
+      if (!updated.has(routeId)) leaveRoute(routeId);
     subs.forEach(({ routeId }) => {
-      if (!isRouteMuted(routeId)) {
-        joinRoute(routeId);
-      }
+      subscribedRoutes.add(routeId);
     });
+    synchronizePopupRooms();
   } catch {
     // Best-effort: socket joins will be retried on reconnect
   }

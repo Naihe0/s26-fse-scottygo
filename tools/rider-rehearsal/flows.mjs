@@ -55,7 +55,7 @@ export const suiteGroups = {
     'url-sync',
     'map-navigation'
   ],
-  UC15: ['subscriptions', 'map-subscription-session'],
+  UC15: ['subscriptions', 'map-subscription-session', 'muted-routes'],
   UC16: [
     'notification-rendering',
     'notification-inbox',
@@ -63,7 +63,12 @@ export const suiteGroups = {
     'alert-content',
     'alert-metadata.unit'
   ],
-  UC17: ['live-notification-stack', 'live-notification-lifecycle'],
+  UC17: [
+    'live-notification-stack',
+    'live-notification-lifecycle',
+    'live-popup-preferences',
+    'muted-routes'
+  ],
   UC18: ['frontend-accessibility', 'live-notification.unit'],
   UC19: ['manageacct.unit'],
   UC20: ['transit-feed-lifecycle.unit']
@@ -98,7 +103,10 @@ export const alternateFlows = {
   ],
   UC04: [
     ['GPS failure and recovery', 'denied|retry|recover|timeout|unavailable'],
-    ['Alternate planned origin', 'planned|campus|custom|Places New|place|suggestion|token|SDK'],
+    [
+      'Alternate planned origin',
+      'planned|campus|custom|Places New|place|suggestion|token|SDK'
+    ],
     [
       'Saved stop and return to GPS',
       'saved platform|Current Location|saved stop'
@@ -190,8 +198,14 @@ export const alternateFlows = {
     ]
   ],
   UC13: [
-    ['Saved stop controls', 'saved stop|nickname|share|starting point|nearby discovery'],
-    ['Named places and views', 'named|rename|planning location|view|place location|place draft|place boarding'],
+    [
+      'Saved stop controls',
+      'saved stop|nickname|share|starting point|nearby discovery'
+    ],
+    [
+      'Named places and views',
+      'named|rename|planning location|view|place location|place draft|place boarding'
+    ],
     ['Recent selections and history', 'recent|history'],
     [
       'Storage capacity, account separation and undo',
@@ -214,7 +228,10 @@ export const alternateFlows = {
       'Subscription filters and operator picker',
       'filter|sort|system|operator|saved'
     ],
-    ['Mute, unmute and remove', 'mute|remove|delete'],
+    [
+      'Account popup settings, timed pause and undo removal',
+      'mute|pause|remove|delete|undo|account|expiry'
+    ],
     [
       'Save rejection, limits and concurrency',
       'duplicate|limit|failed|retry|concurren|ten'
