@@ -10,6 +10,22 @@ export class MapAppearancePanel extends HTMLElement {
   private apply?: (value: MapAppearance) => void;
   private focused = false;
   private host: Element | null = null;
+  private readonly revealTools = new MutationObserver((records) => {
+    if (!this.focused) return;
+    // A secondary journey may open from a map card or GPS recovery while its
+    // usual launcher is hidden. Restore its containing tools before interaction.
+    if (
+      records.some(
+        ({ target }) =>
+          target instanceof Element &&
+          target.matches(
+            'dialog[open], .location-search-dropdown:not([hidden])'
+          )
+      )
+    ) {
+      this.setFocused(false, false);
+    }
+  });
   private readonly launch = () => this.open();
   private readonly escape = (event: KeyboardEvent) => {
     if (
@@ -23,6 +39,12 @@ export class MapAppearancePanel extends HTMLElement {
 
   connectedCallback(): void {
     this.host = this.closest('.map-container');
+    if (this.host)
+      this.revealTools.observe(document.body, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['hidden', 'open']
+      });
     this.innerHTML = `
       <dialog class="map-appearance" aria-labelledby="map-appearance-title">
         <header><div><p class="map-appearance__eyebrow">YOUR VIEW</p><h2 id="map-appearance-title">Map appearance</h2></div><button type="button" data-close-appearance aria-label="Close map appearance">×</button></header>
@@ -94,6 +116,7 @@ export class MapAppearancePanel extends HTMLElement {
     document.removeEventListener('toggleLayers', this.launch);
     document.removeEventListener('keydown', this.escape);
     this.host?.classList.remove('is-map-focused');
+    this.revealTools.disconnect();
     this.host = null;
   }
 
@@ -121,14 +144,15 @@ export class MapAppearancePanel extends HTMLElement {
       document.getElementById('layers-btn')?.focus({ preventScroll: true });
   }
 
-  private setFocused(enabled: boolean): void {
+  private setFocused(enabled: boolean, moveFocus = true): void {
     this.focused = enabled;
     this.closest('.map-container')?.classList.toggle('is-map-focused', enabled);
     const exit = this.querySelector<HTMLButtonElement>('.map-focus-exit')!;
     exit.hidden = !enabled;
-    (enabled ? exit : document.getElementById('layers-btn'))?.focus({
-      preventScroll: true
-    });
+    if (moveFocus)
+      (enabled ? exit : document.getElementById('layers-btn'))?.focus({
+        preventScroll: true
+      });
   }
 
   private save(): void {

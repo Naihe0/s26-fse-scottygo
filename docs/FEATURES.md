@@ -37,7 +37,7 @@ Existing regression suites live under `tests/client.tests`, `tests/server.tests`
 
 The use cases above are the starting checklist for these rounds. Browser checks use phone-sized WebKit and desktop Chrome. Controlled data covers missed buses, service failures and account writes without submitting test reports to riders.
 
-Final acceptance on November 5 passed 101 Jest suites and 1,422 tests, including the isolated MongoDB workflows; 20 opt-in live-provider tests were skipped. The cumulative browser walkthrough passed 18 interaction groups on iPhone-sized WebKit and desktop Chrome, backed by 672 alternate-path checks and 7 iOS host checks. Additional hosted checks used real routes, platforms, vehicles, alerts and walking instructions. These are browser and host tests, not a physical-iPhone certification. Per-round local evidence is under the ignored `private/rider-rehearsals/`; deployment identity is available from `/transit/health`.
+Final acceptance on November 5 passed 101 Jest suites and 1,422 tests, including the isolated MongoDB workflows; 20 opt-in live-provider tests were skipped. Two additional focus-recovery regression tests passed after that full run. The cumulative browser walkthrough passed 18 interaction groups on iPhone-sized WebKit and desktop Chrome, backed by 674 alternate-path checks and 7 iOS host checks. Additional hosted checks used real routes, platforms, vehicles, alerts and walking instructions. These are browser and host tests, not a physical-iPhone certification. Per-round local evidence is under the ignored `private/rider-rehearsals/`; deployment identity is available from `/transit/health`.
 
 | Round | Friction observed | Changes riders can use |
 | --- | --- | --- |
@@ -256,7 +256,7 @@ The screenshots are captures of the current app in a local preview, replacing th
 
 ## Map appearance
 
-The layers button opens **Map appearance**. Choose the base and overlay separately; both choices preserve ScottyGo buses, platforms and route selection. Satellite includes street names. **Stronger street labels** increases road-map text contrast. These display preferences stay in the same browser; private browsing or blocked storage falls back to the current session. **Focus on map** temporarily hides search, filters and discovery tools, retaining transit markers, zoom, GPS and the **Show map controls** button. Escape also restores the controls. **Reset appearance** returns to streets with no extra overlay.
+The layers button opens **Map appearance**. Choose the base and overlay separately; both choices preserve ScottyGo buses, platforms and route selection. Satellite includes street names. **Stronger street labels** increases road-map text contrast. These display preferences stay in the same browser; private browsing or blocked storage falls back to the current session. **Focus on map** temporarily hides search, filters and discovery tools, retaining transit markers, zoom, GPS and the **Show map controls** button. Escape also restores the controls. Opening the starting-point picker, a route explorer or a report dialog restores the tools automatically without taking keyboard focus away from that flow. **Reset appearance** returns to streets with no extra overlay.
 
 ![Map appearance choices on the live map in phone WebKit.](wireframes/current/map-appearance-phone.png)
 

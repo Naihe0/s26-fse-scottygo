@@ -377,7 +377,10 @@ try {
   await step(
     'UC18 Review, edit and send a bus report to isolated endpoint',
     async () => {
+      await click('#layers-btn');
+      await page.locator('.map-appearance[open]').getByRole('button', {name:'Focus on map'}).click();
       await click('.map-popup__action-btn--report');
+      assert.equal(await page.locator('#transit-search-input').isVisible(), true);
       await page.getByRole('button', { name: 'Many seats open' }).click();
       await page
         .getByLabel('Report section')
