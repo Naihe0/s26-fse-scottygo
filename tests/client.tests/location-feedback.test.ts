@@ -71,6 +71,28 @@ test('retry removes the card before invoking the callback synchronously', () => 
   expect(document.activeElement?.id).toBe('recenter-btn');
 });
 
+test('choosing an origin opens the picker synchronously and keeps the opening tap inside it', () => {
+  const picker = document.createElement('location-search');
+  picker.innerHTML = '<h2 tabindex="-1" data-start-heading>Starting point</h2>';
+  const open = jest.fn();
+  Object.assign(picker, { open });
+  document.querySelector('.map-container')!.append(picker);
+  const onRetry = jest.fn();
+  const outside = jest.fn();
+  document.addEventListener('click', outside);
+  try {
+    showLocationFeedback('denied', onRetry);
+    card()!.querySelector<HTMLButtonElement>('[data-choose-start]')!.click();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(card()).toBeNull();
+    expect(document.activeElement).toBe(picker.firstElementChild);
+    expect(outside).not.toHaveBeenCalled();
+    expect(onRetry).not.toHaveBeenCalled();
+  } finally {
+    document.removeEventListener('click', outside);
+  }
+});
+
 test('dismiss restores focus without starting a retry or removing other UI', () => {
   const onRetry = jest.fn();
   showLocationFeedback('denied', onRetry);

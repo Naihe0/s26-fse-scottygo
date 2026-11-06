@@ -1,4 +1,5 @@
 import type { LocationFailure } from '../services/geolocation-controller';
+import type { ILocationSearchElement } from './location-search';
 
 interface LocationFeedback {
   card: HTMLElement;
@@ -84,6 +85,12 @@ function createFeedback(container: Element): LocationFeedback {
   retry.type = 'button';
   retry.className = 'location-feedback__retry';
   retry.textContent = 'Try again';
+  const choose = document.createElement('button');
+  choose.type = 'button';
+  choose.dataset.chooseStart = '';
+  choose.textContent = 'Choose a starting point';
+  const picker = container.querySelector<ILocationSearchElement>('location-search');
+  choose.hidden = typeof picker?.open !== 'function';
 
   const entry: LocationFeedback = {
     card,
@@ -105,7 +112,17 @@ function createFeedback(container: Element): LocationFeedback {
     // Keep this synchronous so browser permission requests retain the gesture.
     onRetry();
   });
-  card.append(status, dismiss, fallback, help, retry);
+  choose.addEventListener('click', event => {
+    event.stopPropagation();
+    if (feedback !== entry || !picker?.isConnected || typeof picker.open !== 'function') return;
+    clearLocationFeedback();
+    picker.open();
+    picker.querySelector<HTMLElement>('[data-start-heading]')?.focus({preventScroll:true});
+  });
+  const actions = document.createElement('div');
+  actions.className = 'location-feedback__actions';
+  actions.append(retry, choose);
+  card.append(status, dismiss, fallback, help, actions);
   container.append(card);
   return entry;
 }

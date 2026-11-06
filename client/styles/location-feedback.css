@@ -100,6 +100,21 @@
   background: #970d26;
 }
 
+.location-feedback__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.location-feedback__actions > button { flex: 1 1 112px; }
+.location-feedback [data-choose-start] {
+  padding: 8px 10px;
+  border: 1px solid #c7d1dc;
+  border-radius: 12px;
+  background: #fff;
+  color: #25374a;
+  font-weight: 600;
+}
+
 .location-feedback :is(button, summary):focus-visible {
   outline: 3px solid #2563eb;
   outline-offset: 2px;
