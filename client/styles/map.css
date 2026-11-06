@@ -1165,6 +1165,19 @@ input:checked + .slider:before {
   width: 100%; min-height: 44px; font: inherit; color: inherit;
   text-align: start; border: none; border-bottom: 1px solid #e1e5e9;
   background: transparent;
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+.arrival-board__change { width: 100%; color: #564876; font-weight: 600; }
+.stop-arrival-board [data-reset-view] {
+  min-height: 44px;
+  padding: 0 8px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  border: 0;
+  background: transparent;
+  color: var(--primary, #861535);
 }
 .stop-arrival-board .map-popup__arrival[aria-pressed="true"] {
   background: #f7e8ed;

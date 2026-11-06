@@ -23,7 +23,7 @@ const suiteGroups = {
   UC07: ['transit-search'],
   UC08: ['nearby-stops-panel'],
   UC09: ['route-explorer'],
-  UC10: ['prediction-requests', 'prediction-shortcuts'],
+  UC10: ['prediction-requests', 'prediction-shortcuts', 'stop-boarding', 'arrival-identity'],
   UC11: ['vehicle-motion-replay', 'vehicle-motion-tracker', 'vehicle-tracker'],
   UC12: ['directions-controller', 'walking-directions.service', 'directions-restoration'],
   UC13: ['rider-shortcuts', 'rider-shortcuts-store'],

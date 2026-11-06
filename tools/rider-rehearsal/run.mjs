@@ -228,6 +228,17 @@ try {
   await step('UC10+14 Stop arrivals, share, save and restore', async () => {
     const pop = page.locator('#map-popup');
     await pop.locator('.stop-arrival-board summary').click();
+    const view = pop.getByLabel('Show departures');
+    const boardRows = pop.locator('.stop-arrival-board [data-key]');
+    await boardRows.first().click();
+    await view.selectOption('selected');
+    assert.equal(await boardRows.count(), 1, 'Only the chosen visit should be selected');
+    await view.selectOption('first');
+    assert.equal(await boardRows.count(), 1, 'One next departure for fixture route 61C');
+    await view.selectOption('all');
+    await pop.locator('[data-clear]').click();
+    await pop.getByLabel('Time window').selectOption('15');
+    await pop.getByLabel('Time window').selectOption('0');
     await pop.locator('[data-clock]').check();
     const checked = fixture.events.checks;
     await Promise.all([

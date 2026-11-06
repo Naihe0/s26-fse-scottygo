@@ -1,4 +1,5 @@
 import type { IPrediction } from '../../../common/transit.interface';
+import { keyArrivalRows } from '../utils/arrival-identity';
 
 const PAGE_SIZE = 8;
 const localClock = new Intl.DateTimeFormat('en-US', {
@@ -7,16 +8,9 @@ const localClock = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York'
 });
 
-function identity(p: IPrediction): string {
-  return JSON.stringify([
-    p.stopId,
-    p.routeId,
-    p.vid && p.vid !== 'Scheduled' ? p.vid : p.predictedArrivalTime
-  ]);
-}
-
 function countdown(timestamp: number, now: number): string {
   const seconds = Math.round((timestamp - now) / 1000);
+  if (seconds < -60) return 'Estimate passed';
   if (seconds <= 0) return 'Due';
   return seconds < 60 ? `${seconds}s` : `${Math.ceil(seconds / 60)} min`;
 }
@@ -37,6 +31,11 @@ export class StopArrivalBoard {
   private host!: HTMLElement;
   private directions!: HTMLButtonElement;
   private selected = new Set<string>();
+  private keys: Map<IPrediction, string>;
+  private adjustments = new Map<string, number>();
+  private view: 'all' | 'first' | 'selected' = 'all';
+  private withinMinutes = 0;
+  private nextFilterChange = Infinity;
   private route = '';
   private clockTime = false;
   private expanded = false;
@@ -50,12 +49,13 @@ export class StopArrivalBoard {
     private readonly routeColor: (route: string) => string
   ) {
     this.predictions = validArrivals(predictions);
+    this.keys = keyArrivalRows(this.predictions);
     this.unavailable = !available;
     this.checkedAt = available ? Date.now() : null;
   }
 
   get selectedPredictions(): IPrediction[] {
-    return this.predictions.filter((p) => this.selected.has(identity(p)));
+    return this.predictions.filter((p) => this.selected.has(this.keys.get(p)!));
   }
 
   get hasPredictions(): boolean {
@@ -71,6 +71,8 @@ export class StopArrivalBoard {
         <details><summary>Arrivals <span aria-hidden="true">▾</span></summary>
           <div class="arrival-board__options">
             <label data-route-label>Route <select data-route></select></label>
+            <label>Show departures <select data-view><option value="all">All departures</option><option value="first">Next per route</option><option value="selected">Selected only</option></select></label>
+            <label>Time window <select data-within><option value="0">Any time</option><option value="15">Next 15 minutes</option><option value="30">Next 30 minutes</option><option value="60">Next hour</option></select></label>
             <label><input type="checkbox" data-clock> Pittsburgh clock time</label>
           </div>
         </details>
@@ -81,7 +83,8 @@ export class StopArrivalBoard {
         <button type="button" data-clear>Clear selection</button>
       </div>
       <ul class="map-popup__list" aria-label="Upcoming arrivals"></ul>
-      <p class="map-popup__empty" hidden>No upcoming arrivals</p>`;
+      <p class="map-popup__empty" hidden>No upcoming arrivals</p>
+      <button type="button" data-reset-view hidden>Show all departures</button>`;
     const details = host.querySelector('details')!;
     details.open = this.expanded;
     details.addEventListener('toggle', () => {
@@ -92,6 +95,28 @@ export class StopArrivalBoard {
       this.route = select.value;
       this.limit = PAGE_SIZE;
       this.render();
+    });
+    const view = host.querySelector<HTMLSelectElement>('[data-view]')!;
+    const within = host.querySelector<HTMLSelectElement>('[data-within]')!;
+    view.value = this.view;
+    within.value = String(this.withinMinutes);
+    const changeView = () => {
+      this.view =
+        view.value === 'first' || view.value === 'selected'
+          ? view.value
+          : 'all';
+      this.withinMinutes = Number(within.value);
+      this.limit = PAGE_SIZE;
+      this.render();
+    };
+    view.addEventListener('change', changeView);
+    within.addEventListener('change', changeView);
+    host.querySelector('[data-reset-view]')!.addEventListener('click', () => {
+      view.value = 'all';
+      within.value = '0';
+      this.route = '';
+      changeView();
+      this.host.querySelector<HTMLElement>('[data-key], summary')?.focus();
     });
     const clock = host.querySelector<HTMLInputElement>('[data-clock]')!;
     clock.checked = this.clockTime;
@@ -109,8 +134,21 @@ export class StopArrivalBoard {
   }
 
   refresh(predictions: IPrediction[]): void {
+    const previous = new Map(
+      this.predictions.map((p) => [this.keys.get(p), p.predictedArrivalTime])
+    );
     this.predictions = validArrivals(predictions);
-    const present = new Set(this.predictions.map(identity));
+    this.keys = keyArrivalRows(this.predictions);
+    const present = new Set(this.keys.values());
+    this.adjustments.clear();
+    for (const p of this.predictions) {
+      const key = this.keys.get(p)!;
+      const oldTime = previous.get(key);
+      if (oldTime === undefined) continue;
+      const delta = p.predictedArrivalTime - oldTime;
+      if (Math.abs(delta) >= 120_000)
+        this.adjustments.set(key, Math.round(delta / 60_000));
+    }
     this.selected.forEach((k) => {
       if (!present.has(k)) this.selected.delete(k);
     });
@@ -128,6 +166,10 @@ export class StopArrivalBoard {
 
   tick(): void {
     const now = Date.now();
+    if (!this.unavailable && now >= this.nextFilterChange) {
+      this.render();
+      return;
+    }
     this.host.querySelectorAll<HTMLElement>('[data-arrival]').forEach((row) => {
       const timestamp = Number(row.dataset.arrival);
       const time = row.querySelector('time')!;
@@ -137,6 +179,38 @@ export class StopArrivalBoard {
           : countdown(timestamp, now);
       if (time.textContent !== label) time.textContent = label;
     });
+  }
+
+  private visibleDepartures(): IPrediction[] {
+    const now =
+      this.unavailable && this.checkedAt !== null ? this.checkedAt : Date.now();
+    this.nextFilterChange = Infinity;
+    const windowMs = this.withinMinutes * 60_000;
+    const scoped = this.predictions.filter((p) => {
+      if (this.route && p.routeId !== this.route) return false;
+      if (this.view === 'selected' && !this.selected.has(this.keys.get(p)!))
+        return false;
+      if (this.view !== 'first' && !windowMs) return true;
+      const expires = p.predictedArrivalTime + 60_001;
+      if (expires <= now) return false;
+      const enters = p.predictedArrivalTime - windowMs;
+      if (windowMs && enters > now) {
+        this.nextFilterChange = Math.min(this.nextFilterChange, enters);
+        return false;
+      }
+      this.nextFilterChange = Math.min(this.nextFilterChange, expires);
+      return true;
+    });
+    if (this.view !== 'first') return scoped;
+    const nextByRoute = new Map<string, IPrediction>();
+    for (const p of scoped) {
+      const first = nextByRoute.get(p.routeId);
+      if (!first || first.predictedArrivalTime > p.predictedArrivalTime)
+        nextByRoute.set(p.routeId, p);
+    }
+    return [...nextByRoute.values()].sort(
+      (a, b) => a.predictedArrivalTime - b.predictedArrivalTime
+    );
   }
 
   private render(): void {
@@ -165,9 +239,7 @@ export class StopArrivalBoard {
     select.value = this.route;
     this.host.querySelector<HTMLElement>('[data-route-label]')!.hidden =
       routes.length <= 1;
-    const filtered = this.predictions.filter(
-      (p) => !this.route || p.routeId === this.route
-    );
+    const filtered = this.visibleDepartures();
     const visible = filtered.slice(0, this.limit);
     list.replaceChildren(...visible.map((p) => this.createRow(p)));
     if (visible.length < filtered.length) {
@@ -196,9 +268,15 @@ export class StopArrivalBoard {
         empty.className = 'map-popup__empty';
         this.host.append(empty);
       }
-      empty.textContent = 'No upcoming arrivals';
+      empty.textContent = this.predictions.length
+        ? this.view === 'selected'
+          ? 'No selected departures in this view.'
+          : 'No departures match these filters.'
+        : 'No upcoming arrivals';
       empty.hidden = this.unavailable;
     }
+    this.host.querySelector<HTMLButtonElement>('[data-reset-view]')!.hidden =
+      Boolean(filtered.length) || !this.predictions.length;
     const freshness = this.host.querySelector<HTMLElement>('[data-checked]')!;
     freshness.textContent =
       this.checkedAt === null
@@ -228,7 +306,8 @@ export class StopArrivalBoard {
     row.type = 'button';
     row.className = 'map-popup__arrival map-popup__arrival--selectable';
     row.dataset.arrival = String(p.predictedArrivalTime);
-    row.dataset.key = identity(p);
+    const key = this.keys.get(p)!;
+    row.dataset.key = key;
     const route = document.createElement('span');
     route.className = 'map-popup__route-badge';
     route.style.backgroundColor = this.routeColor(p.routeId);
@@ -245,11 +324,18 @@ export class StopArrivalBoard {
       .filter(Boolean)
       .join(' · ');
     row.append(route, time, meta);
+    const delta = this.adjustments.get(key);
+    if (delta !== undefined) {
+      const change = document.createElement('small');
+      change.className = 'arrival-board__change';
+      change.textContent = `Updated · ${Math.abs(delta)} min ${delta < 0 ? 'earlier' : 'later'}`;
+      row.append(change);
+    }
     row.addEventListener('click', () => {
-      const key = identity(p);
       if (this.selected.has(key)) this.selected.delete(key);
       else this.selected.add(key);
-      this.syncSelection();
+      if (this.view === 'selected') this.render();
+      else this.syncSelection();
     });
     li.append(row);
     return li;
