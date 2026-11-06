@@ -281,7 +281,9 @@ export class PredictionController {
       const started = await this.directionsController.startDirections(
         ctx.stop,
         selected,
-        !ctx.unavailable
+        !ctx.unavailable,
+        {keys:ctx.board.selectedKeys, checkedAt:ctx.board.lastCheckedAt,
+          routeId:this.openPopupRouteId ?? undefined}
       );
       if (started && selected.length)
         await this.renderSelectedBusRoutes(selected);
@@ -532,10 +534,11 @@ export class PredictionController {
     predictions: IPrediction[]
   ): Promise<void> {
     const target = this.directionsController.targetStop;
+    const session = this.directionsController.sessionVersion;
     const isCurrent = () =>
       this.directionsController.isActive &&
       this.directionsController.targetStop === target &&
-      this.directionsController.selectedPredictions === predictions;
+      this.directionsController.sessionVersion === session;
     if (!isCurrent()) return;
     const routeIds = [...new Set(predictions.map((p) => p.routeId))];
     const state = this.stateManager.getState();

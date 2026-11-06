@@ -20,6 +20,10 @@ import {
   type IWalkStep
 } from '../services/walking-directions.service';
 import { haversineMeters } from '../../../common/geo';
+import { transitApiService } from '../services/transit-api.service';
+import { getToken, isSameSession } from '../services/session';
+import { keyArrivalRows } from '../utils/arrival-identity';
+import { reconcileWalkingDepartures } from '../utils/walking-departures';
 export type { IDirectionsResult } from '../services/walking-directions.service';
 
 /** Minimum interval between automatic reroute requests (R3) */
@@ -42,6 +46,21 @@ export interface IWalkingSummary {
   predictions: IPrediction[];
   predictionsAvailable: boolean;
   warnings: string[];
+  predictionKeys?: string[];
+  missingPredictionKeys?: string[];
+  checkedAt?: number | null;
+  updatingPredictions?: boolean;
+  boardingBufferMin?: 0 | 2 | 5;
+  plannedOrigin?: boolean;
+  origin?: ILatLng;
+  destination?: ILatLng;
+  walkCurrent?: boolean;
+}
+
+export interface IWalkingSelection {
+  keys: string[];
+  checkedAt: number | null;
+  routeId?: string;
 }
 
 const pittsburghClock = new Intl.DateTimeFormat(undefined, {
@@ -61,6 +80,21 @@ export class DirectionsController {
   private selectedStop: IStop | null = null;
   private _selectedPredictions: IPrediction[] = [];
   private predictionsAvailable = true;
+  private predictionKeys: string[] = [];
+  private missingPredictionKeys: string[] = [];
+  private checkedAt: number | null = null;
+  private predictionRouteId: string | undefined;
+  private predictionRequest: AbortController | null = null;
+  private walkingEvents: AbortController | null = null;
+  private arrivalInterval: number | null = null;
+  private walkToken: string | null = null;
+  private lastSummary: IWalkingSummary | null = null;
+  private boardingBufferMin: 0 | 2 | 5 = 0;
+  private sessionOrigin: ILatLng | null = null;
+  private usesPlannedOrigin = false;
+  private walkingSuspended = false;
+  private walkCheckedAt: number | null = null;
+  private walkCurrent = false;
   private walkingPolyline: IMapPolyline | null = null;
   private walkingPath: ILatLng[] = [];
   private userLocation: ILatLng | null = null;
@@ -83,7 +117,7 @@ export class DirectionsController {
   private infoPanelCallback: ((info: IWalkingSummary | null) => void) | null =
     null;
   // Callback executed when exiting directions mode
-  private exitCallback: (() => void) | null = null;
+  private exitCallback: ((viewArrivals?: IStop) => void) | null = null;
 
   private constructor() {
     this.routeRenderer = RouteRenderer.getInstance();
@@ -117,7 +151,7 @@ export class DirectionsController {
   }
 
   /** Register a callback for when directions mode exits */
-  setExitCallback(cb: () => void): void {
+  setExitCallback(cb: (viewArrivals?: IStop) => void): void {
     this.exitCallback = cb;
   }
 
@@ -148,7 +182,8 @@ export class DirectionsController {
   updateUserLocation(position: ILatLng | null): void {
     this.userLocation = position;
 
-    if (!position || !this._isActive || !this.selectedStop) return;
+    if (!position || !this._isActive || !this.selectedStop || this.usesPlannedOrigin ||
+        document.hidden || this.walkingSuspended) return;
 
     // Deviation/arrival checks use real GPS, not planned location
     const distToStop = haversineMeters(position, {
@@ -191,7 +226,8 @@ export class DirectionsController {
   async startDirections(
     stop: IStop,
     selectedPredictions: IPrediction[] = [],
-    predictionsAvailable = true
+    predictionsAvailable = true,
+    selection?: IWalkingSelection
   ): Promise<boolean> {
     // R1: Tap debounce
     const now = Date.now();
@@ -210,6 +246,7 @@ export class DirectionsController {
 
     // Enter directions mode
     const session = ++this.sessionId;
+    this.stopWalkingUpdates();
     this.stopPeriodicReroute();
     this.cancelInflightRequest();
     this.removeWalkingPolyline();
@@ -217,6 +254,18 @@ export class DirectionsController {
     this.selectedStop = stop;
     this._selectedPredictions = selectedPredictions;
     this.predictionsAvailable = predictionsAvailable;
+    this.predictionKeys = selection?.keys ?? [...keyArrivalRows(selectedPredictions).values()];
+    this.missingPredictionKeys = [];
+    this.checkedAt = selection ? selection.checkedAt : predictionsAvailable ? Date.now() : null;
+    this.predictionRouteId = selection?.routeId;
+    this.walkToken = getToken();
+    this.lastSummary = null;
+    this.boardingBufferMin = 0;
+    this.sessionOrigin = this.getDirectionsOrigin();
+    this.usesPlannedOrigin = this.plannedLocation !== null;
+    this.walkingSuspended = false;
+    this.walkCheckedAt = null;
+    this.walkCurrent = false;
 
     // R5: Hide non-selected stops and route overlays
     this.routeRenderer.clearAllRoutes();
@@ -234,6 +283,7 @@ export class DirectionsController {
 
     // Start periodic reroute (Step 9: every 120s)
     this.startPeriodicReroute();
+    this.startWalkingUpdates();
     return true;
   }
 
@@ -241,12 +291,14 @@ export class DirectionsController {
    * Exit directions mode (A4).
    * Clears walking path, restores stops/routes.
    */
-  exitDirections(): void {
+  exitDirections(viewArrivals?: IStop): void {
     const wasActive = this._isActive;
     this.sessionId++;
     this._isActive = false;
     this.selectedStop = null;
     this._selectedPredictions = [];
+    this.stopWalkingUpdates();
+    this.lastSummary = null;
 
     // Cancel in-flight request (R2)
     this.cancelInflightRequest();
@@ -266,7 +318,119 @@ export class DirectionsController {
     this.infoPanelCallback?.(null);
 
     // Notify map.ts to restore routes/stops
-    if (wasActive) this.exitCallback?.();
+    if (wasActive) this.exitCallback?.(viewArrivals);
+  }
+
+  /** Explicit handoff; it never claims GPS confirmed arrival. */
+  viewArrivals(): void {
+    if (this._isActive && this.selectedStop) this.exitDirections(this.selectedStop);
+  }
+
+  setBoardingBuffer(value: 0 | 2 | 5): void {
+    if (![0, 2, 5].includes(value) || !this._isActive) return;
+    this.boardingBufferMin = value;
+    this.publishSummary();
+  }
+
+  checkArrivalFreshness(): void {
+    if (this.walkCurrent && this.walkCheckedAt !== null && Date.now() - this.walkCheckedAt > 180_000) {
+      this.walkCurrent = false;
+      this.publishSummary();
+    }
+    if (this.predictionsAvailable && this.checkedAt !== null && Date.now() - this.checkedAt > 90_000) {
+      this.predictionsAvailable = false;
+      this.publishSummary();
+    }
+  }
+
+  /** Keep the chosen visits; a disappeared visit is never replaced silently. */
+  async refreshArrivals(): Promise<void> {
+    if (!this._isActive || !this.selectedStop || !this._selectedPredictions.length ||
+        this.predictionRequest || document.hidden || this.walkingSuspended) return;
+    if (!isSameSession(this.walkToken)) { this.exitDirections(); return; }
+    if (navigator.onLine === false) { this.pauseArrivals(); return; }
+    const request = new AbortController();
+    this.predictionRequest = request;
+    const session = this.sessionId;
+    this.publishSummary();
+    try {
+      const fresh = await transitApiService.getArrivalSnapshot(this.selectedStop.stopId, this.predictionRouteId, request.signal);
+      if (!isSameSession(this.walkToken)) { this.exitDirections(); return; }
+      if (request.signal.aborted || this.predictionRequest !== request || session !== this.sessionId ||
+          !this._isActive || document.hidden || !isSameSession(this.walkToken)) return;
+      this.predictionsAvailable = fresh?.state === 'ready' && Boolean(navigator.onLine);
+      if (this.predictionsAvailable && fresh) {
+        const matched = reconcileWalkingDepartures(this._selectedPredictions, this.predictionKeys, fresh.rows);
+        this._selectedPredictions = matched.rows;
+        this.missingPredictionKeys = matched.missingKeys;
+        this.checkedAt = Date.now();
+      }
+    } catch {
+      if (this.predictionRequest === request && session === this.sessionId) this.predictionsAvailable = false;
+    } finally {
+      if (this.predictionRequest === request) {
+        this.predictionRequest = null;
+        this.publishSummary();
+      }
+    }
+  }
+
+  private publishSummary(): void {
+    if (!this._isActive || !this.lastSummary) return;
+    this.infoPanelCallback?.({ ...this.lastSummary,
+      predictions: this._selectedPredictions, predictionKeys: this.predictionKeys,
+      predictionsAvailable: this.predictionsAvailable && this.checkedAt !== null && Date.now() - this.checkedAt <= 90_000,
+      missingPredictionKeys: this.missingPredictionKeys, checkedAt: this.checkedAt,
+      updatingPredictions: this.predictionRequest !== null, boardingBufferMin: this.boardingBufferMin,
+      plannedOrigin: this.usesPlannedOrigin,
+      walkCurrent:this.walkCurrent && this.walkCheckedAt !== null && Date.now() - this.walkCheckedAt <= 180_000 &&
+        !document.hidden && !this.walkingSuspended,
+      origin: this.sessionOrigin ?? undefined,
+      destination: this.selectedStop ? {lat:this.selectedStop.lat, lng:this.selectedStop.lon} : undefined
+    });
+  }
+
+  private pauseArrivals(): void {
+    this.predictionRequest?.abort();
+    this.predictionRequest = null;
+    this.predictionsAvailable = false;
+    this.publishSummary();
+  }
+
+  private startWalkingUpdates(): void {
+    const events = new AbortController();
+    this.walkingEvents = events;
+    const options = {signal:events.signal};
+    const resume = () => {
+      if (!this._isActive || document.hidden) return;
+      this.walkingSuspended = false;
+      this.pauseArrivals();
+      this.startPeriodicReroute();
+      void this.refreshArrivals();
+      this.handleDeviation();
+    };
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { this.walkingSuspended = true; this.pauseArrivals(); this.stopPeriodicReroute(); this.cancelInflightRequest(); }
+      else resume();
+    }, options);
+    window.addEventListener('offline', () => this.pauseArrivals(), options);
+    window.addEventListener('online', resume, options);
+    window.addEventListener('pagehide', () => { this.walkingSuspended = true; this.pauseArrivals(); this.stopPeriodicReroute(); this.cancelInflightRequest(); }, options);
+    window.addEventListener('pageshow', event => { if (event.persisted) resume(); }, options);
+    window.addEventListener('storage', () => { if (!isSameSession(this.walkToken)) this.exitDirections(); }, options);
+    if (this._selectedPredictions.length) {
+      this.arrivalInterval = window.setInterval(() => { void this.refreshArrivals(); }, 30_000);
+      void this.refreshArrivals();
+    }
+  }
+
+  private stopWalkingUpdates(): void {
+    this.walkingEvents?.abort();
+    this.walkingEvents = null;
+    this.predictionRequest?.abort();
+    this.predictionRequest = null;
+    if (this.arrivalInterval !== null) window.clearInterval(this.arrivalInterval);
+    this.arrivalInterval = null;
   }
 
   // ── Private helpers ──────────────────────────────────────────────────
@@ -275,7 +439,7 @@ export class DirectionsController {
    * Fetch directions from Google Directions API and render on map.
    */
   private async fetchAndRenderRoute(): Promise<boolean> {
-    const origin = this.getDirectionsOrigin();
+    const origin = this.usesPlannedOrigin ? this.sessionOrigin : this.userLocation;
     if (!this.mapProvider || !origin || !this.selectedStop || !this._isActive)
       return false;
 
@@ -291,7 +455,7 @@ export class DirectionsController {
       this._isActive &&
       this.sessionId === session &&
       this.inflightAbort === request &&
-      !request.signal.aborted;
+      !request.signal.aborted && !document.hidden && !this.walkingSuspended && isSameSession(this.walkToken);
 
     const destination: ILatLng = {
       lat: this.selectedStop.lat,
@@ -322,9 +486,11 @@ export class DirectionsController {
       // Update info panel with duration + ETA
       const durationMin = Math.ceil(result.durationSeconds / 60);
       const arrivalTime = Date.now() + result.durationSeconds * 1000;
+      this.walkCheckedAt = Date.now();
+      this.walkCurrent = true;
       this.loadingCallback?.(false);
       if (!isCurrent()) return false;
-      this.infoPanelCallback?.({
+      this.lastSummary = {
         durationMin,
         eta: pittsburghClock.format(arrivalTime),
         arrivalTime,
@@ -333,11 +499,14 @@ export class DirectionsController {
         predictions: this._selectedPredictions,
         predictionsAvailable: this.predictionsAvailable,
         warnings: result.warnings ?? []
-      });
+      };
+      this.publishSummary();
       return true;
     } catch (err) {
       if (!isCurrent()) return false;
       console.error('[DirectionsController] Failed to fetch directions:', err);
+      this.walkCurrent = false;
+      this.publishSummary();
       this.toastCallback?.(
         this.walkingPolyline
           ? 'Could not update walking directions. Keeping your current route.'
@@ -353,7 +522,7 @@ export class DirectionsController {
 
   /** Handle path deviation (A5) with throttle (R3) */
   private handleDeviation(): void {
-    if (!this._isActive || this.inflightAbort) return;
+    if (!this._isActive || this.inflightAbort || document.hidden || this.walkingSuspended || navigator.onLine === false) return;
     const elapsed = Date.now() - this.lastRerouteTime;
 
     if (elapsed >= AUTO_REROUTE_THROTTLE_MS) {

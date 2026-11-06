@@ -6,7 +6,9 @@ import {
   IDirectionsResult
 } from '../../client/scripts/services/walking-directions.service';
 import type { IMapProvider, IMapPolyline } from '../../common/map.interface';
-import type { IStop } from '../../common/transit.interface';
+import type { IStop, IPrediction } from '../../common/transit.interface';
+import { transitApiService, type IArrivalSnapshot } from '../../client/scripts/services/transit-api.service';
+import { keyArrivalRows } from '../../client/scripts/utils/arrival-identity';
 
 const mockClearRoutes = jest.fn();
 const mockStopPolling = jest.fn();
@@ -22,8 +24,12 @@ jest.mock('../../client/scripts/utils/map-popup', () => ({
 jest.mock('../../client/scripts/services/walking-directions.service', () => ({
   requestWalkingDirections: jest.fn()
 }));
+jest.mock('../../client/scripts/services/transit-api.service', () => ({
+  transitApiService: {getArrivalSnapshot:jest.fn()}
+}));
 
 const request = jest.mocked(requestWalkingDirections);
+const arrivals = jest.mocked(transitApiService.getArrivalSnapshot);
 const origin = { lat: 40.44, lng: -79.94 };
 const stop: IStop = {
   stopId: 'test-stop',
@@ -65,6 +71,10 @@ describe('Walking directions lifecycle', () => {
     jest.setSystemTime(Date.UTC(2026, 8, 19) + testNumber++ * 1_000_000);
     jest.clearAllMocks();
     request.mockReset();
+    arrivals.mockReset();
+    localStorage.clear();
+    Object.defineProperty(document, 'hidden', {configurable:true,value:false});
+    Object.defineProperty(navigator, 'onLine', {configurable:true,value:true});
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
     polyline = {
       id: 'walk',
@@ -209,6 +219,7 @@ describe('Walking directions lifecycle', () => {
   });
 
   test('keeps the displayed route and exit control when rerouting fails', async () => {
+    controller.updatePlannedLocation(null);
     request
       .mockResolvedValueOnce(route)
       .mockRejectedValueOnce(new Error('REQUEST_DENIED'));
@@ -221,7 +232,8 @@ describe('Walking directions lifecycle', () => {
     expect(request).toHaveBeenCalledTimes(2);
     expect(controller.isActive).toBe(true);
     expect(polyline.remove).not.toHaveBeenCalled();
-    expect(panel).toHaveBeenCalledTimes(1);
+    expect(panel).toHaveBeenCalledTimes(2);
+    expect(panel).toHaveBeenLastCalledWith(expect.objectContaining({walkCurrent:false}));
     expect(restoreMap).not.toHaveBeenCalled();
     expect(toast).toHaveBeenCalledWith(
       expect.stringContaining('Keeping your current route')
@@ -233,6 +245,7 @@ describe('Walking directions lifecycle', () => {
   });
 
   test('preserves the walking path and coalesces repeated GPS deviations', async () => {
+    controller.updatePlannedLocation(null);
     request.mockResolvedValue(route);
     await controller.startDirections(stop);
 
@@ -250,5 +263,135 @@ describe('Walking directions lifecycle', () => {
     expect(jest.getTimerCount()).toBe(0);
     await jest.advanceTimersByTimeAsync(120_000);
     expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  const departure = (eta = Date.UTC(2026, 8, 19) + 900_000): IPrediction => ({
+    stopId:stop.stopId, routeId:'61A', vid:'3552', occurrenceId:'visit-1', predictedArrivalTime:eta, isDelayed:false, minutes:10
+  });
+  async function startWithDeparture() {
+    const row = departure(Date.now()+600_000);
+    request.mockResolvedValue(route);
+    arrivals.mockResolvedValue({state:'ready',rows:[row]});
+    await controller.startDirections(stop,[row],true, {keys:[...keyArrivalRows([row]).values()],checkedAt:Date.now()});
+    await Promise.resolve();
+    return row;
+  }
+
+  test('refreshes selected walking departures and retains a missing visit instead of switching buses', async () => {
+    const original = await startWithDeparture();
+    const updated = {...original,predictedArrivalTime:original.predictedArrivalTime+180_000};
+    arrivals.mockResolvedValue({state:'ready',rows:[updated]});
+    await jest.advanceTimersByTimeAsync(30_000);
+    expect(controller.selectedPredictions).toEqual([updated]);
+    expect(panel).toHaveBeenLastCalledWith(expect.objectContaining({predictionsAvailable:true,checkedAt:Date.now()}));
+    arrivals.mockResolvedValue({state:'ready',rows:[{...updated,occurrenceId:'next-visit',vid:'other'}]});
+    await controller.refreshArrivals();
+    expect(controller.selectedPredictions).toEqual([updated]);
+    expect(panel.mock.calls.at(-1)![0].missingPredictionKeys).toEqual([...keyArrivalRows([original]).values()]);
+  });
+
+  test('offline walking departures become last-known immediately and fresh-first online recovery coalesces requests', async () => {
+    await startWithDeparture();
+    Object.defineProperty(navigator,'onLine',{configurable:true,value:false});
+    window.dispatchEvent(new Event('offline'));
+    expect(panel).toHaveBeenLastCalledWith(expect.objectContaining({predictionsAvailable:false}));
+    const count = arrivals.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(120_000);
+    expect(request).toHaveBeenCalledTimes(1);
+    await controller.refreshArrivals();
+    expect(arrivals).toHaveBeenCalledTimes(count);
+    let resolve!: (value:IArrivalSnapshot) => void;
+    arrivals.mockImplementation(()=>new Promise(r=>{resolve=r;}));
+    Object.defineProperty(navigator,'onLine',{configurable:true,value:true});
+    window.dispatchEvent(new Event('online'));
+    void controller.refreshArrivals();
+    expect(arrivals).toHaveBeenCalledTimes(count+1);
+    expect(panel).toHaveBeenLastCalledWith(expect.objectContaining({predictionsAvailable:false,updatingPredictions:true}));
+    resolve({state:'ready',rows:[]});await Promise.resolve();
+    expect(panel).toHaveBeenLastCalledWith(expect.objectContaining({predictionsAvailable:true,updatingPredictions:false}));
+  });
+
+  test('hidden and pagehide abort walking refreshes; foreground waits for a new success', async () => {
+    const row = await startWithDeparture();
+    let resolve!: (value:IArrivalSnapshot) => void;
+    arrivals.mockImplementation(()=>new Promise(r=>{resolve=r;}));
+    void controller.refreshArrivals();
+    const signal = arrivals.mock.calls.at(-1)![2]!;
+    Object.defineProperty(document,'hidden',{configurable:true,value:true});
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(signal.aborted).toBe(true);
+    resolve({state:'ready',rows:[{...row,predictedArrivalTime:row.predictedArrivalTime+600_000}]});
+    await Promise.resolve();
+    expect(controller.selectedPredictions).toEqual([row]);
+    const count = arrivals.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(120_000);
+    expect(arrivals).toHaveBeenCalledTimes(count);
+    Object.defineProperty(document,'hidden',{configurable:true,value:false});
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(panel).toHaveBeenLastCalledWith(expect.objectContaining({predictionsAvailable:false}));
+    window.dispatchEvent(new Event('pagehide'));
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(arrivals).toHaveBeenCalledTimes(count+1);
+    window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}));
+    expect(arrivals).toHaveBeenCalledTimes(count+2);
+    resolve({state:'ready',rows:[row]});await Promise.resolve();
+    expect(panel).toHaveBeenLastCalledWith(expect.objectContaining({predictionsAvailable:true}));
+  });
+
+  test('a changed account ends the walk and a late arrivals response cannot repopulate it', async () => {
+    await startWithDeparture();
+    let resolve!: (value:IArrivalSnapshot) => void;
+    arrivals.mockImplementation(()=>new Promise(r=>{resolve=r;}));
+    void controller.refreshArrivals();
+    localStorage.setItem('token','another-session');
+    window.dispatchEvent(new StorageEvent('storage',{key:'token'}));
+    expect(controller.isActive).toBe(false);
+    resolve({state:'ready',rows:[departure()]});await Promise.resolve();
+    expect(panel).toHaveBeenLastCalledWith(null);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  test('expired arrival freshness removes boarding claims even during an unresolved refresh', async () => {
+    await startWithDeparture();
+    arrivals.mockImplementation(()=>new Promise(()=>undefined));
+    jest.setSystemTime(Date.now()+90_001);
+    controller.checkArrivalFreshness();
+    expect(panel).toHaveBeenLastCalledWith(expect.objectContaining({predictionsAvailable:false}));
+  });
+
+  test('a planned-origin preview does not end or reroute when unrelated GPS reaches the destination', async () => {
+    request.mockResolvedValue(route);
+    await controller.startDirections(stop);
+    jest.advanceTimersByTime(50_000);
+    controller.updateUserLocation({lat:stop.lat,lng:stop.lon});
+    expect(controller.isActive).toBe(true);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(panel).toHaveBeenLastCalledWith(expect.objectContaining({plannedOrigin:true,origin}));
+  });
+
+  test('foreground restoration marks an old walking estimate stale even with no selected buses or ticker', async () => {
+    request.mockResolvedValue(route);
+    await controller.startDirections(stop);
+    Object.defineProperty(document,'hidden',{configurable:true,value:true});
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(panel).toHaveBeenLastCalledWith(expect.objectContaining({walkCurrent:false}));
+    jest.setSystemTime(Date.now()+180_001);
+    request.mockImplementation(()=>new Promise(()=>undefined));
+    Object.defineProperty(document,'hidden',{configurable:true,value:false});
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(panel).toHaveBeenLastCalledWith(expect.objectContaining({walkCurrent:false}));
+    expect(arrivals).not.toHaveBeenCalled();
+  });
+
+  test('boarding buffer updates only this walk; explicit View arrivals hands off the chosen platform', async () => {
+    await startWithDeparture();
+    controller.setBoardingBuffer(5);
+    expect(panel).toHaveBeenLastCalledWith(expect.objectContaining({boardingBufferMin:5}));
+    controller.viewArrivals();
+    expect(restoreMap).toHaveBeenLastCalledWith(stop);
+    expect(controller.isActive).toBe(false);
+    jest.advanceTimersByTime(600);
+    await controller.startDirections({...stop,stopId:'other'});
+    expect(panel).toHaveBeenLastCalledWith(expect.objectContaining({boardingBufferMin:0}));
   });
 });

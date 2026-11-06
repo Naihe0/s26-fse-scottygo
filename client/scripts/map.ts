@@ -69,6 +69,7 @@ import { mapSignInPath } from './utils/map-auth-return';
 import { FilterController } from './controllers/filter-controller';
 import { PredictionController } from './controllers/prediction-controller';
 import { fillWalkingDetails } from './components/walking-summary';
+import { walkingConnection } from './utils/walking-departures';
 import { DirectionsController, type IWalkingSummary } from './controllers/directions-controller';
 import { RouteRenderer } from './renderers/route-renderer';
 import { VehicleTracker } from './trackers/vehicle-tracker';
@@ -370,10 +371,16 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
         removeDirectionsPanel();
       }
     });
-    directionsController.setExitCallback(async () => {
+    directionsController.setExitCallback(async (viewArrivals) => {
       enableFilterControls();
       removeDirectionsPanel();
+      const session = directionsController.sessionVersion;
+      const revision = sharedStopRevision;
+      const token = getToken();
       await mapNavigation.restore();
+      if (viewArrivals && session === directionsController.sessionVersion &&
+          revision === sharedStopRevision && isSameSession(token))
+        void sharedStopNavigation?.open(viewArrivals.stopId);
     });
 
     // Initialize toggle panels
@@ -1194,6 +1201,8 @@ function stopDirectionsBusTicker(): void {
 function startDirectionsBusTicker(): void {
   stopDirectionsBusTicker();
   directionsBusTickerInterval = window.setInterval(() => {
+    if (document.hidden) return;
+    directionsController.checkArrivalFreshness();
     const panel = document.getElementById('directions-panel');
     if (!panel) {
       stopDirectionsBusTicker();
@@ -1226,7 +1235,7 @@ function getRouteBadgeColor(routeId: string): string {
 }
 
 /** Feed-supplied route and vehicle IDs are rendered as text, never markup. */
-function createArrivalItem(prediction: IPrediction, walkArrival: number, available: boolean): HTMLLIElement {
+function createArrivalItem(prediction: IPrediction, walkArrival: number, available: boolean, buffer:0|2|5=0, missing=false, walkCurrent=true): HTMLLIElement {
   const item = document.createElement('li');
   item.className = 'directions-panel__bus';
   item.dataset.arrival = String(prediction.predictedArrivalTime);
@@ -1243,20 +1252,24 @@ function createArrivalItem(prediction: IPrediction, walkArrival: number, availab
     : new Intl.DateTimeFormat('en-US', {hour:'numeric', minute:'2-digit', timeZone:'America/New_York'}).format(prediction.predictedArrivalTime) + ' ET · last known';
 
   item.append(badge, time);
-  if (prediction.vid) {
+  if (prediction.vid && prediction.vid !== 'Scheduled') {
     const vehicle = document.createElement('span');
     vehicle.className = 'directions-panel__bus-vid';
     vehicle.textContent = `Bus ${prediction.vid}`;
     item.append(vehicle);
   }
-  if (available && Number.isFinite(prediction.predictedArrivalTime)) {
-    const margin = Math.floor((prediction.predictedArrivalTime - walkArrival) / 60_000);
+  const margin = walkingConnection(prediction.predictedArrivalTime, walkArrival, buffer, available && walkCurrent);
+  if (margin) {
     const connection = document.createElement('small');
     connection.className = 'directions-panel__connection';
-    connection.textContent = margin < 0 ? 'May leave before you arrive'
-      : margin < 2 ? 'Tight connection' : `About ${margin} min to spare`;
-    connection.dataset.tight = String(margin < 2);
+    connection.textContent = margin.label;
+    connection.dataset.tight = String(margin.tight);
     item.append(connection);
+  }
+  if (missing || prediction.vid === 'Scheduled') {
+    const note = document.createElement('small');
+    note.textContent = missing ? 'No longer in current arrivals' : 'Scheduled departure';
+    item.append(note);
   }
   return item;
 }
@@ -1267,7 +1280,13 @@ function updateDirectionsPanel(
   const previous = document.querySelector<HTMLElement>('#directions-panel');
   const sameWalk = previous?.dataset.session === String(directionsController.sessionVersion);
   const collapsed = sameWalk && previous?.dataset.compact === 'true';
-  const readingSteps = sameWalk && previous?.querySelector('details')?.open;
+  const readingSteps = sameWalk && previous?.querySelector<HTMLDetailsElement>('[data-walk-steps]')?.open;
+  const readingState = sameWalk ? {
+    stepIndex:Number(previous?.dataset.walkStepIndex ?? 0),
+    focusedSteps:previous?.dataset.focusedSteps === 'true',
+    stepsSignature:previous?.dataset.stepsSignature,
+    optionsOpen:Boolean(previous?.querySelector<HTMLDetailsElement>('[data-walk-options]')?.open)
+  } : undefined;
   const focusedAction = sameWalk && previous?.contains(document.activeElement)
     ? (document.activeElement as HTMLElement)?.dataset.walkAction
     : undefined;
@@ -1312,8 +1331,15 @@ function updateDirectionsPanel(
   if (info !== 'loading') {
     fillWalkingDetails(
       panel, info, directionsController.targetStop?.stopId ?? '',
-      info.predictions.map(p => createArrivalItem(p, info.arrivalTime, info.predictionsAvailable)),
-      Boolean(collapsed), Boolean(readingSteps)
+      info.predictions.map((p,index) => {
+        const missing = info.missingPredictionKeys?.includes(info.predictionKeys?.[index] ?? '') ?? false;
+        return createArrivalItem(p, info.arrivalTime, info.predictionsAvailable && !missing, info.boardingBufferMin, missing, info.walkCurrent !== false);
+      }),
+      Boolean(collapsed), Boolean(readingSteps),
+      {refreshArrivals:() => {void directionsController.refreshArrivals();},
+        viewArrivals:() => directionsController.viewArrivals(),
+        setBoardingBuffer:value => directionsController.setBoardingBuffer(value)},
+      readingState
     );
   }
 

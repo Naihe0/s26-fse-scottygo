@@ -47,7 +47,9 @@ export const suiteGroups = {
   UC12: [
     'directions-controller',
     'walking-directions.service',
-    'directions-restoration'
+    'directions-restoration',
+    'walking-departures',
+    'walking-summary'
   ],
   UC13: ['rider-shortcuts', 'rider-shortcuts-store'],
   UC14: [
@@ -205,9 +207,13 @@ export const alternateFlows = {
     ],
     ['Deviation, reroute and arrival', 'deviation|rerout|arrival'],
     [
-      'Historical selected departure during an outage',
-      'unavailable bus predictions|historical|stale'
-    ]
+      'Selected departure freshness, missing visits and recovery',
+      'unavailable bus predictions|historical|stale|fresh|missing|outage|check time|paused|scheduled'
+    ],
+    ['Manual focused steps and reroute reset', 'manual|same route|steps|instructions'],
+    ['Boarding buffer and honest walking margins', 'boarding|buffer|margin|connection'],
+    ['External walking maps and planned origins', 'external|map apps|maps links|map links|planned|destination'],
+    ['Explicit walking to arrivals handoff', 'View arrivals|handoff|manual arrival']
   ],
   UC13: [
     [
@@ -352,7 +358,7 @@ export const deviceOnly = [
   },
   {
     flowId: 'UC20-A1',
-    checks: ['OS external-link handoff and actual WebKit process termination'],
+    checks: ['OS external-link handoff including Apple/Google walking maps (UC12-A7), and actual WebKit process termination'],
     status: 'not-exercised',
     reason: 'Native policy/recovery modules run in Node'
   }

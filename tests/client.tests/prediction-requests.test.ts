@@ -2,6 +2,7 @@
 
 import { PredictionController } from '../../client/scripts/controllers/prediction-controller';
 import type { IStop, IPrediction } from '../../common/transit.interface';
+import { keyArrivalRows } from '../../client/scripts/utils/arrival-identity';
 const mockPredictions = jest.fn();
 const mockStartDirections = jest.fn().mockResolvedValue(false);
 jest.mock('../../client/scripts/services/transit-api.service', () => ({
@@ -137,7 +138,9 @@ describe('prediction refresh contents', () => {
     document
       .querySelector<HTMLButtonElement>('.map-popup__directions-btn')!
       .click();
-    expect(mockStartDirections).toHaveBeenCalledWith(stop, [first], false);
+    expect(mockStartDirections).toHaveBeenCalledWith(stop, [first], false, {
+      keys:[...keyArrivalRows([first]).values()],checkedAt:null,routeId:undefined
+    });
   });
 
   test('an initial failure offers retry and coalesces a double tap and reconnect', async () => {
@@ -183,7 +186,9 @@ describe('prediction refresh contents', () => {
     document
       .querySelector<HTMLButtonElement>('.map-popup__directions-btn')!
       .click();
-    expect(mockStartDirections).toHaveBeenCalledWith(stop, [second], true);
+    expect(mockStartDirections).toHaveBeenCalledWith(stop, [second], true, {
+      keys:[keyArrivalRows([second,first]).get(second)],checkedAt:Date.now(),routeId:undefined
+    });
   });
 
   test('route filtering and paging keep the selected arrivals for directions, including after minimize', async () => {
@@ -224,11 +229,26 @@ describe('prediction refresh contents', () => {
     expect(mockStartDirections).toHaveBeenCalledWith(
       stop,
       [arrivals[0], arrivals[13]],
-      true
+      true,
+      {keys:[keyArrivalRows(arrivals).get(arrivals[0]),keyArrivalRows(arrivals).get(arrivals[13])],
+        checkedAt:Date.now(),routeId:undefined}
     );
     document.querySelector<HTMLButtonElement>('[data-clear]')!.click();
     directions.click();
-    expect(mockStartDirections).toHaveBeenLastCalledWith(stop, [], true);
+    expect(mockStartDirections).toHaveBeenLastCalledWith(stop, [], true, {keys:[],checkedAt:Date.now(),routeId:undefined});
+  });
+
+  test('walking receives the full-board identity when selecting one of two visits by the same bus', async () => {
+    const later = {...first,predictedArrivalTime:first.predictedArrivalTime+600_000};
+    mockPredictions.mockResolvedValue([first,later]);
+    await controller.handleStopClick(stop);
+    document.querySelectorAll<HTMLButtonElement>('[data-key]')[1].click();
+    document.querySelector<HTMLButtonElement>('.map-popup__directions-btn')!.click();
+    const fullBoardKey = keyArrivalRows([first,later]).get(later);
+    expect(fullBoardKey).not.toEqual(keyArrivalRows([later]).get(later));
+    expect(mockStartDirections).toHaveBeenLastCalledWith(stop,[later],true, {
+      keys:[fullBoardKey],checkedAt:Date.now(),routeId:undefined
+    });
   });
 
   test('manual refresh updates the checked time and preserves the Pittsburgh time display', async () => {

@@ -114,6 +114,11 @@ Vehicle responses include their source's `feed.healthy`, `feed.lastFetched`, and
 
 `FilterController` loads bulk routes/patterns/stops and registers geometry with `VehicleTracker`. Per-route fallbacks fill caches when bulk data is unavailable. `PredictionController` owns stop-card arrivals; `DirectionsController` owns walking navigation and cancellable Google Routes requests. `GeolocationController` owns exactly one watch, distinguishes permission denial from timeout/unavailability, and ignores late callbacks after retry/teardown. A planned point never counts as measured GPS.
 
+`DirectionsController` refreshes selected departures during an active walk, retaining provider visit identities rather than substituting the next bus. `utils/walking-departures.ts` reconciles fresh rows, computes boarding margins only when the caller permits them, and builds validated public Apple/Google walking URLs. Arrival checks expire after 90 seconds; walking estimates lose their current status after 180 seconds or a failed reroute. Hidden/offline pages pause arrival certainty and foreground recovery fetches again. Scheduled/last-known/missing visits never supply an unsupported live connection margin.
+
+`components/walking-summary.ts` renders progressive walking details: freshness and explicit refresh, a manual step reader, optional boarding buffer and external maps, plus a direct arrival-board handoff outside collapsed details. `map.ts` preserves focused action, disclosure state, scroll and manual step position across summary refreshes; changed step signatures reset the reader to step 1. The UI keeps full steps as its default and never interprets a button press as measured arrival. Physical map-app handoff and walking-route accuracy require device checks.
+
+
 The movement pipeline is:
 
 ```text

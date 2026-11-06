@@ -78,6 +78,18 @@ test('summer clock follows Pittsburgh daylight time and scheduled service does n
   )!;
   expect(summary.text).toContain('Jul 1, 2026, 12:00 PM EDT');
   expect(summary.text).not.toContain('Bus Scheduled');
+  expect(summary.text).toContain('Scheduled time:');
+  expect(summary.text).not.toContain('Live estimate:');
+});
+
+test('scheduled service remains explicitly scheduled when unavailable or missing', () => {
+  const scheduled = {...arrival,vid:'Scheduled'};
+  expect(buildDepartureSummary(scheduled,stop,{...fresh,available:false})!.text)
+    .toContain('Last known scheduled time:');
+  const missing = buildDepartureSummary(scheduled,stop,{...fresh,missing:true})!.text;
+  expect(missing).toContain('No longer in current arrivals. Last shown scheduled time:');
+  expect(missing).not.toContain('Live estimate:');
+  expect(missing).not.toContain('Bus Scheduled');
 });
 
 test('last-known and missing departures retain qualified absolute times without claiming a departure occurred', () => {

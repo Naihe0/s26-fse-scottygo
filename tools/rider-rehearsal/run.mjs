@@ -1,3 +1,4 @@
+import { rehearseWalkingOptions, rehearseWalkingRecovery } from './walking.mjs';
 import { rehearseReadingList } from './reading-list.mjs';
 /**
  * Run against built pages with deterministic buses, GPS, accounts and SDK responses.
@@ -407,10 +408,7 @@ try {
     await page
       .locator('#directions-panel .directions-panel__duration')
       .waitFor();
-    assert.equal(
-      await page.locator('.directions-panel__connection').count(),
-      1
-    );
+    await rehearseWalkingOptions({ page, fixture });
     await click('.directions-panel__close');
     await page.locator('#directions-panel').waitFor({ state: 'hidden' });
     await page.locator('#transit-search-input').fill('7117');
@@ -449,8 +447,7 @@ try {
     await click('[data-walk-action="compact"]');
     assert.equal(await page.locator('#walk-details').isVisible(), false);
     await click('[data-walk-action="compact"]');
-    await click('.directions-panel__close');
-    await page.locator('#directions-panel').waitFor({ state: 'hidden' });
+    await rehearseWalkingRecovery({ page, fixture });
     fixture.events.arrivalUnavailable = false;
   });
   await step('UC08 Nearby stops and arrivals', async () => {

@@ -54,14 +54,15 @@ export function buildDepartureSummary(
     return null;
   }
   const bus = plain(prediction.vid, 80);
+  const scheduled = bus.toLowerCase() === 'scheduled';
   const vehicle =
-    bus && bus.toLowerCase() !== 'scheduled' ? ` · Bus ${bus}` : '';
+    bus && !scheduled ? ` · Bus ${bus}` : '';
   const stopName = plain(stop.stopName, 180) || 'Platform';
   const qualifier = freshness.missing
-    ? 'No longer in current arrivals. Last shown estimate'
+    ? `No longer in current arrivals. Last shown ${scheduled ? 'scheduled time' : 'estimate'}`
     : freshness.available
-      ? 'Live estimate'
-      : 'Last known estimate';
+      ? scheduled ? 'Scheduled time' : 'Live estimate'
+      : scheduled ? 'Last known scheduled time' : 'Last known estimate';
   const text = [
     `Route ${route}${vehicle}`,
     `${stopName} · Stop ${stop.stopId}`,

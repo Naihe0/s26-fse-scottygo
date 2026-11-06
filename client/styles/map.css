@@ -1771,7 +1771,7 @@ bus-report-form.is-open .bus-report-backdrop {
   transform: translateX(-50%);
   z-index: 500;
   width: min(380px, calc(100% - 32px));
-  background: rgba(255, 255, 255, 0.97);
+  background: #fff;
   backdrop-filter: blur(12px);
   border-radius: 14px;
   padding: 12px 16px;
@@ -1929,6 +1929,48 @@ bus-report-form.is-open .bus-report-backdrop {
   color: #6b7280;
   margin-left: auto;
 }
+
+.directions-panel__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 8px 11px;
+  border: 1px solid #dbe2e8;
+  border-radius: 8px;
+  background: #f7f9fb;
+  color: #34445a;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+.directions-panel__action:disabled, .directions-panel__action[aria-disabled='true'] { color: #75808b; cursor: default; }
+.directions-panel :is(button, a, select):focus-visible { outline: 3px solid #376ab0; outline-offset: 2px; }
+.directions-panel__origin, .directions-panel__freshness, .directions-panel__step-help {
+  margin: 5px 0;
+  color: #596675;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.directions-panel__step-reader { margin-top: 10px; padding: 12px; border: 1px solid #dce5eb; border-radius: 10px; background: #f7fafc; }
+.directions-panel__step-reader[hidden], .directions-panel__body ol[hidden] { display: none; }
+.directions-panel__step-progress { color: #596675; font-size: 12px; margin: 0 0 8px; }
+.directions-panel__step-instruction { font-size: 17px; line-height: 1.5; font-weight: 600; overflow-wrap: anywhere; margin: 0; }
+.directions-panel__step-distance { color: #435166; font-size: 13px; margin: 6px 0; }
+.directions-panel__step-navigation, .directions-panel__map-apps { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.directions-panel__step-navigation > *, .directions-panel__map-apps > * { flex: 1 1 90px; }
+.directions-panel__options { margin-top: 8px; border-top: 1px solid #e5e7eb; }
+.directions-panel__buffer-label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.directions-panel__buffer-label select { flex: 1 1 130px; min-width: 0; min-height: 44px; font: inherit; font-size: 16px; padding: 8px; background: #fff; border: 1px solid #dbe2e8; border-radius: 8px; }
+.directions-panel__departures-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.directions-panel__departures-header .directions-panel__buses-label { padding-left: 0; margin: 0; }
+.directions-panel__bus-list { padding-left: 0; }
+.directions-panel__handoff { position: sticky; bottom: -12px; background: #fff; padding: 8px 0 4px; margin-top: 6px; }
+.directions-panel__handoff .directions-panel__action { width: 100%; color: #751934; background: #fceef1; border-color: #eed9df; font-weight: 600; }
+.directions-panel__route-status { flex-basis: 100%; color: #805926; font-size: 12px; line-height: 1.5; }
 
 /* ============================================
    STOP POPUP – SELECTABLE PREDICTIONS

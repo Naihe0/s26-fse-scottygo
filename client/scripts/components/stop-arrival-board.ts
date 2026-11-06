@@ -66,6 +66,14 @@ export class StopArrivalBoard {
     return this.predictions.filter((p) => this.selected.has(this.keys.get(p)!));
   }
 
+  get selectedKeys(): string[] {
+    return this.selectedPredictions.map(p => this.keys.get(p)!);
+  }
+
+  get lastCheckedAt(): number | null {
+    return this.checkedAt;
+  }
+
   get hasPredictions(): boolean {
     return this.predictions.length > 0;
   }
