@@ -246,7 +246,7 @@ Only changed conditions publish a new `INotification`; an accepted identical rep
 
 ### Agency alert payload
 
-`IServiceAlert` contains `id`, `headerText`, `descriptionText`, `routeIds[]`, and `activePeriods: {start, end}[]`. Optional fields are `url`, `effect`, `cause`, and `severityLevel` (`INFO`, `WARNING`, `SEVERE`). Missing/open period endpoints and unknown metadata must remain unknown. The adapter selects English text where available and validates dates and URLs; clients still render text safely. Communication windows do not necessarily describe the full disruption duration.
+`IServiceAlert` contains `id`, `headerText`, `descriptionText`, `routeIds[]`, and `activePeriods: {start, end}[]`. Optional fields are `stopIds[]` (distinct platforms explicitly named by the agency), `url`, `effect`, `cause`, and `severityLevel` (`INFO`, `WARNING`, `SEVERE`). Missing/open period endpoints and unknown metadata must remain unknown. The adapter selects English text where available and validates dates and URLs; clients still render text safely. Communication windows do not necessarily describe the full disruption duration.
 
 ## Health and memory
 

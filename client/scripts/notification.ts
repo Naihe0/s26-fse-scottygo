@@ -20,7 +20,11 @@ import {
   createServiceAlertCard,
   type NotificationCardActions
 } from './utils/notification-card';
-import { formatNotificationTime } from './utils/alert-content';
+import {
+  formatAlertMetadata,
+  formatNotificationTime
+} from './utils/alert-content';
+import { agencyWindowState } from './utils/agency-window';
 import { authHeaders, getToken, isSameSession } from './services/session';
 import { showToast } from './utils/toast';
 import {
@@ -77,6 +81,8 @@ const routeSelect = document.querySelector<HTMLSelectElement>('#notif-route');
 const severitySelect =
   document.querySelector<HTMLSelectElement>('#notif-severity');
 const resetFilters = document.querySelector<HTMLButtonElement>('#notif-reset');
+const windowSelect = document.querySelector<HTMLSelectElement>('#notif-window');
+const topicSelect = document.querySelector<HTMLSelectElement>('#notif-topic');
 const undoRead = document.querySelector<HTMLButtonElement>('#notif-undo');
 let routeOptionsKey = '';
 let savedRoutes: Snapshot<string> = { items: [], loaded: false, failed: false };
@@ -115,6 +121,11 @@ function renderCards(entries: InboxEntry[]): void {
     entries,
     [...routeDisplayById],
     entries.map((entry) => readStore.isRead(entry)),
+    entries.map((entry) =>
+      entry.kind === 'service'
+        ? agencyWindowState(entry.value.activePeriods)
+        : ''
+    ),
     grouped,
     savedOnly,
     savedRoutes.items
@@ -248,8 +259,37 @@ function syncRouteChoices(): void {
   routeSelect.value = selection;
 }
 
+function syncTopicChoices(): void {
+  const group = topicSelect?.querySelector<HTMLOptGroupElement>(
+    '[data-agency-effects]'
+  );
+  if (!group || !topicSelect) return;
+  const chosen = topicSelect.value;
+  const effects = new Set(
+    alerts.items
+      .map((alert) => alert.effect)
+      .filter((value): value is string =>
+        Boolean(value && formatAlertMetadata(value))
+      )
+  );
+  if (chosen.startsWith('effect:')) effects.add(chosen.slice(7));
+  const sorted = [...effects].sort();
+  const key = sorted.join(',');
+  if (group.dataset.effects === key) return;
+  group.dataset.effects = key;
+  group.replaceChildren(
+    ...sorted.map(
+      (effect) =>
+        new Option(formatAlertMetadata(effect) ?? effect, 'effect:' + effect)
+    )
+  );
+  group.hidden = !sorted.length;
+  topicSelect.value = chosen;
+}
+
 function render(): void {
   syncRouteChoices();
+  syncTopicChoices();
   const query = searchInput.value.trim();
   clearBtn.classList.toggle('is-visible', query.length > 0);
   clearBtn.setAttribute('aria-hidden', String(query.length === 0));
@@ -287,6 +327,20 @@ function render(): void {
     )
   ];
   for (const entry of candidates) {
+    if (
+      windowSelect?.value &&
+      (entry.kind !== 'service' ||
+        agencyWindowState(entry.value.activePeriods) !== windowSelect.value)
+    )
+      continue;
+    const topic = topicSelect?.value;
+    if (
+      topic &&
+      (entry.kind === 'live'
+        ? !entry.value.changedFields?.includes(topic)
+        : topic !== 'effect:' + entry.value.effect)
+    )
+      continue;
     if (
       severitySelect?.value === 'elevated' &&
       (entry.kind !== 'service' ||
@@ -341,7 +395,9 @@ function render(): void {
       savedOnly ||
       unreadOnly ||
       routeSelect?.value ||
-      severitySelect?.value === 'elevated'
+      severitySelect?.value === 'elevated' ||
+      windowSelect?.value ||
+      topicSelect?.value
     );
   if (undoRead) undoRead.hidden = !lastBatch.length;
   renderCards(entries);
@@ -401,6 +457,9 @@ function render(): void {
     link.href = '/subscriptions';
     link.textContent = 'Choose routes';
     emptyEl.append(link);
+  } else if (windowSelect?.value || topicSelect?.value) {
+    emptyEl.textContent =
+      'No updates match these filters. Try another window or topic, or clear the filters.';
   } else if (severitySelect?.value === 'elevated' || routeSelect?.value) {
     emptyEl.textContent = 'No updates match these route and severity filters.';
   } else if (unreadOnly) {
@@ -578,6 +637,8 @@ function init(): void {
   });
   routeSelect?.addEventListener('change', render);
   severitySelect?.addEventListener('change', render);
+  windowSelect?.addEventListener('change', render);
+  topicSelect?.addEventListener('change', render);
   resetFilters?.addEventListener('click', () => {
     savedOnly = unreadOnly = false;
     view = 'all';
@@ -585,6 +646,8 @@ function init(): void {
     searchInput.value = '';
     if (routeSelect) routeSelect.value = '';
     if (severitySelect) severitySelect.value = 'all';
+    if (windowSelect) windowSelect.value = '';
+    if (topicSelect) topicSelect.value = '';
     history.replaceState(null, '', window.location.pathname);
     render();
     filters[0]?.focus({ preventScroll: true });

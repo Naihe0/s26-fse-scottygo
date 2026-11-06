@@ -2,6 +2,8 @@ import type { ILatLng } from '../../../common/map.interface';
 import type { IStop } from '../../../common/transit.interface';
 import type { IMapState } from '../state/map-state';
 import { getToken } from '../services/session';
+import {validShortcutStopId} from './public-stop-path';
+export {validShortcutStopId} from './public-stop-path';
 
 export type ShortcutFilters = Pick<
   IMapState,
@@ -59,9 +61,6 @@ const text = (value: unknown, max = 160): string =>
   typeof value === 'string' ? value.trim().slice(0, max) : '';
 const routeId = (value: unknown): value is string =>
   typeof value === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(value);
-export const validShortcutStopId = (value: unknown): value is string =>
-  typeof value === 'string' &&
-  /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$/.test(value);
 const coordinates = (lat: unknown, lng: unknown): boolean =>
   typeof lat === 'number' &&
   typeof lng === 'number' &&

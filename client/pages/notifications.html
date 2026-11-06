@@ -42,7 +42,7 @@
           <input
             type="search"
             id="notif-search-input"
-            placeholder="Route, bus number, or keyword"
+            placeholder="Route, stop, bus number or keyword"
             aria-label="Search transit updates"
             autocomplete="off"
           />
@@ -100,6 +100,8 @@
             <div class="notif-option-fields">
               <label>Affected route<select id="notif-route"><option value="">Any route</option></select></label>
               <label>Agency severity<select id="notif-severity"><option value="all">Any severity</option><option value="elevated">Warnings &amp; severe only</option></select></label>
+              <label>Agency notice window<select id="notif-window"><option value="">Any time</option><option value="current">Open now</option><option value="upcoming">Upcoming</option><option value="ended">Ended</option><option value="unknown">No dates supplied</option></select></label>
+              <label>Update topic<select id="notif-topic"><option value="">All topics</option><optgroup label="Rider conditions"><option value="crowdedness">Crowding</option><option value="prioritySeating">Priority seating</option><option value="condition">Bus condition</option><option value="comment">Rider comment</option></optgroup><optgroup label="Agency effects" data-agency-effects></optgroup></select></label>
               <label
                 >Order<select id="notif-sort"
                   ><option value="priority">Priority first</option

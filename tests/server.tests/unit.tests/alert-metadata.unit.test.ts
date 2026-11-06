@@ -23,7 +23,7 @@ test('preserves explicit agency metadata with English translations and deduplica
     effect: transit_realtime.Alert.Effect.DETOUR,
     cause: transit_realtime.Alert.Cause.CONSTRUCTION,
     severityLevel: transit_realtime.Alert.SeverityLevel.WARNING,
-    informedEntity: [{ routeId: '61C' }, { routeId: '61C' }, { routeId: '61D' }]
+    informedEntity: [{ routeId: '61C', stopId:'7117' }, { routeId: '61C',stopId:'7117' }, { routeId: '61D' }]
   });
   expect(alert).toMatchObject({
     headerText: 'Detour',
@@ -32,6 +32,7 @@ test('preserves explicit agency metadata with English translations and deduplica
     cause: 'CONSTRUCTION',
     severityLevel: 'WARNING',
     routeIds: ['61C', '61D'],
+    stopIds: ['7117'],
     url: 'https://www.rideprt.org/alerts?q=61C'
   });
 });

@@ -695,3 +695,8 @@
   font-size: 0.85em;
   font-variant-numeric: tabular-nums;
 }
+
+.notif-window-state { color: #335467; font-size: 0.8rem; font-weight: 600; }
+.notif-routes[aria-label="Affected stops"] .notif-route {
+  display: inline-flex; align-items: center; min-height: 44px; box-sizing: border-box;
+}

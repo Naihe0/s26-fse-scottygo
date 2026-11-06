@@ -105,6 +105,13 @@ export function decodeAlertEntity(
   if (!alert) return null;
 
   const url = alertUrl(translatedText(alert.url));
+  const stops = [
+    ...new Set(
+      (alert.informedEntity ?? []).flatMap(({ stopId }) =>
+        typeof stopId === 'string' && stopId.trim() ? [stopId.trim()] : []
+      )
+    )
+  ];
   const effect = enumName(alert, 'effect', transit_realtime.Alert.Effect);
   const cause = enumName(alert, 'cause', transit_realtime.Alert.Cause);
   const severity = enumName(
@@ -118,6 +125,7 @@ export function decodeAlertEntity(
     headerText: translatedText(alert.headerText),
     descriptionText: translatedText(alert.descriptionText),
     routeIds: routeIds(alert),
+    ...(stops.length ? { stopIds: stops } : {}),
     activePeriods: activePeriods(alert),
     ...(url ? { url } : {}),
     ...(effect ? { effect } : {}),
@@ -147,9 +155,7 @@ export class AlertsService extends PollingFeed<IServiceAlert[]> {
     return this.alerts;
   }
 
-  protected async fetchSnapshot(
-    signal: AbortSignal
-  ): Promise<IServiceAlert[]> {
+  protected async fetchSnapshot(signal: AbortSignal): Promise<IServiceAlert[]> {
     const response = await this.fetchOk(GTFSRT_ALERTS_URL, signal);
     const feed = transit_realtime.FeedMessage.decode(
       new Uint8Array(await response.arrayBuffer())

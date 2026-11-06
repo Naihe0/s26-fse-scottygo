@@ -201,7 +201,7 @@ describe('notification metadata and cards', () => {
     );
     expect(card.textContent).toContain('end not provided');
     expect(card.textContent).toContain('Until');
-    expect(card.textContent).toContain('service disruption times may differ');
+    expect(card.textContent).toContain('Pittsburgh time');
     expect(card.textContent).not.toContain('Invalid Date');
   });
 

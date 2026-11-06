@@ -82,7 +82,8 @@ export function inboxFingerprint(entry: InboxEntry): string {
       value.url,
       value.effect,
       value.cause,
-      value.severityLevel
+      value.severityLevel,
+      ...(value.stopIds?.length ? [[...value.stopIds].sort()] : [])
     ])
   );
 }

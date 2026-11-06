@@ -362,6 +362,21 @@ try {
   await step('UC16 Filter and read a service alert', async () => {
     await go('/notifications');
     await click('#notif-more-options summary');
+    const windowChoice = page.locator('#notif-window');
+    const topicChoice = page.locator('#notif-topic');
+    await windowChoice.selectOption('upcoming');
+    await page.getByText('Weekend detour',{exact:true}).waitFor();
+    assert.equal(await page.locator('.notif-card').count(),1);
+    await windowChoice.selectOption('');
+    await topicChoice.selectOption('prioritySeating');
+    await page.getByText('Priority seats available.',{exact:true}).waitFor();
+    await topicChoice.selectOption('effect:STOP_MOVED');
+    await page.locator('#notif-search-input').fill('7117');
+    await page.getByText('Notice window open',{exact:true}).waitFor();
+    const stopLink=page.getByRole('link',{name:'View affected stop 7117 on map'});
+    assert.equal(new URL(await stopLink.getAttribute('href'),origin).hash,'#/map?stop=7117');
+    await click('.notif-window summary');
+    await page.getByText(/Pittsburgh time\. These are the agency/).waitFor();
     await page.locator('#notif-route').selectOption('61C');
     await page.locator('#notif-severity').selectOption('elevated');
     await page

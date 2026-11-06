@@ -29,7 +29,7 @@ const suiteGroups = {
   UC13: ['rider-shortcuts', 'rider-shortcuts-store'],
   UC14: ['copy-view-link', 'stop-link-navigation', 'map-auth-return'],
   UC15: ['subscriptions', 'map-subscription-session'],
-  UC16: ['notification-rendering', 'notification-inbox'],
+  UC16: ['notification-rendering', 'notification-inbox', 'agency-window', 'alert-metadata.unit'],
   UC17: ['live-notification-stack', 'live-notification-lifecycle'],
   UC18: ['frontend-accessibility', 'live-notification.unit'],
   UC19: ['manageacct.unit'],

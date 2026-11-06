@@ -172,6 +172,8 @@ export interface IServiceAlert {
   headerText: string;
   descriptionText: string;
   routeIds: string[];
+  /** Platforms explicitly listed by the agency as affected entities. */
+  stopIds?: string[];
   activePeriods: { start: string; end: string }[];
   /** Agency-supplied metadata; absent/unknown values are not inferred. */
   url?: string;

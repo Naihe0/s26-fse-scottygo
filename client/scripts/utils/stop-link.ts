@@ -1,22 +1,18 @@
 import { copyViewLink } from './copy-view-link';
 import { shareTransitLink } from './share-transit-link';
-import { validShortcutStopId } from './rider-shortcuts';
+import { publicStopPath, validShortcutStopId } from './public-stop-path';
 
 /** A stop link contains only a public stop ID, never the rider's location or filters. */
 export function buildStopLink(
   stopId: string,
   base = window.location.href
 ): string | null {
-  if (!validShortcutStopId(stopId)) return null;
+  const path = publicStopPath(stopId);
+  if (!path) return null;
   try {
     const url = new URL(base);
     if (!['https:', 'http:'].includes(url.protocol)) return null;
-    url.pathname = '/';
-    url.search = '';
-    url.hash = `/map?stop=${encodeURIComponent(stopId)}`;
-    url.username = '';
-    url.password = '';
-    return url.href;
+    return new URL(path,url.origin).href;
   } catch {
     return null;
   }

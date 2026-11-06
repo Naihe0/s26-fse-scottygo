@@ -60,14 +60,15 @@ export function matchesAlertQuery(
     const display = resolveRouteDisplay(routeId);
     return [routeId, display.title];
   });
+  const stopFields = (alert.stopIds ?? []).flatMap(id => [id, `stop #${id}`]);
 
   if (tokens.length === 1 && isShortBusLikeToken(tokens[0])) {
-    return matchesTokenizedQuery(query, routeFields);
+    return matchesTokenizedQuery(query, [...routeFields, ...stopFields]);
   }
 
   return matchesTokenizedQuery(query, [
     alert.headerText,
     stripUrls(alert.descriptionText),
-    ...routeFields
+    ...routeFields, ...stopFields
   ]);
 }

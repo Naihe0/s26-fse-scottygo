@@ -3,6 +3,8 @@ import type {
   IServiceAlert
 } from '../../../common/transit.interface';
 import type { IRouteDisplay } from './route-display';
+import { agencyWindowLabels, agencyWindowState } from './agency-window';
+import { publicStopPath } from './public-stop-path';
 import {
   appendLinkedText,
   formatAlertMetadata,
@@ -122,6 +124,7 @@ function dateLabel(timestamp: string): string | null {
   const date = new Date(timestamp);
   if (!Number.isFinite(date.getTime())) return null;
   return date.toLocaleString(undefined, {
+    timeZone: 'America/New_York',
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
@@ -156,7 +159,7 @@ function appendWindows(
     element(
       'p',
       'notif-window-note',
-      'When the agency is displaying this alert; service disruption times may differ.'
+      'Pittsburgh time. These are the agency’s publication dates. Service disruption times may differ.'
     )
   );
   card.append(details);
@@ -171,6 +174,13 @@ export function createServiceAlertCard(
   card.dataset.key = `alert:${alert.id ?? alert.headerText}`;
   const meta = element('div', 'notif-card-meta');
   meta.append(element('span', 'notif-kind', 'PRT service alert'));
+  if (alert.activePeriods?.length) {
+    const window = agencyWindowState(alert.activePeriods);
+    if (window !== 'unknown')
+      meta.append(
+        element('span', 'notif-window-state', agencyWindowLabels[window])
+      );
+  }
   const severity = formatAlertMetadata(alert.severityLevel);
   if (severity) {
     const label = element('span', 'notif-severity', severity);
@@ -188,6 +198,7 @@ export function createServiceAlertCard(
     card.append(element('p', 'notif-topics', [...new Set(topics)].join(' · ')));
   appendDescription(card, alert.descriptionText ?? '', 'alert');
   appendRoutes(card, alert.routeIds ?? [], resolve);
+  appendAffectedStops(card, alert.stopIds);
   appendWindows(card, alert.activePeriods);
   const url = alert.url ? safeHttpUrl(alert.url) : null;
   if (url) {
@@ -201,6 +212,32 @@ export function createServiceAlertCard(
   }
   appendInboxActions(card, actions);
   return card;
+}
+
+function appendAffectedStops(card: HTMLElement, ids: string[] = []): void {
+  const links = [...new Set(ids)].flatMap((id) => {
+    const url = publicStopPath(id);
+    if (!url) return [];
+    const link = element('a', 'notif-route', `Stop #${id}`);
+    link.href = url;
+    link.dataset.action = `stop:${id}`;
+    link.setAttribute('aria-label', `View affected stop ${id} on map`);
+    return [link];
+  });
+  if (!links.length) return;
+  const stops = element('div', 'notif-routes');
+  stops.setAttribute('aria-label', 'Affected stops');
+  if (links.length <= 3) {
+    stops.append(...links);
+    card.append(stops);
+    return;
+  }
+  const details = element('details', 'notif-route-details');
+  const summary = element('summary', '', `${links.length} affected stops`);
+  summary.dataset.action = 'affected-stops';
+  stops.append(...links);
+  details.append(summary, stops);
+  card.append(details);
 }
 
 export function notificationKey(notif: INotification): string {

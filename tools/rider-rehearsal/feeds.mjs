@@ -44,6 +44,8 @@ const token =
   Buffer.from(JSON.stringify({ userId: user._id })).toString('base64url') +
   '.fixture';
 export function apiFixture() {
+  const now = Date.now();
+  const iso = minutes => new Date(now + minutes * 60_000).toISOString();
   const subscriptions = new Set(['61C']);
   const events = { reports: [], checks: 0 };
   const response = (name, payload, status = 200) => ({
@@ -188,12 +190,14 @@ export function apiFixture() {
           headerText: 'Forbes stop relocated',
           descriptionText: 'Use Fifth Avenue.',
           routeIds: ['61C'],
-          activePeriods: [],
+          stopIds:['7117'], effect:'STOP_MOVED',
+          activePeriods: [{start:iso(-20),end:iso(30)}],
           severityLevel: 'WARNING'
-        }
+        },
+        {id:'later',headerText:'Weekend detour',descriptionText:'Use the shuttle.',routeIds:['CMU-1'],effect:'DETOUR',activePeriods:[{start:iso(120),end:''}]}
       ]);
     if (p === '/notifications/notifications')
-      return response('NotificationsRetrieved', []);
+      return response('NotificationsRetrieved', [{_id:'rider-seat',routeId:'61C',vid:'4100',reportId:'demo',message:'Priority seats available.',createdAt:iso(-2),changedFields:['prioritySeating']}]);
     if (p === '/notifications/reports' && request.method() === 'POST') {
       events.reports.push(request.postDataJSON());
       return response('ReportCreated', {}, 201);
