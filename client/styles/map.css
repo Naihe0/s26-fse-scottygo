@@ -2094,6 +2094,11 @@ location-search {
     sans-serif;
 }
 
+.place-suggestions { max-height: min(46dvh, 320px); overflow-y: auto; overscroll-behavior: contain; }
+.place-suggestions button { display: block; width: 100%; min-height: 48px; padding: 12px 16px; border: 0; border-top: 1px solid var(--border-color, #ddd); background: transparent; color: inherit; text-align: left; font: inherit; line-height: 1.4; overflow-wrap: anywhere; cursor: pointer; }
+.place-suggestions button:focus-visible { outline: 2px solid var(--primary-color, #c8102e); outline-offset: -3px; }
+.place-suggestions__status { margin: 0; padding: 8px 16px; font-size: 13px; }
+.place-suggestions__status:empty { display: none; }
 .location-search-places-input::placeholder {
   color: #5f6368;
 }

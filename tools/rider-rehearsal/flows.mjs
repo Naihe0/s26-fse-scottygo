@@ -13,6 +13,7 @@ export const suiteGroups = {
     'map-location-recovery',
     'location-feedback',
     'location-search-recovery',
+    'place-suggestions',
     'geolocation-controller',
     'planned-location-storage'
   ],
@@ -97,7 +98,7 @@ export const alternateFlows = {
   ],
   UC04: [
     ['GPS failure and recovery', 'denied|retry|recover|timeout|unavailable'],
-    ['Alternate planned origin', 'planned|campus|custom'],
+    ['Alternate planned origin', 'planned|campus|custom|Places New|place|suggestion|token|SDK'],
     [
       'Saved stop and return to GPS',
       'saved platform|Current Location|saved stop'
@@ -189,12 +190,12 @@ export const alternateFlows = {
     ]
   ],
   UC13: [
-    ['Saved stop controls', 'saved stop|nickname|share'],
-    ['Named places and views', 'named|rename|planning location|view'],
+    ['Saved stop controls', 'saved stop|nickname|share|starting point|nearby discovery'],
+    ['Named places and views', 'named|rename|planning location|view|place location|place draft|place boarding'],
     ['Recent selections and history', 'recent|history'],
     [
-      'Storage capacity and account separation',
-      'capacity|limit|storage|account'
+      'Storage capacity, account separation and undo',
+      'capacity|limit|storage|account|Undo|undo|restor'
     ]
   ],
   UC14: [

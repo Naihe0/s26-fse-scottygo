@@ -242,6 +242,26 @@ rider-shortcuts {
   padding-top: 8px;
   padding-bottom: 6px;
 }
+.rider-shortcuts__undo {
+  min-height: 44px;
+  margin-left: 8px;
+  border: 0;
+  background: transparent;
+  color: #a90e2e;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+.rider-shortcuts__discover {
+  display: block;
+  margin: 0 auto 16px;
+}
+.rider-shortcuts__choose {
+  margin-right: 8px;
+  color: #92283d;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .rider-shortcuts__privacy {
   margin: 0;
   padding: 12px 20px 16px;

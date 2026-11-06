@@ -97,7 +97,24 @@ export function installMapFixture() {
         addListener: (object, type, fn) => object.addListener(type, fn),
         addListenerOnce: (object, type, fn) => object.addListener(type, fn)
       },
-      importLibrary: async () => ({
+      importLibrary: async (library) => library === 'places' ? {
+        AutocompleteSessionToken: class {},
+        AutocompleteSuggestion: {
+          fetchAutocompleteSuggestions: async () => ({
+            suggestions: [{
+              placePrediction: {
+                text: { toString: () => 'Campus Library' },
+                toPlace: () => ({
+                  fetchFields: async () => {},
+                  location: point({ lat: 40.444, lng: -79.943 }),
+                  displayName: 'Campus Library',
+                  formattedAddress: 'Campus Library, Pittsburgh, PA'
+                })
+              }
+            }]
+          })
+        }
+      } : ({
         Route: {
           computeRoutes: async ({ origin, destination, fields }) => ({
             routes: [

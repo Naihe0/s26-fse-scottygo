@@ -8,8 +8,11 @@
  * - locationReset: {} — user chose "Current Location" (reset to GPS)
  */
 import { MapStateManager } from '../state/map-state';
+import { PlaceSuggestions } from './place-suggestions';
 import { CAMPUS_CENTER } from '../utils/campus';
 import { getRiderShortcuts } from '../utils/rider-shortcuts';
+
+export type ChosenLocation = { lat: number; lng: number; label: string };
 
 export interface ILocationSearchElement extends HTMLElement {
   /** Provide the Google Maps map instance for Places Autocomplete binding */
@@ -18,6 +21,8 @@ export interface ILocationSearchElement extends HTMLElement {
   open(): void;
   /** Close the location dropdown */
   close(): void;
+  /** Choose coordinates for a saved-place draft without changing the trip. */
+  pick(onChosen: (location: ChosenLocation | null) => void): void;
 }
 
 export class LocationSearch
@@ -27,13 +32,15 @@ export class LocationSearch
   private dropdown: HTMLElement | null = null;
   private searchContainer: HTMLElement | null = null;
   private placesInput: HTMLInputElement | null = null;
-  private autocomplete: google.maps.places.Autocomplete | null = null;
+  private autocomplete: PlaceSuggestions | null = null;
   private map: google.maps.Map | null = null;
   private stateManager = MapStateManager.getInstance();
   private unsubscribe?: () => void;
+  private onChosen?: (location: ChosenLocation | null) => void;
   private readonly outside = (e: MouseEvent) => {
     const target = e.target as Node;
     if (
+      !e.composedPath().includes(this) &&
       !this.contains(target) &&
       !document.querySelector('transit-search')?.contains(target)
     )
@@ -160,8 +167,12 @@ export class LocationSearch
       this.hidePlacesSearch();
       this.updateCurrentLocationDisplay();
       const state = this.stateManager.getState();
-      this.querySelector('[data-current-start]')!.textContent =
-        this.stateManager.hasCustomPlannedLocation()
+      this.querySelector('[data-start-heading]')!.textContent = this.onChosen
+        ? 'Choose a place to save'
+        : 'Starting point';
+      this.querySelector('[data-current-start]')!.textContent = this.onChosen
+        ? 'Choose a location. Your current trip stays as it is.'
+        : this.stateManager.hasCustomPlannedLocation()
           ? 'Planning from ' + state.plannedLocationLabel
           : state.gpsPermissionGranted && state.currentLocation
             ? 'Planning from your GPS location'
@@ -185,13 +196,19 @@ export class LocationSearch
     }
   }
 
+  pick(onChosen: (location: ChosenLocation | null) => void): void {
+    this.close();
+    this.onChosen = onChosen;
+    this.open();
+    this.querySelector<HTMLElement>('[data-start-heading]')?.focus();
+  }
+
   disconnectedCallback(): void {
+    this.close();
     this.unsubscribe?.();
     document.removeEventListener('click', this.outside);
     this.removeEventListener('keydown', this.onEscape);
-    this.autocomplete?.unbindAll?.();
-    if (this.autocomplete && typeof google !== 'undefined')
-      google.maps.event.clearInstanceListeners?.(this.autocomplete);
+    this.autocomplete?.dispose();
     this.autocomplete = null;
   }
 
@@ -205,7 +222,9 @@ export class LocationSearch
   };
 
   private dismissPicker(): void {
+    const choosing = !!this.onChosen;
     this.close();
+    if (choosing) return;
     document
       .querySelector<HTMLElement>('#layers-btn')
       ?.focus({ preventScroll: true });
@@ -219,6 +238,13 @@ export class LocationSearch
       Math.abs(lng) > 180
     )
       return;
+    if (this.onChosen) {
+      const chosen = this.onChosen;
+      this.onChosen = undefined;
+      this.close();
+      chosen({ lat, lng, label });
+      return;
+    }
     this.stateManager.setPlannedLocation({ lat, lng }, label);
     this.close();
     this.dispatchEvent(
@@ -234,6 +260,9 @@ export class LocationSearch
       this.dropdown.hidden = true;
       this.hidePlacesSearch();
     }
+    const chosen = this.onChosen;
+    this.onChosen = undefined;
+    chosen?.(null);
   }
 
   private updateCurrentLocationDisplay(): void {
@@ -249,6 +278,19 @@ export class LocationSearch
   }
 
   private handleCurrentLocationClick(): void {
+    if (this.onChosen) {
+      const state = this.stateManager.getState();
+      if (state.gpsPermissionGranted && state.currentLocation)
+        this.choose(
+          state.currentLocation.lat,
+          state.currentLocation.lng,
+          'Your location'
+        );
+      else
+        this.querySelector('[data-current-start]')!.textContent =
+          'GPS is unavailable. Choose a place, the map center or a saved stop.';
+      return;
+    }
     this.stateManager.resetPlannedLocationToCurrent();
     // The map owns GPS recovery. An unavailable fix is a request to retry,
     // not an explicit choice to persist the automatic campus fallback.
@@ -271,6 +313,7 @@ export class LocationSearch
   }
 
   private hidePlacesSearch(): void {
+    this.autocomplete?.reset();
     const defaultView = this.querySelector(
       '.location-search-default'
     ) as HTMLElement;
@@ -283,30 +326,11 @@ export class LocationSearch
 
   private initAutocomplete(): void {
     if (!this.placesInput || !this.map) return;
-    if (typeof google === 'undefined' || !google.maps?.places) return;
-
-    this.autocomplete = new google.maps.places.Autocomplete(this.placesInput, {
-      fields: ['geometry', 'name', 'formatted_address'],
-      // Bias results toward Pittsburgh area
-      bounds: new google.maps.LatLngBounds(
-        { lat: 40.1, lng: -80.4 },
-        { lat: 40.7, lng: -79.6 }
-      )
-    });
-
-    this.autocomplete.bindTo('bounds', this.map);
-
-    this.autocomplete.addListener('place_changed', () => {
-      const place = this.autocomplete?.getPlace();
-      if (!place?.geometry?.location) return;
-
-      const lat = place.geometry.location.lat();
-      const lng = place.geometry.location.lng();
-      const label =
-        place.name || place.formatted_address || 'Selected Location';
-
-      this.choose(lat, lng, label);
-    });
+    this.autocomplete?.dispose();
+    this.autocomplete = new PlaceSuggestions(
+      this.placesInput,
+      (lat, lng, label) => this.choose(lat, lng, label)
+    );
   }
 }
 

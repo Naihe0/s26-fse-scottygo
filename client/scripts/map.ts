@@ -276,6 +276,34 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
           detail: { lat: place.lat, lng: place.lng, label: place.name }
         }));
       },
+      onFindNearby: (origin) => {
+        if (directionsController.isActive) return;
+        if (origin) {
+          const label = origin.label || 'Saved place';
+          mapStateManager.setPlannedLocation(origin, label);
+          document.dispatchEvent(new CustomEvent('locationSelected', {
+            detail: { ...origin, label }
+          }));
+        }
+        document.querySelector<NearbyStopsPanel>('nearby-stops-panel')?.open();
+      },
+      onUseStopAsOrigin: (stop) => {
+        if (directionsController.isActive) return;
+        const origin = { lat: stop.lat, lng: stop.lon };
+        mapStateManager.setPlannedLocation(origin, stop.stopName);
+        document.dispatchEvent(new CustomEvent('locationSelected', {
+          detail: { ...origin, label: stop.stopName }
+        }));
+      },
+      onChoosePlace: (onChosen) => {
+        const picker = document.querySelector<ILocationSearchElement>('location-search');
+        // Let the launch click finish before the picker's outside-click handler runs.
+        const timer = window.setTimeout(() => {
+          if (picker) picker.pick(onChosen);
+          else onChosen(null);
+        }, 0);
+        return () => { window.clearTimeout(timer); picker?.close(); };
+      },
       onApplyFilters: (filters) => {
         if (directionsController.isActive) return;
         vehicleTracker.cancelFollow();

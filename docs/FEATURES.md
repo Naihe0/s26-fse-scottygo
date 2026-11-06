@@ -4,7 +4,7 @@ ScottyGo combines Pittsburgh Regional Transit (PRT) buses and CMU shuttles in on
 
 ## Use cases and acceptance flows
 
-These flows describe the implemented app at baseline **e06755c**. They are the checklist for the next ten iterations. Each main flow has an ID ending in **-M**; alternate and error flows use **-A1**, **-A2**, and so on. Keep these IDs when extending a flow. Bold text matches a visible control or its accessible name. A route, bus or platform number is sample data: substitute an available record and record its ID in the evidence.
+These flows start from baseline **e06755c** and are updated with each accepted iteration below. Each main flow has an ID ending in **-M**; alternate and error flows use **-A1**, **-A2**, and so on. Keep these IDs when extending a flow. Bold text matches a visible control or its accessible name. A route, bus or platform number is sample data: substitute an available record and record its ID in the evidence.
 
 Unless stated otherwise, the actor is a signed-in rider with an active account that has accepted the terms. Start map journeys from **Map** with the tour closed. For every step, check the stated result before continuing. For every cancellation, verify that no pending response reopens the dismissed interface. Use disposable accounts and isolated data for registration, account changes, subscriptions and reports.
 
@@ -273,16 +273,16 @@ Before each iteration, rehearse all main flows on the preceding accepted release
 
 **UC13-M**
 
-1. Open a stop card and tap **Save stop**. The control changes to Saved.
+1. Open a stop card and tap **Save stop**. The control changes to Saved. If My places has no saved stops, **Find nearby stops** opens discovery directly; save a platform there to begin the collection.
 2. Open **My places → Saved stops**. Find the same platform and select it. Its current transit record/arrival card opens on the map.
 3. Reload and reopen My places. The saved platform remains when browser storage is available.
 
 **Alternate flows.**
 
-- **UC13-A1 — Organize saved stops.** Use **Search saved stops** and **Saved stop order → Nearest first**. Open a row's **More** actions, set/edit its nickname, **Share**, or remove it. Clearing a nickname restores the official name. **Clear stop search** recovers a no-match list.
-- **UC13-A2 — Save an origin or map scope.** Choose an origin first, then **Places**, enter **Place name**, and **Save place**. Reopen the row to plan there; rename/remove with its actions. Under **Views**, enter **View name** and **Save current view**; change map filters and reopen the saved view to restore route/system/direction. Views exclude GPS and date/time selections.
+- **UC13-A1 — Organize saved stops.** Use **Search saved stops** and **Saved stop order → Nearest first**. Open a row's **More** actions, choose **Use as starting point**, set/edit its nickname, **Share**, or remove it. The starting-point action uses the platform coordinates for planning without granting GPS eligibility. Clearing a nickname restores the official name. **Clear stop search** recovers a no-match list.
+- **UC13-A2 — Save an origin or map scope.** Under **Places**, enter **Place name** and inspect the proposed location. **Change location** opens a picker for a searched place, campus, map center, an available GPS fix or a saved platform. Choosing or cancelling returns to the same name draft; choosing changes only the proposed save location. Select **Save place** explicitly to persist it. Reopen the saved row to plan there; **More → Find nearby stops** starts discovery from that place. Rename/remove are also under More. Under **Views**, enter **View name** and **Save current view**; change map filters and reopen the saved view to restore route/system/direction. Views exclude GPS and date/time selections.
 - **UC13-A3 — Reopen history.** Open routes/stops, then **Recent**. Filter **Recent item type**, reopen an item or **Save stop** on a recent platform. Remove an item or **Clear recent/Clear all recent history**; the clear action clears all recent history even when a type filter is active.
-- **UC13-A4 — Respect storage boundaries.** Exercise twenty saved stops, eight places, eight views and eight distinct recents. At a save limit show feedback instead of silently dropping a saved item. Corrupt storage is sanitized; blocked writes retain current-page changes. Switch accounts and rename an account to verify isolation and identity continuity. A failed/missing stop lookup offers feedback/retry instead of opening an unrelated stop.
+- **UC13-A4 — Respect storage boundaries and recover removal.** Remove a saved stop, place, view or recent item, then tap **Undo** in its confirmation. Restore that item without losing unrelated later edits; the restore is one-use and cannot overwrite a newly saved same-ID item, exceed capacity or cross accounts. Exercise twenty saved stops, eight places, eight views and eight distinct recents. At a save limit show feedback instead of silently dropping a saved item. Corrupt storage is sanitized; blocked writes retain current-page changes. Switch accounts during place selection and confirm that the previous account's draft cannot reopen. A failed/missing stop lookup offers feedback/retry instead of opening an unrelated stop.
 
 **Finish/cancel.** Selecting a shortcut closes My places and applies it. Closing without selecting leaves the map unchanged; already-saved edits remain. **Test method.** Browser fixture save/reopen/manage, Hosted disposable local state; rider-shortcuts and rider-shortcuts-store tests for limits, drafts, lookup races and accounts.
 
@@ -417,6 +417,20 @@ Before each iteration, rehearse all main flows on the preceding accepted release
 
 **UC20-A3 — Operator checks release and feed readiness.** Fetch /transit/health, confirm the deployed revision, and read each provider's status/freshness plus overall readiness. A successful HTTP status alone does not establish fresh transit data. During warming/outage, observe the map/arrival feedback and recovery after a valid sample; verify PRT and CMU independently. **Test method:** Hosted release check and transit-feed-lifecycle/provider metadata tests. Record actual revision and sample times with each release.
 
+
+## New explicit-flow iteration series
+
+This is a new ten-round series beyond e06755c. Every round first runs the complete recorded gate with an isolated database: `node tools/rider-rehearsal/round.mjs flow-NN-before --with-db --desktop`. The accepted candidate repeats it under flow-NN-accept. Results list actual browser actions, the exact deterministic assertions for alternate paths, the independent operator flow and physical-device checks still pending. The next round starts after the preceding release is confirmed live.
+
+| Round | Observed starting friction | New rider behavior | Acceptance and release |
+| --- | --- | --- | --- |
+| 1 · Start a trip from My places | A live phone walkthrough found an empty Saved stops list with no next action. Places could only name the existing CMU origin, and a saved place had no nearby-boarding action. Removing the temporary Campus QA place offered no recovery. | ① Find nearby platforms directly from empty Saved stops. ② Choose a different saved-place location and return to the same name draft, with explicit Save. ③ Open nearby boarding options from a saved place's More menu. ④ Use a saved platform as the trip's starting point from More. ⑤ Undo a shortcut removal without overwriting other edits or crossing accounts. | Accepted candidate: recorded below. Complete before/after gates passed; after: 66 suites, 863 assertions, 7 native policy tests, both browser engines and operator dashboard. UC04-A2, UC08-M and UC13-M/A1/A2/A4 cover the joined journey. Cancellation, Enter without implicit save, a removed result button during a detail request, delayed callbacks after account changes and one-use restoration are regression cases. Four phone dimensions have no dialog overflow. |
+
+The same round repaired a confirmed live search failure: the deployed Google project rejected the legacy autocomplete interface. The picker now uses [Places API (New)](https://developers.google.com/maps/documentation/javascript/legacy/places-migration-autocomplete), with loading/error feedback, keyboard selection and stale-response cancellation. Candidate checks using the actual production key selected Carnegie Library of Pittsburgh — Main (Oakland), verified the proposed label before saving, and verified the stored coordinates in phone WebKit and desktop Chrome.
+
+R1 evidence: `private/rider-rehearsals/flow-01-before-2026-11-06T03-43-26-931Z/results.json` and `private/rider-rehearsals/flow-01-accept-2026-11-06T04-09-06-757Z/results.json`. The first after-gate found and drove the result-button click fix; the complete rerun above passed. Browser and controlled assertion coverage remain separate from the eight physical-iPhone checks listed as pending in the evidence.
+
+![My places lets a rider name a place and change its location in the same flow.](wireframes/current/my-places-location-phone.png)
 
 ## iPhone rider release log — November 5, 2026
 

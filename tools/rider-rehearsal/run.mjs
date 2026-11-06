@@ -12,6 +12,7 @@ import { createRequire } from 'node:module';
 import { installMapFixture } from './map-fixture.mjs';
 import { apiFixture } from './feeds.mjs';
 import { socketFixture } from './socket-fixture.mjs';
+import { rehearseMyPlaces } from './my-places.mjs';
 import { recordEvidence } from './evidence.mjs';
 
 const require = createRequire(import.meta.url);
@@ -222,6 +223,7 @@ try {
     await click('.location-search-custom');
     const place = page.getByRole('textbox', { name: 'Search for a location' });
     await place.fill('Campus Library');
+    await page.locator('[data-place-result]').first().waitFor();
     await place.press('Enter');
     await page
       .locator('.location-search-dropdown')
@@ -473,6 +475,7 @@ try {
   await step('UC13 Saved stops, places, history and views', async () => {
     await click('.rider-shortcuts__trigger');
     const places = page.locator('.rider-shortcuts-dialog[open]');
+    await rehearseMyPlaces(page, desktop);
     await places.getByRole('tab', { name: /Saved stops/ }).click();
     await places.getByRole('searchbox').fill('7117');
     await places

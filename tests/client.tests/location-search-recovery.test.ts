@@ -38,6 +38,41 @@ function mount() {
   return { search, reset, selected };
 }
 
+test('saved-place picker returns coordinates without changing the current trip or GPS eligibility', () => {
+  const state = MapStateManager.getInstance();
+  state.setPlannedLocation({ lat: 40.4, lng: -79.9 }, 'Existing trip');
+  const { search, selected, reset } = mount();
+  const chosen = jest.fn();
+  search.pick(chosen);
+  search.querySelector<HTMLButtonElement>('[data-campus]')!.click();
+  expect(chosen).toHaveBeenCalledWith(
+    expect.objectContaining({ label: 'CMU campus' })
+  );
+  expect(state.getState().plannedLocationLabel).toBe('Existing trip');
+  expect(state.getState().gpsPermissionGranted).toBe(false);
+  expect(selected).not.toHaveBeenCalled();
+  expect(reset).not.toHaveBeenCalled();
+});
+
+test('saved-place picker cancels once and unavailable GPS keeps the draft choice open', () => {
+  const { search, selected, reset } = mount();
+  const chosen = jest.fn();
+  search.pick(chosen);
+  search.querySelector<HTMLElement>('.location-search-current')!.click();
+  expect(search.querySelector('[data-current-start]')!.textContent).toContain(
+    'GPS is unavailable'
+  );
+  expect(chosen).not.toHaveBeenCalled();
+  expect(reset).not.toHaveBeenCalled();
+  search.querySelector<HTMLButtonElement>('[data-close-start]')!.click();
+  search.close();
+  expect(chosen).toHaveBeenCalledTimes(1);
+  expect(chosen).toHaveBeenCalledWith(null);
+  search.open();
+  search.querySelector<HTMLButtonElement>('[data-campus]')!.click();
+  expect(selected).toHaveBeenCalledTimes(1);
+});
+
 test('using a saved platform provides a walking origin without granting GPS', () => {
   toggleSavedStop({
     stopId: '7117',

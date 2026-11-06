@@ -6,7 +6,7 @@ import {
   getRiderShortcuts,
   isStopSaved,
   toggleSavedStop,
-  removeShortcut,
+  removeShortcutWithUndo,
   renameShortcut,
   saveFilterView,
   savePlace,
@@ -17,8 +17,10 @@ import {
   ShortcutFilters,
   ShortcutResult
 } from '../utils/rider-shortcuts';
+import { getToken } from '../services/session';
 
 type Tab = 'stops' | 'places' | 'recent' | 'views';
+export type ShortcutOrigin = ILatLng & { label?: string };
 export interface RiderShortcutsContext {
   getOrigin(): (ILatLng & { label?: string }) | null;
   getFilters(): ShortcutFilters;
@@ -26,6 +28,11 @@ export interface RiderShortcutsContext {
   onSelectRoute(routeId: string): void;
   onSelectPlace(place: SavedPlace): void;
   onApplyFilters(filters: ShortcutFilters): void;
+  onFindNearby?(origin?: ShortcutOrigin): void;
+  onUseStopAsOrigin?(stop: SavedStop): void;
+  onChoosePlace?(
+    onChosen: (origin: ShortcutOrigin | null) => void
+  ): (() => void) | void;
 }
 
 const TABS: Array<{ id: Tab; label: string }> = [
@@ -57,6 +64,8 @@ export class RiderShortcuts extends HTMLElement {
   private recentTools = document.createElement('div');
   private unsubscribe: (() => void) | null = null;
   private returnFocus: HTMLElement | null = null;
+  private choiceVersion = 0;
+  private cancelChoice?: () => void;
 
   connectedCallback(): void {
     if (!this.dialog) this.build();
@@ -76,6 +85,9 @@ export class RiderShortcuts extends HTMLElement {
   }
 
   disconnectedCallback(): void {
+    this.choiceVersion++;
+    this.cancelChoice?.();
+    this.cancelChoice = undefined;
     this.unsubscribe?.();
     this.unsubscribe = null;
     if (this.dialog?.open) this.dialog.close();
@@ -100,6 +112,9 @@ export class RiderShortcuts extends HTMLElement {
   }
 
   close(): void {
+    this.choiceVersion++;
+    this.cancelChoice?.();
+    this.cancelChoice = undefined;
     this.dialog?.close();
     if (this.returnFocus?.isConnected) this.returnFocus.focus();
   }
@@ -275,12 +290,21 @@ export class RiderShortcuts extends HTMLElement {
           ? `${visible.length} matching saved stops`
           : `${data.stops.length} of 20 saved stops`
       );
-      if (!data.stops.length)
+      if (!data.stops.length) {
         this.empty(
           panel,
           'Keep a stop close',
           'Open any stop on the map and tap Save stop.'
         );
+        if (this.context?.onFindNearby)
+          panel.append(
+            button(
+              'Find nearby stops',
+              () => this.select(() => this.context?.onFindNearby?.()),
+              'rider-shortcuts__save rider-shortcuts__discover'
+            )
+          );
+      }
       if (nearest)
         this.summary(
           panel,
@@ -344,6 +368,16 @@ export class RiderShortcuts extends HTMLElement {
         );
         share.setAttribute('aria-label', `Share ${stop.stopName}`);
         actions.append(
+          ...(this.context?.onUseStopAsOrigin
+            ? [
+                button(
+                  'Use as starting point',
+                  () =>
+                    this.select(() => this.context?.onUseStopAsOrigin?.(stop)),
+                  'rider-shortcuts__secondary'
+                )
+              ]
+            : []),
           this.rename('stop', stop.stopId, nickname || '', actions),
           share,
           this.removeButton('stop', stop.stopId, stop.stopName)
@@ -352,23 +386,75 @@ export class RiderShortcuts extends HTMLElement {
         panel.append(row);
       });
     } else if (this.activeTab === 'places') {
-      const origin = this.context?.getOrigin() ?? null;
+      let origin = this.context?.getOrigin() ?? null;
       this.summary(panel, `${data.places.length} of 8 planning places`);
       const description = origin
         ? `Save planning location: ${origin.label || 'Selected location'}`
         : 'Choose a planning location on the map to save it here.';
-      panel.append(
-        this.nameForm(
-          'Place name',
-          'Save place',
-          description,
-          (name) =>
-            origin
-              ? savePlace(name, origin, origin.label)
-              : { ok: false, message: 'Choose a planning location first.' },
-          !origin
-        )
+      const form = this.nameForm(
+        'Place name',
+        'Save place',
+        description,
+        (name) =>
+          origin
+            ? savePlace(name, origin, origin.label)
+            : { ok: false, message: 'Choose a planning location first.' },
+        !origin && !this.context?.onChoosePlace
       );
+      panel.append(form);
+      const nameInput = form.querySelector<HTMLInputElement>('input')!;
+      const save = form.querySelector<HTMLButtonElement>('[type="submit"]')!;
+      const updateReady = () => {
+        save.disabled = !origin || !nameInput.value.trim();
+      };
+      nameInput.addEventListener('input', updateReady);
+      updateReady();
+      if (this.context?.onChoosePlace) {
+        const choose = button(
+          'Change location',
+          () => {
+            const version = ++this.choiceVersion;
+            const token = getToken();
+            this.dialog!.close();
+            this.cancelChoice =
+              this.context?.onChoosePlace?.((location) => {
+                this.cancelChoice = undefined;
+                if (
+                  version !== this.choiceVersion ||
+                  token !== getToken() ||
+                  !this.isConnected
+                )
+                  return;
+                if (location) {
+                  origin = location;
+                  let help = form.querySelector('p');
+                  if (!help) {
+                    help = document.createElement('p');
+                    nameInput.closest('label')!.after(help);
+                  }
+                  help.textContent =
+                    'Save planning location: ' +
+                    (location.label || 'Selected location');
+                }
+                updateReady();
+                // An Enter key that selects an autocomplete result must finish
+                // before focus returns to this form, or it can also submit it.
+                window.setTimeout(() => {
+                  if (
+                    version !== this.choiceVersion ||
+                    token !== getToken() ||
+                    !this.isConnected
+                  )
+                    return;
+                  this.dialog!.showModal();
+                  nameInput.focus({ preventScroll: true });
+                }, 0);
+              }) || undefined;
+          },
+          'rider-shortcuts__secondary rider-shortcuts__choose'
+        );
+        save.before(choose);
+      }
       if (!data.places.length)
         this.empty(
           panel,
@@ -381,10 +467,41 @@ export class RiderShortcuts extends HTMLElement {
           place.label || 'Saved planning location',
           () => this.select(() => this.context?.onSelectPlace(place))
         );
-        row.append(
-          this.rename('place', place.id, place.name, row),
+        const actions = document.createElement('div');
+        actions.className = 'rider-shortcuts__stop-actions';
+        actions.id = `rider-place-actions-${place.id}`;
+        actions.hidden = !openActions.has(actions.id);
+        const more = button(
+          'More',
+          () => {
+            actions.hidden = !actions.hidden;
+            more.setAttribute('aria-expanded', String(!actions.hidden));
+          },
+          'rider-shortcuts__more rider-shortcuts__secondary'
+        );
+        more.setAttribute('aria-label', 'More actions for ' + place.name);
+        more.setAttribute('aria-expanded', String(!actions.hidden));
+        more.setAttribute('aria-controls', actions.id);
+        if (this.context?.onFindNearby)
+          actions.append(
+            button(
+              'Find nearby stops',
+              () =>
+                this.select(() =>
+                  this.context?.onFindNearby?.({
+                    lat: place.lat,
+                    lng: place.lng,
+                    label: place.name
+                  })
+                ),
+              'rider-shortcuts__secondary'
+            )
+          );
+        actions.append(
+          this.rename('place', place.id, place.name, actions),
           this.removeButton('place', place.id, place.name)
         );
+        row.append(more, actions);
         panel.append(row);
       });
     } else if (this.activeTab === 'recent') {
@@ -533,11 +650,39 @@ export class RiderShortcuts extends HTMLElement {
     const remove = button(
       'Remove',
       () => {
-        removeShortcut(kind, id);
+        const row = remove.closest('.rider-shortcuts__row');
+        const parent = row?.parentElement;
+        const next = row?.nextElementSibling;
+        const removed = removeShortcutWithUndo(kind, id);
         // If a separate naming draft is open, keep its node and remove only this row.
         if (remove.isConnected)
           remove.closest('.rider-shortcuts__row')?.remove();
         this.status(`${label} removed.`);
+        if (removed) {
+          const undo = button(
+            'Undo',
+            () => {
+              const result = removed.undo();
+              // A different naming draft can keep this panel mounted while the
+              // store changes. Restore the original row without replacing it.
+              if (
+                result.ok &&
+                row &&
+                !row.isConnected &&
+                parent?.isConnected &&
+                this.isEditing()
+              )
+                parent.insertBefore(
+                  row,
+                  next?.parentElement === parent ? next : null
+                );
+              this.status(result.message);
+              this.focusTab();
+            },
+            'rider-shortcuts__undo'
+          );
+          this.dialog?.querySelector('.rider-shortcuts__status')?.append(undo);
+        }
         this.focusTab();
       },
       'rider-shortcuts__secondary'

@@ -419,4 +419,124 @@ describe('My places rider shortcut interactions', () => {
     expect(element.textContent).not.toContain('Private home');
     expect(element.querySelector<HTMLInputElement>('input')!.value).toBe('');
   });
+
+  test('empty saved stops opens nearby discovery and a saved platform can become the starting point', () => {
+    context.onFindNearby = jest.fn();
+    context.onUseStopAsOrigin = jest.fn();
+    element.open();
+    click('Find nearby stops');
+    expect(context.onFindNearby).toHaveBeenCalledWith();
+    expect(element.querySelector('dialog')!.open).toBe(false);
+    toggleSavedStop(stop);
+    element.open();
+    click(`More actions for ${stop.stopName}`);
+    click('Use as starting point');
+    expect(context.onUseStopAsOrigin).toHaveBeenCalledWith(stop);
+  });
+
+  test('changing a place location preserves the typed name and saves only the chosen coordinates', async () => {
+    let choose!: (
+      origin: { lat: number; lng: number; label: string } | null
+    ) => void;
+    context.onChoosePlace = jest.fn((callback) => {
+      choose = callback;
+    });
+    element.open('places');
+    const input = element.querySelector<HTMLInputElement>('form input')!;
+    const save = element.querySelector<HTMLButtonElement>('[type="submit"]')!;
+    expect(save.disabled).toBe(true);
+    input.value = 'Home';
+    input.dispatchEvent(new Event('input'));
+    expect(save.disabled).toBe(false);
+    click('Change location');
+    expect(element.querySelector('dialog')!.open).toBe(false);
+    choose({ lat: 40.47, lng: -79.92, label: 'Chosen house' });
+    expect(element.querySelector('dialog')!.open).toBe(false);
+    expect(getRiderShortcuts().places).toHaveLength(0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(element.querySelector('dialog')!.open).toBe(true);
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe('Home');
+    expect(context.onSelectPlace).not.toHaveBeenCalled();
+    submit('Home');
+    expect(getRiderShortcuts().places[0]).toMatchObject({
+      name: 'Home',
+      lat: 40.47,
+      lng: -79.92,
+      label: 'Chosen house'
+    });
+  });
+
+  test('cancelling location choice retains a place draft and switching accounts discards a late choice', async () => {
+    let choose!: (
+      origin: { lat: number; lng: number; label: string } | null
+    ) => void;
+    const cancel = jest.fn();
+    context.onChoosePlace = (callback) => {
+      choose = callback;
+      return cancel;
+    };
+    element.open('places');
+    const input = element.querySelector<HTMLInputElement>('form input')!;
+    input.value = 'Private Home';
+    click('Change location');
+    choose(null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(element.querySelector('dialog')!.open).toBe(true);
+    expect(input.value).toBe('Private Home');
+    click('Change location');
+    localStorage.setItem(
+      'token',
+      `header.${btoa(JSON.stringify({ userId: 'new-owner' }))}.signature`
+    );
+    window.dispatchEvent(new StorageEvent('storage', { key: 'token' }));
+    expect(cancel).toHaveBeenCalled();
+    choose({ lat: 40, lng: -80, label: 'Old private choice' });
+    expect(element.querySelector('dialog')!.open).toBe(false);
+    element.open('places');
+    expect(element.querySelector<HTMLInputElement>('form input')!.value).toBe(
+      ''
+    );
+  });
+
+  test('saved place boarding action uses its location and stays under More', () => {
+    context.onFindNearby = jest.fn();
+    savePlace('Home', { lat: 40.47, lng: -79.92 }, 'Chosen house');
+    element.open('places');
+    const actions = element.querySelector<HTMLElement>(
+      '.rider-shortcuts__stop-actions'
+    )!;
+    expect(actions.hidden).toBe(true);
+    click('More actions for Home');
+    recordRecentRoute('61C');
+    expect(
+      element.querySelector<HTMLElement>('.rider-shortcuts__stop-actions')!
+        .hidden
+    ).toBe(false);
+    click('Find nearby stops');
+    expect(context.onFindNearby).toHaveBeenCalledWith({
+      lat: 40.47,
+      lng: -79.92,
+      label: 'Home'
+    });
+    expect(element.querySelector('dialog')!.open).toBe(false);
+  });
+
+  test('Undo removal restores the shortcut while retaining an unrelated place naming draft', () => {
+    savePlace('Campus', { lat: 40, lng: -80 });
+    element.open('places');
+    const input = element.querySelector<HTMLInputElement>('form input')!;
+    input.value = 'Keep this draft';
+    click('More actions for Campus');
+    click('Remove Campus');
+    expect(getRiderShortcuts().places).toHaveLength(0);
+    click('Undo');
+    expect(getRiderShortcuts().places).toHaveLength(1);
+    expect(
+      element.querySelector('.rider-shortcuts__row')!.textContent
+    ).toContain('Campus');
+    expect(input.value).toBe('Keep this draft');
+    expect(input.isConnected).toBe(true);
+    expect(element.querySelector('.rider-shortcuts__undo')).toBeNull();
+  });
 });
