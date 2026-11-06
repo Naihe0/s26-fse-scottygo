@@ -181,6 +181,19 @@ try {
   });
   await step('UC05 Filters, layers and route choice', async () => {
     await click('#layers-btn');
+    const appearance = page.locator('.map-appearance[open]');
+    await appearance.getByLabel('Base map').selectOption('satellite');
+    await appearance.getByLabel('Map overlay').selectOption('transit');
+    assert.equal(await page.locator('#map').getAttribute('data-map-type'), 'hybrid');
+    await appearance.getByLabel('Base map').selectOption('road');
+    await appearance.getByLabel('Stronger street labels').check();
+    await appearance.getByRole('button', {name:'Focus on map'}).click();
+    assert.equal(await page.locator('#transit-search-input').isVisible(), false);
+    assert.equal(await page.locator('#recenter-btn').isVisible(), true);
+    await click('.map-focus-exit');
+    await click('#layers-btn');
+    await appearance.getByRole('button', {name:'Reset appearance'}).click();
+    await appearance.getByRole('button', {name:'Close map appearance'}).click();
     await click('#zoom-in-btn');
     await click('#zoom-out-btn');
     await click('#system-filter-btn');

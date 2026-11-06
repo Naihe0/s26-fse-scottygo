@@ -18,7 +18,7 @@ const suiteGroups = {
   UC02: ['auth-map-handoff', 'loginlogout.unit', 'auth-rate-limit.unit'],
   UC03: ['map-guide-flow', 'map-key', 'feedback'],
   UC04: ['map-location-recovery', 'location-search-recovery', 'geolocation-controller'],
-  UC05: ['map-filter-controls', 'route-control-interactions', 'transit-startup-recovery'],
+  UC05: ['map-filter-controls', 'route-control-interactions', 'transit-startup-recovery', 'map-appearance', 'map-appearance-panel', 'google-map-provider'],
   UC06: ['map-hit-test', 'map-selection-provider', 'map-selection', 'route-renderer'],
   UC07: ['transit-search'],
   UC08: ['nearby-stops-panel', 'nearby-stop-actions'],

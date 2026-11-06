@@ -19,6 +19,8 @@ import { GoogleMapProvider } from './maps/google-map.provider';
 // Import web components
 import './components/app-header';
 import './components/transit-search';
+import './components/map-appearance-panel';
+import type { MapAppearancePanel } from './components/map-appearance-panel';
 import './components/map-controls';
 import './components/zoom-controls';
 import './components/route-bell';
@@ -206,6 +208,10 @@ document.addEventListener('DOMContentLoaded', async function (e: Event) {
       );
       return;
     }
+
+    const appearance = document.createElement('map-appearance-panel') as MapAppearancePanel;
+    document.querySelector('.map-container')?.append(appearance);
+    appearance.configure(value => mapProvider.setAppearance(value));
 
     // Initialize all components
     routeRenderer.initialize(mapProvider);
@@ -599,10 +605,6 @@ const registerTransitSearchEvents = (): void => {
     void filterController.showStopDetailsFromSearch(stop);
   });
 
-  document.addEventListener('toggleLayers', () => {
-    const mode = mapProvider.toggleLayers();
-    showToast(`Map layer: ${mode}`);
-  });
 };
 
 const registerFilterPanelToggleEvents = (): void => {

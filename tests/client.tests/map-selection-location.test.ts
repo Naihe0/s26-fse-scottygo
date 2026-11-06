@@ -8,6 +8,14 @@ import type { RiderShortcuts } from '../../client/scripts/components/rider-short
 // stop lookup. Map rendering and unrelated custom elements are boundary doubles.
 jest.mock('../../client/scripts/components/app-header', () => ({}));
 jest.mock('../../client/scripts/components/transit-search', () => ({}));
+jest.mock('../../client/scripts/components/map-appearance-panel', () => {
+  if (!customElements.get('map-appearance-panel')) {
+    customElements.define('map-appearance-panel', class extends HTMLElement {
+      configure(): void { /* Display preferences are tested in their own suite. */ }
+    });
+  }
+  return {};
+});
 jest.mock('../../client/scripts/components/map-controls', () => ({}));
 jest.mock('../../client/scripts/components/zoom-controls', () => ({}));
 jest.mock('../../client/scripts/components/route-bell', () => ({}));

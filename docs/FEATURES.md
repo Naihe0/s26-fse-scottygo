@@ -33,9 +33,11 @@ Start with the rider's goal in the second column. The third column gives the alt
 
 Existing regression suites live under `tests/client.tests`, `tests/server.tests` and `ios/mobile/tests`. Use the relevant suite for repeatable edge cases, then record what was actually exercised in the browser, on a device or with test data. A live route without arrivals or vehicles exercises the empty state. A separate controlled departure or vehicle is needed to exercise the populated state.
 
-## iPhone rider release log
+## iPhone rider release log — November 5, 2026
 
 The use cases above are the starting checklist for these rounds. Browser checks use phone-sized WebKit and desktop Chrome. Controlled data covers missed buses, service failures and account writes without submitting test reports to riders.
+
+Final acceptance on November 5 passed 101 Jest suites and 1,422 tests, including the isolated MongoDB workflows; 20 opt-in live-provider tests were skipped. The cumulative browser walkthrough passed 18 interaction groups on iPhone-sized WebKit and desktop Chrome, backed by 672 alternate-path checks and 7 iOS host checks. Additional hosted checks used real routes, platforms, vehicles, alerts and walking instructions. These are browser and host tests, not a physical-iPhone certification. Per-round local evidence is under the ignored `private/rider-rehearsals/`; deployment identity is available from `/transit/health`.
 
 | Round | Friction observed | Changes riders can use |
 | --- | --- | --- |
@@ -48,10 +50,15 @@ The use cases above are the starting checklist for these rounds. Browser checks 
 | 7 · Plan without sharing GPS | With location blocked, the map suggested choosing a start without offering a button. A saved platform was missing from the starting-point menu. | Open the picker directly from the permission message. Start from CMU campus, the center of the map, or a saved platform (including nicknames). See the active planning origin when you reopen the picker, and dismiss it by touch or Escape. These choices work for walking and discovery; GPS-only reports still need an actual fix. |
 | 8 · Compare boarding points | With eight nearby stops, the nearest showed an eighteen-minute wait. A six-minute bus at the sixth stop had no preview. Checking it meant leaving the list, and saved platforms could only be managed elsewhere. | Save or unsave directly on a nearby card. See a platform's compass direction from the search origin. Load five more arrival previews at a time. Order checked stops by the earliest departure after the estimated walk. Restrict discovery to platforms serving two or more routes. |
 | 9 · Recognize the bus before boarding | The phone card showed Bus 4100 and Route 61C with Next stop #7117. Even Details omitted a street name, direction, absolute GPS time and distance. A real 61C sample had no agency stop or direction information. | Read the supplied travel direction and route name. Open the reported platform using its number and known name. Compare straight-line GPS distance to the measured bus position in Details. Read the GPS timestamp in Pittsburgh time. Switch reported speed between mph and km/h. Open the route map from Details. Missing agency fields stay unknown, and the extra measurements remain collapsed. |
+| 10 · Read the map while riding | The layer button cycled through five modes without naming the next one, and reloading lost the selection. Satellite could not stay on while showing traffic. Search and discovery tools continued to cover the map when following a ride. | Select a named overlay directly. Combine it with streets or satellite imagery with street names. Increase street-text contrast. Keep appearance preferences across reloads in the same browser. Enter Focus on map, with an always-visible return to controls. Reset appearance in one tap. |
 
 ![Walking from the campus demonstration point to stop 7117, with the four steps returned by Google.](wireframes/current/walking-steps-phone.png)
 
-## Ten rider walkthroughs and fifty improvements
+![Nearby platforms with saved-stop actions and expanded arrival previews.](wireframes/current/nearby-comparison-phone.png)
+
+![A selected real 61C bus with its measured GPS details expanded.](wireframes/current/bus-context-phone.png)
+
+## Previous ten rider walkthroughs and fifty improvements
 
 Each round started with a rider using the previous interface in a browser. The checks below describe how to try the five changes in the shared iPhone and web interface.
 
@@ -247,6 +254,14 @@ These interactions cover the main rider flows: find a route or stop, refine the 
 
 The screenshots are captures of the current app in a local preview, replacing the historical design mockups. The location is a fixed CMU demonstration point, not a user's personal location. Bus data and agency notices come from public feeds and are snapshots rather than fixed examples.
 
+## Map appearance
+
+The layers button opens **Map appearance**. Choose the base and overlay separately; both choices preserve ScottyGo buses, platforms and route selection. Satellite includes street names. **Stronger street labels** increases road-map text contrast. These display preferences stay in the same browser; private browsing or blocked storage falls back to the current session. **Focus on map** temporarily hides search, filters and discovery tools, retaining transit markers, zoom, GPS and the **Show map controls** button. Escape also restores the controls. **Reset appearance** returns to streets with no extra overlay.
+
+![Map appearance choices on the live map in phone WebKit.](wireframes/current/map-appearance-phone.png)
+
+![Focus on map keeps tracking, the route, zoom and location controls visible.](wireframes/current/map-focus-phone.png)
+
 ## Live buses and movement
 
 Each bus has **one circular marker**, containing a bus symbol, with a triangle indicating its heading when known. Tapping it centers and zooms the map to that bus. Its compact card identifies the route/bus and the position state, with **Report** and **Alerts** actions immediately available. Expand **Details** for additional tracking information. The map's tracking banner provides a brief status; tap it to see more information. Keyboard users can open either disclosure and close it with Escape.
@@ -269,7 +284,7 @@ Select a stop to see the serving routes, upcoming arrivals, delay indicators, an
 
 Nearby-stop discovery uses the current or planned starting point and respects the selected filters. A rider can choose **Set a different location** through Places search, then return to **Current Location** later. A planned point helps with route discovery and walking directions, but does not grant GPS access or establish proximity for a bus report.
 
-Directions shows the walking path, distance, duration and estimated arrival at the numbered stop in Pittsburgh time. Open **Walking steps** to see the directions supplied for that path. Selected departures show the estimated time available after the walk. **Hide details** leaves distance, duration and any route warnings visible. GPS updates support progress and rerouting. Loading can be cancelled; failed requests time out and restore the map rather than leaving it locked. Exiting directions restores the latest selected map filters.
+Directions shows the walking path, distance, duration and estimated arrival at the numbered stop in Pittsburgh time. Open **Walking steps** to see the directions supplied for that path. Selected departures from an available prediction feed show the estimated time left after the walk. When that feed pauses, last-known departures keep their Pittsburgh clock times and give no boarding-margin claim; expired estimates say **Estimate passed**. **Hide details** leaves distance, duration and any route warnings visible. GPS updates support progress and rerouting. Loading can be cancelled; failed requests time out and restore the map rather than leaving it locked. Exiting directions restores the latest selected map filters.
 
 ## Location access and recovery
 

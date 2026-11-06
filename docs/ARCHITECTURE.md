@@ -44,6 +44,8 @@ Controllers are singletons assembled by `serve.ts`. Search behavior uses strateg
 
 ### UI interaction ownership
 
+`components/map-appearance-panel.ts` owns the accessible display dialog and the temporary Focus on map mode. `common/map-appearance.ts` validates the three cosmetic fields; `utils/map-appearance.ts` stores them browser-wide with a memory fallback when storage is blocked. They contain no account, location or journey data. The provider applies the base map, overlay and street-label contrast independently without rebuilding transit markers. Focus mode changes control visibility and always keeps its exit button, zoom, GPS and transit data available.
+
 `TransitSearch` owns its debounce, abort controller, request version, and active result. It keeps DOM focus in the combobox for keyboard navigation and invalidates pending work on dismissal or disconnect. `RouteSelectorPanel` and `TogglePanel` maintain separate draft and committed selections, so Cancel and Escape have the same predictable behavior. Stable filter inputs preserve composition and selection during list updates. Their styles are isolated in `transit-search.css` and `route-controls.css`, loaded by the map page.
 
 The subscriptions page tracks loading and mutation state separately. Its add sheet updates a route row in place after saving, and leaves explicit removal to the saved-route cards. `utils/toast.ts` owns one short feedback message and its dismiss timer; `utils/modal.ts` owns the map message dialog's focus and background inert state. These helpers keep page controllers focused on their workflow.

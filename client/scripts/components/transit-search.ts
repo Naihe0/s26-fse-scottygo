@@ -431,7 +431,7 @@ export class TransitSearch extends HTMLElement {
           <p class="search-announcement" aria-live="polite" aria-atomic="true"></p>
         </div>
       </div>
-      <button type="button" class="layers-btn" id="layers-btn" title="Toggle Layers" aria-label="Toggle map layers"><span class="material-icons-outlined" aria-hidden="true">layers</span></button>
+      <button type="button" class="layers-btn" id="layers-btn" title="Map appearance" aria-label="Map appearance" aria-haspopup="dialog" aria-expanded="false" disabled><span class="material-icons-outlined" aria-hidden="true">layers</span></button>
     </div>`;
   }
 

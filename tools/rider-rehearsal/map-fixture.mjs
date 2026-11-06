@@ -44,7 +44,8 @@ export function installMapFixture() {
       return point(this.center);
     }
     fitBounds() {}
-    setMapTypeId() {}
+    setMapTypeId(type) { this.element.dataset.mapType = type; }
+    setOptions(options) { this.options = {...this.options, ...options}; }
   }
   class Overlay extends Events {
     constructor(options = {}) {
@@ -87,7 +88,7 @@ export function installMapFixture() {
       TrafficLayer: Overlay,
       BicyclingLayer: Overlay,
       ControlPosition: {},
-      MapTypeId: {},
+      MapTypeId: {ROADMAP:'roadmap', SATELLITE:'satellite', HYBRID:'hybrid'},
       Size: class {},
       Point: class {},
       LatLngBounds: class {},
