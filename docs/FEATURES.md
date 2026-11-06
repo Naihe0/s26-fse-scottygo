@@ -2,36 +2,421 @@
 
 ScottyGo combines Pittsburgh Regional Transit (PRT) buses and CMU shuttles in one map. The current personal deployment is [scottygo-ningrui.onrender.com](https://scottygo-ningrui.onrender.com/). This guide describes the implemented app; [ARCHITECTURE.md](ARCHITECTURE.md) covers development and operations, and [API.md](API.md) describes its interfaces.
 
-## Use-case inventory and acceptance checklist
+## Use cases and acceptance flows
 
-Start with the rider's goal in the second column. The third column gives the alternate paths that a walkthrough of that goal should cover. Keep the IDs when adding new cases so acceptance results from successive releases can be compared.
+These flows describe the implemented app at baseline **e06755c**. They are the checklist for the next ten iterations. Each main flow has an ID ending in **-M**; alternate and error flows use **-A1**, **-A2**, and so on. Keep these IDs when extending a flow. Bold text matches a visible control or its accessible name. A route, bus or platform number is sample data: substitute an available record and record its ID in the evidence.
 
-**Hosted** means read-only interaction or changes confined to a disposable browser profile. **Fixture** means the actual client with controlled transit, GPS, clock, network or session data, or an isolated test database for writes. **Native** means the iOS host's navigation and lifecycle checks. **Device** means a physical iPhone and covers prompts, GPS, the software keyboard, VoiceOver, app switching and the system share sheet. A WebKit run using the iPhone viewport can check the shared pages. Record device checks separately.
+Unless stated otherwise, the actor is a signed-in rider with an active account that has accepted the terms. Start map journeys from **Map** with the tour closed. For every step, check the stated result before continuing. For every cancellation, verify that no pending response reopens the dismissed interface. Use disposable accounts and isolated data for registration, account changes, subscriptions and reports.
 
-| ID | Goal and normal action | Acceptance paths | Where to check |
-| --- | --- | --- | --- |
-| UC01 | Create a rider account. Open registration, enter a unique username, CMU email and matching password, review the identity and accept the terms. | Check field errors, email completion, password rules, next incomplete field and show/hide. Read the terms and return to the draft, accept or decline, and try an existing username. | Hosted form preview. Fixture registration, decline and duplicates. |
-| UC02 | Enter and leave an account. Sign in, navigate from the header and sign out. | Open a protected view before sign-in. Recover its public route or stop after login. Check wrong credentials, accounts awaiting agreement, inactive accounts, expired sessions, throttled attempts and isolation after switching accounts. | Hosted login/navigation in a disposable session. Fixture policy and failure cases. |
-| UC03 | Learn the map. Open the first-use guide, then reopen it from Map key. | Identify bus heading, estimated or delayed GPS, stops, routes and self-location. Navigate by topic, Next or Back. Skip or finish. Check rotation, keyboard focus, dismissible dialogs and feedback. | Hosted replay. Fixture first-use completion. Device focus and orientation. |
-| UC04 | Choose where to begin. Locate yourself, recenter, or search for a different planning origin. | Use GPS, allow after denial, retry timeout/unavailable location, search Places and return to Current Location. A planned origin supports discovery and walking. Only actual GPS supports report eligibility. | Hosted Places and permission help. Fixture denied/unavailable/recovered GPS. Device permissions and accuracy. |
-| UC05 | Set the map's scope. Open layers, choose a route or all routes, filter PRT/CMU and direction, then clear the filters. | Search, stage, cancel and apply a route. Inspect operating days, first/last trips, headsigns, notices and available detours. Open date/time filters from a shared view. Check a one-direction loop, missing geometry and startup recovery. | Hosted routes and controls. Fixture detour, schedule and startup states. |
-| UC06 | Pick the right object. Zoom and pan, tap a busy intersection, then choose a bus, stop or route. | Check three overlapping object types, deduplicated shared platforms, zoom-dependent stop density, selected route emphasis, selected stop halo, close with Escape and restore focus. | Hosted selections when present. Fixture overlapping/hidden objects. Device touch and zoom. |
-| UC07 | Search by route, stop name or public ID. Type a partial name, narrow the scope, refine it and open a result. | Compare identically named platforms using ID and distance when an origin exists. Check exact ID priority, mixed results, rapid input, clear, keyboard selection, no matches and retry after failure. | Hosted search. Fixture collisions, response order and errors. |
-| UC08 | Find somewhere to board. Open Nearby stops around the current/planned origin or search the map area. | Change walk radius, route scope and name/ID/route filter. Compare walking time with eligible arrivals, request more previews, order by reachable departure time, save stops directly and filter connecting platforms. Refresh the previews, open a stop and distinguish empty, unavailable and partly failed results. | Hosted discovery. Fixture missed departures, partial failures and map-area search. |
-| UC09 | Explore a route and plan a transfer. Open a route and switch between Stops and Buses. | Switch direction, sort alphabetically or by distance, search by stop or connecting route, open the nearest stop or a specific bus, filter bus direction and fit the full route. Check an empty vehicle list and unavailable data. | Hosted PRT and CMU. Fixture exact transfers, empty and unavailable states. |
-| UC10 | Wait at a stop. Select its platform and compare upcoming departures. | Filter by route or time window, compare the next visit on each route, check revised estimates, see later rows, switch countdown to Pittsburgh time, select or clear individual departures, minimize/restore, refresh and inspect last checked time. Check successful empty, delayed, stale and failed responses, including recovery while the card stays open. | Hosted arrival board. Fixture late, stale, offline and crowded boards. |
-| UC11 | Track a vehicle. Tap a bus or choose it from the explorer, inspect details and follow it. | Verify centering, one directional marker, follow/pause/resume and movement after fresh fixes. Replay stopped, delayed, correcting, duplicate, stale and missing GPS, feed outage and recovery, detours, background/foreground and reduced motion. Open the bus's alerts or report action. | Hosted active vehicles when available. Fixture motion replay and outage. |
-| UC12 | Walk to a stop. Start Directions from a selected stop, optionally with selected departures, check walking distance, turn instructions, boarding margin and Pittsburgh ETA, then exit. | Use real or planned origins. Cancel while loading, retry failures, reroute after deviation, preserve an existing path on reroute failure, detect arrival and return to the map with the chosen filters. | Hosted entry. Fixture controlled positions, paths and failures. Device walking and GPS. |
-| UC13 | Return to a familiar place. Use My places for saved stops, named starting places, recent selections and saved map views. | Save/open/share/remove stops, nickname or find a stop, order by distance, rename or remove places and views, reopen recent routes/stops, save a recent stop and clear history. Verify limits and account isolation. | Hosted using disposable browser storage. Fixture bounded lists and account switching. |
-| UC14 | Send or reopen a public map link. Share a view or stop and open it in another session. | Use native sharing, cancel, copy or manually copy. Verify that the link contains public map state only. Try a missing stop, sign in from a link, use Back/Forward, visit another app page and resume. | Hosted public links and browser history. Fixture missing records/clipboard failure. Device share sheet. |
-| UC15 | Save or mute a route. Use the map bell or add a route on Saved routes, then open its map or updates. | Search by name or route, choose operator, hide saved rows, filter muted/enabled, sort by number/report time, mute/unmute and remove. Check duplicate adds, the ten-route limit, failed saves and retry. | Hosted browse. Fixture server saves/removals and limits. |
-| UC16 | Read transit updates. Browse service notices and rider reports, then find the updates for one journey. | Scope by source, text, route, severity, saved or unread. Group/sort, expand, follow safe links or route chips, share, mark one or all shown as read, undo a batch and clear filters. Check changed notices, partial source failure and refresh while reading. | Hosted inbox and public sources. Fixture multi-route, warning and offline cases. |
-| UC17 | Receive an update during a ride. Keep a foreground page open with a saved, unmuted route. | Simulate a new event, pause auto-dismiss by focus, open its route/history or dismiss it. Check muted, duplicate, overflow and reconnection cases, including source changes in another session. | Fixture socket events, session and timer. Device foreground/background transitions. |
-| UC18 | Tell others about a bus. Open Report near a bus, answer seat/crowding/condition questions or add a comment, review, edit and explicitly send. | Skip or clear an answer, retain/discard a draft and prevent duplicates. Check missing or distant GPS, stale bus, empty report, comment limit, moderation and unchanged conditions. | Hosted report entry only. Fixture GPS, submission, moderation and notification delivery. |
-| UC19 | Maintain an account. View or edit your own details. An administrator can search accounts, change status or assign privileges. | Cancel edits, validate or change a username/email/password, deactivate and reactivate a test account. Check revocation after password change, connected-session updates, unauthorized access and last-active-admin protection. | Hosted own profile and cancel. Fixture all writes, role transitions and optional status email. |
-| UC20 | Run and recover the service. Launch the iOS wrapper or open the operator's memory dashboard and health endpoint. | In the iOS host, load the current page, navigate in-app, open a tapped external URL, go back, retry a failed main page and recover after WebKit termination. On the dashboard, confirm revision and feed freshness, reload samples, change time window/refresh interval, inspect peaks and export CSV. | Native navigation/recovery tests and Device for OS handoffs. Hosted health/dashboard. Fixture feed or server failures. |
+### Evidence and execution rules
 
-Existing regression suites live under `tests/client.tests`, `tests/server.tests` and `ios/mobile/tests`. Use the relevant suite for repeatable edge cases, then record what was actually exercised in the browser, on a device or with test data. A live route without arrivals or vehicles exercises the empty state. A separate controlled departure or vehicle is needed to exercise the populated state.
+| Method | What it establishes |
+| --- | --- |
+| Hosted | Actual deployed pages and available provider data. Record deployment revision, time, route/stop/bus IDs, actions and observed outcomes. An empty live feed establishes the empty path only. |
+| Browser fixture | Actual built pages and controllers, exercised in phone-sized WebKit and desktop Chrome with controlled GPS, Maps, feeds, sessions and network replies. Record which dependencies were simulated. |
+| Deterministic | A named test and its passing assertions establish the specific alternate conditions they exercise. A passing suite alone does not establish every substep in a branch. |
+| Database | Isolated loopback MongoDB workflows establish persistence, authorization and concurrent writes for disposable accounts. They do not submit test reports to production riders. |
+| Native logic | iOS host navigation and recovery policy tests establish their decisions for supplied inputs. |
+| Physical iPhone | Safari/Chrome permission prompts, real GPS/walking, software keyboard, VoiceOver, rotation with browser bars, native launch, OS links/share sheet and background recovery require a device. These remain **pending until a device result is recorded**. A phone-sized WebKit pass does not mark them complete. |
+
+Before each iteration, rehearse all main flows on the preceding accepted release and run the mapped alternate checks. Record per-flow pass, fail, unavailable test condition or device pending; retain the exact assertions and observations. After implementing a round, repeat affected flows and the cumulative phone/desktop walkthrough before release. The sections below prescribe checks; they are not a claim that this new iteration has already passed them. Test implementations live in tests/client.tests, tests/server.tests, ios/mobile/tests and tools/rider-rehearsal.
+
+### Flow index
+
+| ID | Actor and goal | Entry |
+| --- | --- | --- |
+| UC01 | New rider creates an account | Sign in → Create an account |
+| UC02 | Rider signs in or out | Sign in / navigation menu |
+| UC03 | Rider learns map symbols and controls | Map key / first-use tour |
+| UC04 | Rider chooses a trip origin | Location control / empty search field |
+| UC05 | Rider changes map scope and appearance | Map filter buttons / Map appearance |
+| UC06 | Rider chooses an overlapping map object | Map tap |
+| UC07 | Rider searches for a route or platform | Search routes or stops |
+| UC08 | Rider compares boarding locations | Near me → Nearby stops |
+| UC09 | Rider explores a route and transfers | Explore route |
+| UC10 | Waiting rider compares departures | Selected stop card |
+| UC11 | Rider locates and follows a bus | Bus marker / route Buses tab |
+| UC12 | Rider walks to a selected stop | Directions |
+| UC13 | Rider keeps and reopens personal shortcuts | My places |
+| UC14 | Rider shares or resumes a public map view | Share map view / Share stop |
+| UC15 | Rider follows route updates | Saved routes / map bell |
+| UC16 | Rider reads relevant notices | Alerts → Transit updates |
+| UC17 | Rider receives a foreground live report | An open signed-in page |
+| UC18 | Rider reports bus conditions | Bus card → Report |
+| UC19 | Rider maintains their account; administrator manages access | Account / Manage Accounts |
+| UC20 | Rider opens the iOS wrapper; operator checks service health | Native app; separate dashboard flow |
+
+### UC01 — Create an account
+
+**Actor and preconditions.** A signed-out rider has a unique username, eligible CMU email and password. Use a disposable identity in a fixture or isolated database when completing registration.
+
+**UC01-M**
+
+1. Open Sign in and tap **Create an account**. The registration form shows Username, Email, Password and Confirm Password.
+2. Enter valid values and wait for validation hints. Enter the same password twice and check **Agree to Terms of Service**. **Register** becomes enabled only when every required field and agreement is valid.
+3. Tap **Register**. **Review your account** shows the submitted username and campus email, without displaying the password.
+4. Tap **Confirm** once. Successful creation, agreement and login show **Registered successfully. Redirecting...**, then open the map or the public map target carried through sign-in.
+
+**Alternate flows.**
+
+- **UC01-A1 — Correct fields.** Enter a short/reserved username, non-CMU email, invalid password or mismatched confirmation. Observe the field error and disabled Register; correct it and wait for validation. **Use @andrew.cmu.edu** completes a bare email name. **Continue with …** focuses the first incomplete field. **Show/Hide** changes password visibility; leaving the page or hiding it masks revealed fields.
+- **UC01-A2 — Read or revise without creating.** Tap **Terms of Service**, then **Back to registration**. The draft remains and reading alone does not check agreement. From the review dialog choose **Edit details** to return to the populated form. **Back to Login** leaves registration without submitting it.
+- **UC01-A3 — Recover a failed submission.** Submit an existing username or simulate a failed validation/registration request. Read the inline error and retry after correction. If creation succeeds but agreement/login fails, follow the displayed error and use Login with the created account; the pending-agreement flow is UC02-A3. Do not assume a partial failure rolled back account creation.
+
+**Finish/cancel.** Success creates an agreed account and authenticated session. Previewing terms or cancelling review creates nothing. **Test method.** Browser fixture for the complete form and review; auth-validation and register unit checks for validation; register integration for creation/duplicates/agreement persistence. Hosted preview may stop before Confirm. Physical keyboard/autofill is pending device evidence.
+
+### UC02 — Sign in, resume and sign out
+
+**Actor and preconditions.** A registered rider knows their credentials. The normal account is Active and agreed.
+
+**UC02-M**
+
+1. Open Sign in, enter **Username** and **Password**, then tap **Login**. Observe successful login and map loading.
+2. Open **Open navigation menu**. Use **Saved routes**, **Alerts** or **Account**, then **Map**; verify the destination title and return to the rider's map state.
+3. Open the menu and choose **Log out**. The local session is cleared and Sign in appears. A protected page requires authentication again.
+
+**Alternate flows.**
+
+- **UC02-A1 — Resume a public target.** Open a valid public route/stop link while signed out, complete Login, then verify the same target opens. Only the sanitized public map state is carried through the handoff.
+- **UC02-A2 — Invalid or blocked login.** Submit empty fields, wrong credentials, an Inactive account or enough controlled failed attempts to trigger throttling. The error remains on Sign in, no session is granted, and the form becomes usable again. Inactive-account guidance directs the rider to an administrator.
+- **UC02-A3 — Pending agreement.** Log in with an account that has not agreed. The terms dialog offers **Accept** and **Decline**. Accept saves agreement and obtains a fresh session; Decline → **OK** returns to Login without access. These actions belong to pending agreement, not the read-only registration terms preview.
+- **UC02-A4 — Session changes.** Expire/revoke the token or change accounts. Protected requests must reject the old session. Re-login restores permitted access; account-scoped shortcuts and read states must belong to the newly signed-in account. Route mute preferences currently belong to the browser, as described in UC15-A2.
+
+**Finish/cancel.** Logout ends local access; abandoning Login leaves the rider signed out. **Test method.** Browser fixture login/navigation/logout and link handoff; auth-map-handoff, loginlogout and auth-rate-limit tests; isolated database for login/revocation, account-switch checks for local data.
+
+### UC03 — Learn the map
+
+**Actor and preconditions.** A rider has a ready map. A new account may receive the first-use tour.
+
+**UC03-M**
+
+1. Open **Map key**. **Reading the map** identifies Reported bus, Estimated movement, Delayed location, Bus stop, Your location, Planning location and Routes & detours.
+2. Tap **Take the map tour**. The guide highlights an available control and names its action.
+3. Use **Next** until the final step, then **Finish**. The guide closes and focus returns to its opener.
+
+**Alternate flows.**
+
+- **UC03-A1 — Skip and replay.** Choose **End tour** or Escape. The tour closes; reopen it from Map key. First-use completion is recorded for that account when the guide finishes or ends.
+- **UC03-A2 — Explore nonlinearly.** Select a **Jump to topic** entry, use **Back**, and resize/rotate. The correct control is highlighted, the card stays within the viewport and focused controls remain usable. Close Map key with an outside tap or Escape.
+
+**Finish/cancel.** Ending the guide leaves the map available and changes no map selection. **Test method.** Browser fixture/Hosted replay; map-guide-flow, map-key and feedback tests. VoiceOver, touch rotation and real browser-bar movement require device evidence.
+
+### UC04 — Choose where the trip starts
+
+**Actor and preconditions.** A rider has the map open. GPS permission and a planned starting point are separate states.
+
+**UC04-M**
+
+1. Tap the map's location control and allow geolocation when prompted. A blue location marker appears when a fix arrives.
+2. Pan away, then tap the location control again. The map recenters and zooms to the current position.
+3. Focus the empty **Search routes or stops** field to open **Starting point**. **Current Location** reports **Using GPS** when GPS is available; choose it to use GPS as the planning origin.
+
+**Alternate flows.**
+
+- **UC04-A1 — GPS fails or recovers.** Deny permission, simulate timeout/unavailable service, or remove an earlier permission. Read the location feedback, retry with its available action/location control, allow permission in browser and device settings, then retry. A new valid fix replaces the fallback and enables GPS-dependent actions. An unsupported browser has no retryable GPS implementation.
+- **UC04-A2 — Plan elsewhere.** In Starting point choose **Set a different location**, search **Search for a location**, and choose a Places result. Alternatively choose **Use CMU campus** or **Use map center**. The planned marker, current-start label, Nearby and Directions use the chosen point. Map center uses the position at selection time.
+- **UC04-A3 — Start at a saved platform or return to GPS.** With a saved stop, choose it under **Start at a saved stop**, then **Use stop**. Reopen Starting point to confirm it. Choose **Current Location** to return to GPS, retrying permission if needed. A chosen place never grants GPS report eligibility.
+
+**Finish/cancel.** **Close starting points**, Escape or an outside tap dismisses the picker without choosing a new origin. **Test method.** Browser fixture allowed/denied/recovered positions and all origin choices; map-location-recovery, location-search-recovery and geolocation-controller tests. Actual iOS permission recovery and accuracy remain device checks.
+
+### UC05 — Set map scope and appearance
+
+**Actor and preconditions.** A rider has a loaded route catalog. Scope filters affect ScottyGo service objects; appearance controls affect the base map beneath them.
+
+**UC05-M**
+
+1. Tap **Filter routes**. In **Choose a route**, type a route number/name, select its row, then **Show route**. The chosen route's line, stops and buses are shown according to enabled systems/directions.
+2. Open **Filter transit systems**, change the PRT/CMU switches and tap **Apply**. Open **Filter route directions**, change **Show Inbound/Show Outbound**, then Apply. Confirm the visible service matches the committed settings.
+3. Tap **Clear all filters**. The normal unfiltered map scope returns; a later route choice remains available.
+
+**Alternate flows.**
+
+- **UC05-A1 — Stage or cancel a route.** Search by published name, change **List order**, select a route and choose **Cancel** or close. The committed route stays unchanged. **All routes** → **Show all routes** applies the broad scope. An exact/unique search plus Enter, or a **Recent** route button, applies that choice directly. An ordinary delayed map refresh must preserve an open filter draft.
+- **UC05-A2 — Read service context.** Select a route line or its overlap choice to open route information. Read operating days, direction/headsign and first/last trip, notices and detours when supplied. Test one-direction service and absent schedule data. Existing public links may restore date/time filters; the current toolbar has no date/time picker. Clear filters removes that restored restriction.
+- **UC05-A3 — Change appearance immediately.** Open **Map appearance**. Select **Streets** or **Satellite with street names**, then a named **Map overlay**. Both remain combined. On Streets, toggle **Stronger street labels**. Changes apply immediately; close and reload to verify persistence. **Focus on map** hides search/route tools; **Show map controls** restores them. **Reset appearance** restores Streets, no overlay and ordinary labels. Blocked storage shows the session-only message. Opening a secondary picker from a card/recovery action must reveal its controls.
+- **UC05-A4 — Recover startup or missing geometry.** Delay or fail catalog/geometry loading. Observe a loading/unavailable notice without losing map controls. Retry or wait for the announced automatic recovery; the latest committed selection wins over older responses.
+
+**Finish/cancel.** Filter Cancel discards a draft. Closing appearance retains its already-applied choices; appearance is browser-wide cosmetic state. **Test method.** Browser fixture scope, draft, appearance and focus recovery; Hosted route/schedule checks; map-filter-controls, route-control-interactions, transit-startup-recovery, map-appearance/panel and provider tests.
+
+### UC06 — Select the right object at a crowded intersection
+
+**Actor and preconditions.** A rider is looking at an area with at least two selectable objects under one tap; use a controlled overlap when live traffic does not supply it.
+
+**UC06-M**
+
+1. Tap the overlapping location. **Choose on map** lists the eligible buses, stops and routes once each.
+2. Identify the platform by its name and public stop number, or identify the bus/route by its supplied label, then select that row.
+3. Verify the matching card/route opens and the chosen object is centered or highlighted as appropriate. Selecting a lone object opens it directly.
+
+**Alternate flows.**
+
+- **UC06-A1 — Narrow the choice.** Use **Buses**, **Stops** or **Routes** and **Find a map item** to narrow the list. **Zoom in here** closes choices and enlarges the tapped intersection.
+- **UC06-A2 — Change zoom and scope.** Zoom out/in and change the selected route. Ordinary stop density adapts; shared platform records are deduplicated; the selected platform halo remains identifiable and hidden objects are not offered.
+- **UC06-A3 — Dismiss.** Choose **Close map choices** or Escape. No new target is selected and focus returns to the available opener.
+
+**Finish/cancel.** The selected target becomes the next journey's entry, or the unchanged map remains after dismissal. **Test method.** Browser fixture collisions and filtering; Hosted actual intersections when present; map-hit-test, map-selection/provider and route-renderer tests. Multi-touch and finger hit accuracy require a device.
+
+### UC07 — Search for a route or stop
+
+**Actor and preconditions.** A rider has a ready map/search service.
+
+**UC07-M**
+
+1. Type part of a name or number into **Search routes or stops**. Results show matching routes and platforms with highlighted text and distinguishing IDs.
+2. If results are mixed, choose **Routes** or **Stops**. Refine the text; the chosen scope remains active.
+3. Select a result. The results close and its route or stop opens on the map.
+
+**Alternate flows.**
+
+- **UC07-A1 — Resolve similar results.** Search an exact public ID and confirm it precedes partial matches. For identical names, compare platform IDs and distance when an origin exists before selecting.
+- **UC07-A2 — Use the keyboard or clear.** Use arrow keys and Enter to open the active result. Escape dismisses results. **Clear search** removes the query and resets the result view; focusing an empty query opens Starting point (UC04).
+- **UC07-A3 — Handle delayed/empty searches.** Type rapidly with replies arriving out of order; only the newest query's results should be offered. A no-match message permits editing. On a failed lookup choose **Try again**; success replaces the error without reopening a dismissed search.
+
+**Finish/cancel.** Selecting opens one target; dismissal keeps the existing selection. **Test method.** Browser fixture mixed results, exact IDs and selection; Hosted search; transit-search tests for cancellation, response order and failure.
+
+### UC08 — Compare nearby boarding platforms
+
+**Actor and preconditions.** A rider has GPS, a chosen origin or the campus fallback. Nearby walking times are approximate distance-based estimates.
+
+**UC08-M**
+
+1. Tap **Near me** to open **Nearby stops**. Confirm the stated search origin and platform list.
+2. Compare each platform's public ID, direction/distance, approximate walk and checked arrival preview. A departure before the walk finishes is identified separately from a later reachable preview.
+3. Select the desired stop card. Nearby closes, the map centers on the platform and its arrival card opens.
+
+**Alternate flows.**
+
+- **UC08-A1 — Change the search.** Expand **Search settings**, choose **5 min**, **10 min** or **15 min**, and select all routes or the active route. **Search this area** uses the map center; **Use my starting point** restores the original origin. **Filter nearby stops** matches street, public number or serving route. Verify the summary reflects active settings.
+- **UC08-A2 — Compare more and save.** Choose **Check … more stops** to request the next preview batch, up to fifteen checked stops. Set **Order stops → Soonest after walking** and **Connections → Two or more routes**. Verified reachable previews lead unchecked/unavailable entries. Save/unsave with the separate card bookmark control without opening the card. Expand **All … routes** where offered.
+- **UC08-A3 — Refresh or recover.** Choose **Refresh arrivals** and inspect its checked time. A valid empty result, unavailable predictions and a partially failed set remain distinct. A failed stop search offers **Try again**; failed previews do not erase usable platforms or appear as live zero-wait arrivals.
+
+**Finish/cancel.** **Close nearby stops** or Escape returns to the map without selecting a platform; close cancels unnecessary ongoing discovery work. **Test method.** Browser fixture at least eight stops, missed/reachable departures, extra batches and save; Hosted available nearby data; nearby-stops-panel and nearby-stop-actions tests.
+
+### UC09 — Explore a route and its connections
+
+**Actor and preconditions.** A rider has selected a route with known stops; the vehicle list may legitimately be empty.
+
+**UC09-M**
+
+1. Tap **Explore route**. Verify the route title and active **Stops** tab.
+2. Read the nearest boarding stop, choose a **Stop direction**, then select a named platform. The explorer closes and that stop opens on the map.
+3. Reopen Explore route, choose **Buses**, and select a listed bus. Its marker centers and bus card opens. Reopen and choose **Show full route** to fit the currently visible route geometry.
+
+**Alternate flows.**
+
+- **UC09-A1 — Find an interchange.** Use **Search route stops** with a stop number/street or connecting route. Select **Order stops → Nearest first** when an origin exists. Compare **Transfer to …** labels. Default alphabetical order does not represent verified trip stop order.
+- **UC09-A2 — Locate a specific vehicle.** In Buses use **Find bus or reported stop**, **Order buses → Closest to start/Newest GPS first**, **Recent GPS only** and **Bus direction**. **Reset bus list** restores the whole eligible list. Recent GPS filters the list without deleting delayed markers from the map.
+- **UC09-A3 — Empty or unavailable data.** Open a route/direction with no vehicles or stops, then simulate stop-load failure. The appropriate empty/error state appears; **Retry loading stops** retries. Close while loading or select another route; an old reply must not replace the current route.
+
+**Finish/cancel.** Selection opens one map target. **Close route explorer** or Escape leaves the map as it was. **Test method.** Browser fixture both tabs and navigation; Hosted PRT/CMU when available; route-explorer and renderer tests for filter, distance, cancellation and missing data.
+
+### UC10 — Wait for a departure
+
+**Actor and preconditions.** A rider selects a specific stop with a known ID. Use a populated prediction fixture to exercise comparisons.
+
+**UC10-M**
+
+1. Open the stop from the map, search or Nearby. Confirm its name/ID before reading arrivals.
+2. Compare the route and ETA on each departure. Tap individual rows to select the visits to include in walking directions; selected state belongs to each visit.
+3. Tap **Refresh arrival times**. Confirm the checked time and updated rows; existing selections survive when their visit identity remains present.
+
+**Alternate flows.**
+
+- **UC10-A1 — Narrow the board.** Expand **Arrivals**, choose **Route**, **Show departures → Next per route/Selected only**, and **Time window → Next 15 minutes/Next 30 minutes/Next hour**. Toggle **Pittsburgh clock time**. Load more rows where offered, use **Clear selection**, and use **Show all departures** to reset a filtered empty view.
+- **UC10-A2 — Distinguish repeated and changed visits.** Supply two visits by one bus, select one, then refresh. Only that visit is selected. An identifiable ETA shifting at least two minutes shows its earlier/later revision. An estimate more than a minute in the past reads **Estimate passed** rather than remaining Due.
+- **UC10-A3 — Lose and regain the feed.** Start with warming data, a healthy empty response, or a failed/unavailable provider. Warming/failure must not say a healthy **No upcoming arrivals**. If cached rows exist, keep them with absolute Pittsburgh times and unavailable feedback. **Retry arrivals** or a successful poll restores fresh countdowns and preserves valid selections.
+- **UC10-A4 — Keep the stop handy.** Minimize and restore the card; its board state survives. **Save stop/Saved** toggles the personal shortcut; **Share stop** opens UC14. Close ends this stop's board.
+
+**Finish/cancel.** A selected departure can continue to Directions (UC12); closing the card ends the comparison. **Test method.** Browser fixture healthy, empty, repeated-vehicle, revised and unavailable boards; Hosted observed arrivals; prediction-requests, prediction-shortcuts, stop-boarding and arrival-identity tests plus provider metadata checks.
+
+### UC11 — Find and follow a bus
+
+**Actor and preconditions.** A rider has an eligible bus marker or a route-explorer bus row. Delayed data may remain visible.
+
+**UC11-M**
+
+1. Tap the bus. The map centers/zooms to it and opens one bus card identified by vehicle and route.
+2. Read its GPS age/movement state and supplied direction. Observe the same directional marker moving between accepted fixes; an estimate is identified as estimated.
+3. Tap **Follow**. As its displayed position moves the map follows. Tap the **Following** control to stop following.
+
+**Alternate flows.**
+
+- **UC11-A1 — Inspect context.** Expand **Details**. Read supplied route name, speed, measured GPS timestamp and straight-line distance to the reported position; switch **Bus speed unit**. Tap the reported platform when provided, **View this route and its stops**, or **Alerts** to open that context. Missing provider fields stay unreported.
+- **UC11-A2 — Pause and resume.** While following, drag the map. The control becomes **Resume follow**; tap it to resume. Minimizing/closing, selecting a different target, starting Directions or hiding the bus ends follow mode.
+- **UC11-A3 — Interpret uncertainty.** Replay stopped, delayed, stale, missing, duplicate and correcting fixes, detours, outage/recovery and background resume. Keep one marker per bus, reconcile corrections by the supported smooth movement, and expose estimated/delayed state. When prediction confidence/horizon is exhausted the marker waits for a newer fix rather than moving indefinitely. Reduced-motion preference reduces animation. Delayed reporting disables Report until fresh GPS returns.
+
+**Finish/cancel.** Closing leaves the map; follow ends. **Test method.** Browser fixture follow/details; Hosted live buses and supplied fields; vehicle-motion-replay, vehicle-motion-tracker and vehicle-tracker tests with measured input/output traces. Physical ride accuracy, battery use and background timing remain device observations.
+
+### UC12 — Walk to a platform
+
+**Actor and preconditions.** A rider has an origin and selected stop. Walking routing must be available; selected departures are optional.
+
+**UC12-M**
+
+1. On the stop card optionally select departure rows, then tap **Directions**. A cancellable loading state appears and resolves to the walking path.
+2. Read the destination name/stop number, distance, walking duration and Pittsburgh arrival time. Expand **Show details** to read provider-supplied steps and distances.
+3. Compare each selected fresh departure with estimated walking arrival. The panel reports a margin, tight connection or that the bus may leave first.
+4. Tap **Exit**. The walking path/panel closes and the previous map filters return.
+
+**Alternate flows.**
+
+- **UC12-A1 — Plan or simplify.** Choose a planned origin using UC04 before Directions. **Hide details** collapses the panel, and Show details restores it. If the provider supplies no steps, retain the usable summary/path without inventing instructions.
+- **UC12-A2 — Cancel or retry.** Exit during loading; a late routing result must not reopen the path. Fail an initial request, read its feedback, and request Directions again when service returns. Rapid repeat taps must not create duplicate walks.
+- **UC12-A3 — Continue walking.** Supply real-position updates along and away from the path. Deviation triggers bounded rerouting; a failed reroute preserves the existing path. A position within the arrival threshold produces arrival feedback and completes the walk. Repeated/background updates must not restore an exited journey.
+- **UC12-A4 — Use an old arrival snapshot.** Enter Directions from an unavailable arrival board. Its selected rows show **ET · last known**, without a live countdown or boarding margin. A previously healthy estimate that has passed becomes **Estimate passed**.
+
+**Finish/cancel.** Arrival or Exit ends walking mode and restores the map. **Test method.** Browser fixture walk details/exit and stale rows; Hosted actual Maps walking response; directions-controller, walking-directions.service and directions-restoration tests. Physical walking, GPS deviation and route suitability require device/field verification.
+
+### UC13 — Save and reuse personal shortcuts
+
+**Actor and preconditions.** A rider is signed in and has opened a stop or chosen an origin. Shortcuts are stored locally, separately by immutable account ID.
+
+**UC13-M**
+
+1. Open a stop card and tap **Save stop**. The control changes to Saved.
+2. Open **My places → Saved stops**. Find the same platform and select it. Its current transit record/arrival card opens on the map.
+3. Reload and reopen My places. The saved platform remains when browser storage is available.
+
+**Alternate flows.**
+
+- **UC13-A1 — Organize saved stops.** Use **Search saved stops** and **Saved stop order → Nearest first**. Open a row's **More** actions, set/edit its nickname, **Share**, or remove it. Clearing a nickname restores the official name. **Clear stop search** recovers a no-match list.
+- **UC13-A2 — Save an origin or map scope.** Choose an origin first, then **Places**, enter **Place name**, and **Save place**. Reopen the row to plan there; rename/remove with its actions. Under **Views**, enter **View name** and **Save current view**; change map filters and reopen the saved view to restore route/system/direction. Views exclude GPS and date/time selections.
+- **UC13-A3 — Reopen history.** Open routes/stops, then **Recent**. Filter **Recent item type**, reopen an item or **Save stop** on a recent platform. Remove an item or **Clear recent/Clear all recent history**; the clear action clears all recent history even when a type filter is active.
+- **UC13-A4 — Respect storage boundaries.** Exercise twenty saved stops, eight places, eight views and eight distinct recents. At a save limit show feedback instead of silently dropping a saved item. Corrupt storage is sanitized; blocked writes retain current-page changes. Switch accounts and rename an account to verify isolation and identity continuity. A failed/missing stop lookup offers feedback/retry instead of opening an unrelated stop.
+
+**Finish/cancel.** Selecting a shortcut closes My places and applies it. Closing without selecting leaves the map unchanged; already-saved edits remain. **Test method.** Browser fixture save/reopen/manage, Hosted disposable local state; rider-shortcuts and rider-shortcuts-store tests for limits, drafts, lookup races and accounts.
+
+### UC14 — Share and resume a map view
+
+**Actor and preconditions.** A rider has a chosen public map scope or stop. The recipient may be signed out.
+
+**UC14-M**
+
+1. Set the desired route/system/direction filters and tap **Share map view** where Web Share is available, otherwise **Copy view link**. For one platform use its **Share stop** action.
+2. Complete sharing/copying and open the resulting URL in a separate session. It contains the public view or stop ID, without the sender's GPS, saved places, token or account details.
+3. Complete sign-in if required. The destination map applies the shared state and selects the intended platform when present.
+
+**Alternate flows.**
+
+- **UC14-A1 — Cancel or copy manually.** Cancel the native share sheet; no share is reported as successful. If native sharing is unavailable/fails, use the supported copy path; if clipboard writing fails, the manual-copy UI exposes the public URL for selection and copying.
+- **UC14-A2 — Recover a target.** Open an unknown stop or unavailable record and follow the visible error/retry state; normal map access remains. A valid sign-in handoff retains the target instead of opening an old locally saved origin over it.
+- **UC14-A3 — Resume navigation.** Select several public map states, use Back/Forward, visit Alerts or Saved routes and return via Map. Confirm the expected committed view, without pending old requests replacing it.
+
+**Finish/cancel.** Cancel leaves the current view. Sharing creates a public URL, not a synchronized personal trip. **Test method.** Browser fixture clipboard, hash/history and sign-in; Hosted public link; copy-view-link, stop-link-navigation and map-auth-return tests. System share completion/cancellation needs physical iPhone evidence.
+
+### UC15 — Follow, mute or remove a route
+
+**Actor and preconditions.** A rider has a signed-in account; persistent subscription changes use disposable data in acceptance.
+
+**UC15-M**
+
+1. Open **Saved routes** from navigation, then **+ Add route**. In **Add a route**, search its number/name and select an unsaved route's add action.
+2. Confirm the route appears and the saved count increases. Close the sheet and open **Live map** or **Route updates** from its card.
+3. Return to the route on the map. The map bell reflects the saved state and can toggle the subscription.
+
+**Alternate flows.**
+
+- **UC15-A1 — Browse a large list.** Under **Filter and sort routes**, set **Alerts** and **Order**. In Add a route, change **Transit system** and **Hide saved routes**. Search results and counts must reflect these controls.
+- **UC15-A2 — Pause or stop updates.** Use the card's **Mute notifications for …** control; the route stays saved and no live popup is shown for it in that browser. Mute preferences currently use one browser-wide list, so another account in the same browser can inherit a route mute. **Unmute notifications for …** resumes it. **Remove … from saved routes** deletes the subscription immediately after successful save and leaves its socket room; removal has no extra confirmation dialog.
+- **UC15-A3 — Recover mutation/load failures.** Try a duplicate, an eleventh route, a stale/concurrent add or failed remove. Show the appropriate limit/error and keep the accurate list/count. Use **Try again** for load errors. Failed saves must not leave a permanently optimistic bell/count.
+
+**Finish/cancel.** Closing Add a route discards the sheet search, while completed adds remain. **Test method.** Browser fixture add/mute/remove/filter; subscriptions and map-subscription-session tests; isolated subscription-concurrency persistence checks. Hosted browse may stop before account writes.
+
+### UC16 — Read and act on transit updates
+
+**Actor and preconditions.** A rider opens Alerts; agency notices and recent rider reports are independent sources.
+
+**UC16-M**
+
+1. Choose **Alerts** in navigation. **Transit updates** displays source tabs, counts and current loading/refresh status.
+2. Search **Search transit updates** for a relevant route, stop, bus or keyword. Open a notice's detail disclosure when present and read its message, route/platform context and publication window.
+3. Follow a public route/platform link to its map, or return to the inbox and choose **Refresh**. Verify the updated status while retaining usable reading context.
+
+**Alternate flows.**
+
+- **UC16-A1 — Limit the inbox.** Combine **All updates/Service alerts/Live updates**, **Saved routes**, **Unread** and More options. Choose **Affected route**, **Agency severity**, **Agency notice window**, **Update topic**, **Order** or **Layout**. Agency windows use Pittsburgh time; unknown dates remain unknown. **Clear filters** restores the broad inbox.
+- **UC16-A2 — Open/share context.** Follow a safe linked agency URL or affected platform number supplied by the agency; missing IDs do not invent a platform. **Share** sends/copies a public summary, with manual copy when needed. Cancel leaves the inbox.
+- **UC16-A3 — Maintain read state.** **Mark read/Mark unread** changes one card. **Mark shown as read** changes only displayed entries; **Undo mark as read** reverses the last batch. Reload retains account-scoped read state, and materially changed notice content becomes unread again.
+- **UC16-A4 — Preserve usable data.** Fail one source or refresh while a detail/link is focused. Usable last data remains with unavailable feedback; it is not presented as a fresh successful empty list. Retry with Refresh. A genuine no-match/empty response explains the active scope.
+
+**Finish/cancel.** Leaving the page retains local read state; cancelling share sends nothing. **Test method.** Browser fixture combined filters/read/link flows; Hosted real notices; notification-rendering, notification-inbox, agency-window and alert-metadata tests. Physical share/VoiceOver requires device evidence.
+
+### UC17 — Receive a live foreground report
+
+**Actor and preconditions.** A signed-in rider has a saved, unmuted route and an open page connected to the update service. Use controlled socket events for repeatable reports.
+
+**UC17-M**
+
+1. Deliver a new report notification for the followed route. A **Live route updates** card appears with route, bus, changed topics, message and age.
+2. Choose **View route** or **Read updates**. The corresponding map or filtered history opens.
+3. Deliver another event and choose **Dismiss notification**. The card disappears; **Open alert center** provides access to update history.
+
+**Alternate flows.**
+
+- **UC17-A1 — Read without timer loss.** Focus or hover the popup, or hide the document. Its auto-dismiss timer pauses; removing those conditions resumes the remaining time. A link remains actionable while focused.
+- **UC17-A2 — Suppress redundant noise.** Mute the route, replay a duplicate event and deliver more events than fit the stack. Muted/duplicate events do not add redundant cards; overflow preserves access to alert history.
+- **UC17-A3 — Reconnect or change state.** Disconnect/reconnect the socket and resume the page from history. Active subscriptions rejoin without duplicate stacks. Unsubscribe, mute or end a session; subsequent events must respect the current state. Verify subscription changes in another session separately from browser-local mute preferences.
+
+**Finish/cancel.** Dismissal removes the card, not history. Foreground socket popups do not establish background push support. **Test method.** Browser socket fixture and live-notification-stack/lifecycle tests; real account/event delivery only with deliberate test identities. iOS suspend/resume delivery needs device evidence.
+
+### UC18 — Submit a bus-condition report
+
+**Actor and preconditions.** A signed-in rider has real GPS and a sufficiently fresh bus report. The server validates proximity against a matching vehicle; administrators have a server-side proximity exemption. Use isolated accounts/vehicles for acceptance submissions.
+
+**UC18-M**
+
+1. Open the bus card and tap **Report**. **Bus report** names the bus and route.
+2. Answer the **Crowding**, **Priority seats** and **Cleanliness** prompts as known, using **Next**; optionally enter a note under **Comment**.
+3. Choose **Review report**. Verify the included answers and use an answer's **Edit** control if needed.
+4. Tap **Submit report** once. A successful server response closes the form and shows submission feedback. Eligible changed conditions become rider updates.
+
+**Alternate flows.**
+
+- **UC18-A1 — Revise or abandon a draft.** Use **Report section**, Previous step, **Skip**, or tap a selected option again to clear it. Close a nonempty report; **Keep editing** returns to the draft and **Discard** closes it unsent. Draft retention is within the open form, not a promise of persistence after reload.
+- **UC18-A2 — Validate or retry.** Try to review an empty report, exceed the 200-character note limit, or fail submission. Show feedback; no duplicate request is sent while submitting. On failure keep the answers so the rider can edit or retry.
+- **UC18-A3 — Reject ineligible location.** Without GPS, Report explains **GPS Required**. A chosen planning origin does not qualify. Delayed bus GPS disables Report; a server-side distant/missing-vehicle validation failure keeps the draft with its error.
+- **UC18-A4 — Respect report semantics.** Submit unchanged conditions and a controlled flagged comment. The report can be stored while unchanged fields generate no new update; moderated comment text is excluded from the public notification. **Not Sure** on priority seating contributes no assertion about seat availability.
+
+**Finish/cancel.** Only Submit report sends; Discard sends nothing. **Test method.** Browser fixture full review/cancel/error flow; frontend-accessibility and live-notification unit tests; isolated livenotification integration for submission, moderation and recipients. Actual proximity/GPS needs a physical ride check.
+
+### UC19 — Maintain an account and manage access
+
+**Actor and preconditions.** A signed-in rider can edit their own account. The administrative alternate explicitly requires Administrator, plus disposable target accounts and a second active administrator where needed.
+
+**UC19-M — Rider profile**
+
+1. Open **Account**. Verify the displayed username, email and account status belong to the signed-in account.
+2. Choose **Edit**, change the rider's own username or eligible email and wait for validation. Leave password empty to keep it unchanged.
+3. Choose **Save Changes**. Observe **Changes saved!**, then reload to verify the saved value and identity continuity.
+
+**Alternate flows.**
+
+- **UC19-A1 — Cancel or correct.** Change a field and choose **Cancel**; the read view returns without saving the draft. Invalid/duplicate values or failed requests show field feedback. Multiple fields save separately; **Some changes saved, but errors remain.** means successful fields are already persisted and the remaining errors need correction.
+- **UC19-A2 — Change a password.** Enter a new password and matching **Confirm Password**, then Save Changes. Successful server update revokes prior sessions and requires login with the new password. A blank password does not request a reset.
+- **UC19-A3 — Inactivate self.** A non-admin rider changes **Account active** to off. Read the confirmation; **Cancel** keeps the account active, **Confirm** makes it Inactive and signs it out. An administrator must reactivate it. Exercise this only on a disposable account with a recovery administrator.
+- **UC19-A4 — Administrator manages another account.** (1) Open **Manage Accounts**, type into **Find an account by username**, select the intended result and verify its identity. (2) Choose Edit. Another user's username/email are not editable; change **Privilege Level**, **Account Status** or reset its password. (3) Save Changes and reload/re-login as the target to verify the specific change. Test denied member access, attempted edits to another user's identity, and last-active-administrator demotion/inactivation rejection. Administrator self-profile editing follows the rider field flow; self-inactivation uses confirmation. Connected account views receive applicable updates; status email delivery is conditional on configured email service.
+
+**Finish/cancel.** Cancel abandons unsaved edits. Completed field writes persist, and password/status changes may end sessions. **Test method.** Browser fixture rider save/cancel and admin controls; manageacct unit/integration and session tests with isolated MongoDB. No production-user mutation is needed for acceptance.
+
+### UC20 — Open the iOS host; separately operate the service
+
+**UC20-M — Rider launches the native wrapper. Actor/preconditions.** A rider has the Expo/native iOS host installed and network access.
+
+1. Open ScottyGo. The host displays **Opening ScottyGo**, then loads the configured production web app inside its safe area.
+2. Complete sign-in if required and navigate among Map, Alerts and Account. Same-origin navigation remains inside the host.
+3. Return using in-app navigation or the supported iOS Back gesture. The requested page is retained through ordinary host navigation.
+
+**UC20-A1 — Rider navigation/recovery alternatives.** Tap an external HTTP(S) link; the host opens it through the OS. Unsupported schemes and unsolicited external navigation are blocked by policy. On a failed main page, **Couldn’t open ScottyGo → Try again** retries the requested page. A failed map subresource alone must not replace a usable page. Simulate a terminated WebKit content process and foreground return; recover once, then offer explicit retry for repeated termination rather than looping. **Finish/cancel:** close/background the app to leave it; external-link cancellation leaves the app available. **Test method:** native navigation/content-recovery policy tests establish decisions. Actual launch, OS handoff, gestures and foreground recovery remain physical-iPhone checks.
+
+**UC20-A2 — Operator inspects runtime memory. Actor/preconditions.** An operator opens the existing Memory Dashboard with reachable health/sample endpoints. This is an independent operational flow, not a rider-app screen.
+
+1. Open the dashboard and confirm memory metrics, chart and status load from the current service.
+2. Change **Sample limit** and **Auto-refresh seconds**, then **Reload now**. Confirm the resulting sample range and that refreshes do not overwrite a newer requested range.
+3. Select **RSS max** or **Criticals**. Inspect **Key Data Drilldown**; inspect a chart point where supported.
+4. Choose **Download CSV**. Verify its header, row count and sample timestamps against the displayed data. Simulate a failed refresh and confirm its error does not look like a successful new sample. **Finish/cancel:** close the dashboard; it makes no configuration change to transit feeds. **Test method:** Hosted/browser dashboard walkthrough and controlled request-failure/concurrency checks.
+
+**UC20-A3 — Operator checks release and feed readiness.** Fetch /transit/health, confirm the deployed revision, and read each provider's status/freshness plus overall readiness. A successful HTTP status alone does not establish fresh transit data. During warming/outage, observe the map/arrival feedback and recovery after a valid sample; verify PRT and CMU independently. **Test method:** Hosted release check and transit-feed-lifecycle/provider metadata tests. Record actual revision and sample times with each release.
+
 
 ## iPhone rider release log — November 5, 2026
 
