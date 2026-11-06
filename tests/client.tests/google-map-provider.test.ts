@@ -41,7 +41,7 @@ describe('Google Maps marker movement ownership', () => {
     'matchMedia'
   );
   const mapOptions: google.maps.MapOptions[] = [];
-  const nativeMap = { setMapTypeId: jest.fn(), addListener: jest.fn() };
+  const nativeMap = { setMapTypeId: jest.fn(), setOptions: jest.fn(), addListener: jest.fn() };
   const polyline = { setMap: jest.fn() };
   const initial = { lat: 40.44, lng: -79.94 };
   const destination = { lat: 40.45, lng: -79.95 };
@@ -130,7 +130,7 @@ describe('Google Maps marker movement ownership', () => {
             setMap = jest.fn();
           },
           ControlPosition: { RIGHT_BOTTOM: 'right-bottom' },
-          MapTypeId: { ROADMAP: 'roadmap', SATELLITE: 'satellite' }
+          MapTypeId: { ROADMAP: 'roadmap', SATELLITE: 'satellite', HYBRID: 'hybrid' }
         }
       }
     });
@@ -368,8 +368,29 @@ describe('Google Maps marker movement ownership', () => {
       provider.toggleLayers(),
       provider.toggleLayers()
     ]).toEqual(['Transit', 'Traffic', 'Bicycling', 'Satellite']);
-    expect(nativeMap.setMapTypeId).toHaveBeenLastCalledWith('satellite');
+    expect(nativeMap.setMapTypeId).toHaveBeenLastCalledWith('hybrid');
     expect(provider.toggleLayers()).toBe('Off');
     expect(nativeMap.setMapTypeId).toHaveBeenLastCalledWith('roadmap');
+  });
+
+  test('base imagery, overlay and road contrast can be chosen separately without moving markers', async () => {
+    provider.setAppearance({base:'satellite', overlay:'traffic', contrast:true});
+    await provider.initialize(document.createElement('div'),{
+      apiKey:'test',lat:initial.lat,lon:initial.lng,defaultZoom:16
+    });
+    const {marker} = addMarker();
+    expect(nativeMap.setMapTypeId).toHaveBeenLastCalledWith('hybrid');
+    expect(provider['trafficLayer'].setMap).toHaveBeenLastCalledWith(nativeMap);
+    expect(provider['transitLayer'].setMap).toHaveBeenLastCalledWith(null);
+    provider.setAppearance({base:'road',overlay:'bike',contrast:true});
+    expect(provider['trafficLayer'].setMap).toHaveBeenLastCalledWith(null);
+    expect(provider['bikeLayer'].setMap).toHaveBeenLastCalledWith(nativeMap);
+    expect(nativeMap.setOptions).toHaveBeenLastCalledWith({styles: expect.arrayContaining([
+      {elementType:'labels.text.fill',stylers:[{color:'#172331'}]}
+    ])});
+    expect(marker.setMap).not.toHaveBeenCalled();
+    provider.setAppearance({base:'road',overlay:'none',contrast:false});
+    expect(nativeMap.setOptions).toHaveBeenLastCalledWith({styles:mapOptions[0].styles});
+    expect(provider['bikeLayer'].setMap).toHaveBeenLastCalledWith(null);
   });
 });

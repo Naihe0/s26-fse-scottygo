@@ -16,6 +16,7 @@ describe('provider map selection lifecycle', () => {
   const map = {
     getZoom: () => 16,
     setMapTypeId: jest.fn(),
+    setOptions: jest.fn(),
     addListener: (type: string, listener: Listener) =>
       addListener(map, type, listener)
   };

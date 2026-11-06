@@ -96,4 +96,5 @@ export interface IMapProvider {
     west: number;
   }): void;
   toggleLayers(): string;
+  setAppearance?(appearance: import('./map-appearance').MapAppearance): void;
 }

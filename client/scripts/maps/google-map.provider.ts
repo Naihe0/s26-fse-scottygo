@@ -9,6 +9,7 @@ import {
   IConfig
 } from '../../../common/map.interface';
 import { findMapHits, MapHitTarget } from '../utils/map-hit-test';
+import { DEFAULT_MAP_APPEARANCE, normalizeMapAppearance, type MapAppearance } from '../../../common/map-appearance';
 import {
   dismissMapSelection,
   showMapSelection
@@ -62,6 +63,13 @@ const BASE_MAP_STYLES: google.maps.MapTypeStyle[] = [
   }
 ];
 
+const CONTRAST_MAP_STYLES: google.maps.MapTypeStyle[] = [
+  ...BASE_MAP_STYLES,
+  { elementType: 'labels.text.fill', stylers: [{ color: '#172331' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#ffffff' }, { weight: 3 }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#8c9bad' }] }
+];
+
 interface MarkerAnimation {
   frameId?: number;
 }
@@ -93,6 +101,7 @@ export class GoogleMapProvider implements IMapProvider {
   private trafficLayer!: google.maps.TrafficLayer;
   private bikeLayer!: google.maps.BicyclingLayer;
   private layerModeIndex = 0;
+  private appearance: MapAppearance = { ...DEFAULT_MAP_APPEARANCE };
   private markerIdCounter = 0;
   private polylineIdCounter = 0;
 
@@ -124,7 +133,7 @@ export class GoogleMapProvider implements IMapProvider {
     this.transitLayer = new google.maps.TransitLayer();
     this.trafficLayer = new google.maps.TrafficLayer();
     this.bikeLayer = new google.maps.BicyclingLayer();
-    this.applyLayerMode('none');
+    this.setAppearance(this.appearance);
   }
 
   setCenter(position: ILatLng): void {
@@ -471,7 +480,11 @@ export class GoogleMapProvider implements IMapProvider {
       ['none', 'transit', 'traffic', 'bike', 'satellite'];
     this.layerModeIndex = (this.layerModeIndex + 1) % modes.length;
     const nextMode = modes[this.layerModeIndex];
-    this.applyLayerMode(nextMode);
+    this.setAppearance({
+      base: nextMode === 'satellite' ? 'satellite' : 'road',
+      overlay: nextMode === 'satellite' ? 'none' : nextMode,
+      contrast: this.appearance.contrast
+    });
 
     switch (nextMode) {
       case 'transit':
@@ -487,29 +500,18 @@ export class GoogleMapProvider implements IMapProvider {
     }
   }
 
-  private applyLayerMode(
-    mode: 'none' | 'transit' | 'traffic' | 'bike' | 'satellite'
-  ): void {
-    this.transitLayer.setMap(null);
-    this.trafficLayer.setMap(null);
-    this.bikeLayer.setMap(null);
-    this.map.setMapTypeId(google.maps.MapTypeId.ROADMAP);
-
-    if (mode === 'transit') {
-      this.transitLayer.setMap(this.map);
-      return;
-    }
-    if (mode === 'traffic') {
-      this.trafficLayer.setMap(this.map);
-      return;
-    }
-    if (mode === 'bike') {
-      this.bikeLayer.setMap(this.map);
-      return;
-    }
-    if (mode === 'satellite') {
-      this.map.setMapTypeId(google.maps.MapTypeId.SATELLITE);
-    }
+  setAppearance(value: MapAppearance): void {
+    const appearance = normalizeMapAppearance(value);
+    this.appearance = appearance;
+    this.layerModeIndex = appearance.base === 'satellite' ? 4 :
+      ['none', 'transit', 'traffic', 'bike'].indexOf(appearance.overlay);
+    if (!this.map) return;
+    this.map.setMapTypeId(appearance.base === 'satellite'
+      ? google.maps.MapTypeId.HYBRID : google.maps.MapTypeId.ROADMAP);
+    this.map.setOptions({styles: appearance.contrast ? CONTRAST_MAP_STYLES : BASE_MAP_STYLES});
+    this.transitLayer.setMap(appearance.overlay === 'transit' ? this.map : null);
+    this.trafficLayer.setMap(appearance.overlay === 'traffic' ? this.map : null);
+    this.bikeLayer.setMap(appearance.overlay === 'bike' ? this.map : null);
   }
 
   /**
