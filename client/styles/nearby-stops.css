@@ -270,3 +270,36 @@ nearby-stops-panel button:focus-visible {
 .nearby-stops__transfers p {
   margin: 0 0 10px;
 }
+.nearby-stops__setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 6px;
+}
+.nearby-stops__setting select {
+  min-height: 44px;
+  max-width: 100%;
+  border: 1px solid #c4d6db;
+  border-radius: 8px;
+  background: white;
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+}
+.nearby-stops__more, .nearby-stop-save {
+  min-width: 44px;
+  padding: 0 8px;
+  color: #15566a;
+  background: #f4f8f9;
+  border: 1px solid #c4d6db;
+  border-radius: 9px;
+  font-weight: 600;
+}
+.nearby-stops__more { margin: 4px 0 10px; }
+.nearby-stops__list > li { position: relative; }
+.nearby-stops__stop { padding-right: 67px; }
+.nearby-stop-save { position: absolute; top: 5px; right: 6px; }
+.nearby-stop-save[aria-pressed="true"] { background: #dcefe9; color: #204e44; }
+.nearby-stops__comparison { margin: 4px 0; }

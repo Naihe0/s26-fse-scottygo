@@ -21,7 +21,7 @@ const suiteGroups = {
   UC05: ['map-filter-controls', 'route-control-interactions', 'transit-startup-recovery'],
   UC06: ['map-hit-test', 'map-selection-provider', 'map-selection', 'route-renderer'],
   UC07: ['transit-search'],
-  UC08: ['nearby-stops-panel'],
+  UC08: ['nearby-stops-panel', 'nearby-stop-actions'],
   UC09: ['route-explorer'],
   UC10: ['prediction-requests', 'prediction-shortcuts', 'stop-boarding', 'arrival-identity'],
   UC11: ['vehicle-motion-replay', 'vehicle-motion-tracker', 'vehicle-tracker'],

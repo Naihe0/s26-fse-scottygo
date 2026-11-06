@@ -134,6 +134,36 @@ describe('Nearby stop discovery and arrival comparisons', () => {
     );
   });
 
+  test('expands previews by one batch and ranks the first departure the rider can walk to', async () => {
+    const stops = Array.from({ length: 22 }, (_, i) => stop(String(i), 20 + 10 * i));
+    stops[5].routesServingStop = ['61C','71B'];
+    nearby.mockResolvedValue(payload(stops));
+    arrivals.mockImplementation(async (id) => {
+      const minutes = id === '5' ? 4 : 20;
+      return [prediction({predictedArrivalTime: Date.now() + minutes * 60_000})];
+    });
+    await open();
+    expect(arrivals).toHaveBeenCalledTimes(5);
+    click('[data-preview-more]');
+    await flush();
+    expect(arrivals).toHaveBeenCalledTimes(10);
+    const change = (selector: string, value: string) => {
+      const control = panel.querySelector<HTMLSelectElement>(selector)!;
+      control.value = value;
+      control.dispatchEvent(new Event('change'));
+    };
+    change('[data-nearby-order]', 'boarding');
+    expect(panel.querySelector<HTMLElement>('[data-stop-id]')!.dataset.stopId).toBe('5');
+    click('[data-preview-more]');
+    await flush();
+    expect(arrivals).toHaveBeenCalledTimes(15);
+    expect(panel.querySelector<HTMLElement>('[data-preview-more]')!.hidden).toBe(true);
+    change('[data-nearby-connections]', 'transfer');
+    await flush();
+    expect(panel.querySelectorAll('[data-stop-id]')).toHaveLength(1);
+    expect(nearby).toHaveBeenCalledTimes(1);
+  });
+
   test('Search this area uses map center and starting point restores the planning origin', async () => {
     await open();
     click('[data-action="area"]');

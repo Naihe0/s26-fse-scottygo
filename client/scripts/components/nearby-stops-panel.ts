@@ -8,6 +8,7 @@ import { MapStateManager } from '../state/map-state';
 import { transitApiService } from '../services/transit-api.service';
 import { getRouteTitle } from '../utils/route-display';
 import { showToast } from '../utils/toast';
+import { nearbyBearing, nearbySaveButton } from './nearby-stop-actions';
 
 export interface NearbyStopsContext {
   getCenter(): ILatLng;
@@ -17,6 +18,7 @@ export interface NearbyStopsContext {
 
 const CAMPUS = { lat: 40.4433, lng: -79.9436 };
 const ARRIVAL_LIMIT = 5;
+const MAX_PREVIEWS = 15;
 const ARRIVAL_CONCURRENCY = 3;
 const REFRESH_MS = 30_000;
 
@@ -46,6 +48,10 @@ export class NearbyStopsPanel extends HTMLElement {
   private routeOnly = false;
   private stops: INearbyStop[] = [];
   private matchingStops: INearbyStop[] = [];
+  private previewLimit = ARRIVAL_LIMIT;
+  private previews = new Map<string, IPrediction[] | null>();
+  private orderByBoarding = false;
+  private transfersOnly = false;
   private filterTimer: number | null = null;
   private version = 0;
   private request: AbortController | null = null;
@@ -84,12 +90,15 @@ export class NearbyStopsPanel extends HTMLElement {
         <div class="nearby-stops__area-actions"><button type="button" data-action="area">Search this area</button><button type="button" data-action="origin">Use my starting point</button></div>
         <fieldset class="nearby-stops__range"><legend>Walking range estimate</legend><div>${[5, 10, 15].map((minutes) => `<button type="button" data-range="${minutes}" aria-pressed="${minutes === 10}">${minutes} min</button>`).join('')}</div></fieldset>
         <div class="nearby-stops__scope" role="group" aria-label="Routes serving nearby stops"><button type="button" data-scope="all" aria-pressed="true">All routes</button><button type="button" data-scope="route" aria-pressed="false" hidden></button></div>
+        <label class="nearby-stops__setting">Order stops<select data-nearby-order><option value="distance">Shortest walk</option><option value="boarding">Soonest after walking</option></select></label>
+        <label class="nearby-stops__setting">Connections<select data-nearby-connections><option value="all">All stops</option><option value="transfer">Two or more routes</option></select></label>
         <p class="nearby-stops__note">Distances are straight-line estimates. Map transit systems apply.</p></details>
         <div class="nearby-stops__tools" hidden><input type="search" aria-label="Filter nearby stops" placeholder="Street, stop number or route" autocomplete="off"><button type="button" data-refresh>Refresh arrivals</button></div>
         <p class="nearby-stops__status" role="status" aria-live="polite"></p>
         <button type="button" class="nearby-stops__retry" hidden>Try again</button>
+        <div class="nearby-stops__comparison" hidden><span data-preview-summary></span> <span data-checked></span></div>
+        <button type="button" class="nearby-stops__more" data-preview-more hidden></button>
         <ol class="nearby-stops__list" aria-label="Nearby stops ordered by distance"></ol>
-        <p class="nearby-stops__comparison" hidden>Arrival previews refresh every 30 seconds for the first 5 matching stops. <span data-checked></span></p>
       </dialog>`;
     this.querySelector('.nearby-stops__launch')?.addEventListener(
       'click',
@@ -143,10 +152,27 @@ export class NearbyStopsPanel extends HTMLElement {
       'click',
       () => void this.refreshArrivals()
     );
+    this.querySelector<HTMLSelectElement>('[data-nearby-order]')!.addEventListener('change', e => {
+      this.orderByBoarding = (e.currentTarget as HTMLSelectElement).value === 'boarding';
+      this.updateControls();
+      this.updatePreviewControls();
+      this.orderRows();
+    });
+    this.querySelector<HTMLSelectElement>('[data-nearby-connections]')!.addEventListener('change', e => {
+      this.transfersOnly = (e.currentTarget as HTMLSelectElement).value === 'transfer';
+      this.updateControls();
+      this.changeResults();
+      void this.refreshArrivals();
+    });
+    this.querySelector('[data-preview-more]')!.addEventListener('click', () => {
+      if (this.arrivalRequest) return;
+      const previous = this.previewLimit;
+      this.previewLimit = Math.min(this.previewLimit + ARRIVAL_LIMIT, MAX_PREVIEWS);
+      this.updatePreviewControls();
+      void this.refreshArrivals(previous);
+    });
     this.querySelector('input')!.addEventListener('input', () => {
-      this.arrivalRequest?.abort();
-      this.arrivalRequest = null;
-      this.renderStops();
+      this.changeResults();
       if (this.filterTimer !== null) window.clearTimeout(this.filterTimer);
       this.filterTimer = window.setTimeout(
         () => void this.refreshArrivals(),
@@ -163,6 +189,14 @@ export class NearbyStopsPanel extends HTMLElement {
     });
     document.addEventListener('keydown', this.onEscape);
     document.addEventListener('visibilitychange', this.onVisibility);
+  }
+
+  private changeResults(): void {
+    this.arrivalRequest?.abort();
+    this.arrivalRequest = null;
+    this.previewLimit = ARRIVAL_LIMIT;
+    this.previews.clear();
+    this.renderStops();
   }
 
   disconnectedCallback(): void {
@@ -265,7 +299,9 @@ export class NearbyStopsPanel extends HTMLElement {
       ' · ' +
       this.minutes +
       ' min · ' +
-      (this.routeOnly && routeId ? this.routeTitle(routeId) : 'All routes');
+      (this.routeOnly && routeId ? this.routeTitle(routeId) : 'All routes') +
+      (this.transfersOnly ? ' · Connections' : '') +
+      (this.orderByBoarding ? ' · Earliest boarding' : '');
   }
 
   private routeTitle(routeId: string): string {
@@ -285,6 +321,9 @@ export class NearbyStopsPanel extends HTMLElement {
     list.replaceChildren();
     this.stops = [];
     this.matchingStops = [];
+    this.previews.clear();
+    this.previewLimit = ARRIVAL_LIMIT;
+    this.querySelector<HTMLButtonElement>('[data-preview-more]')!.hidden = true;
     this.querySelector<HTMLElement>('.nearby-stops__tools')!.hidden = true;
     this.querySelector<HTMLElement>('.nearby-stops__comparison')!.hidden = true;
     retry.hidden = true;
@@ -362,13 +401,14 @@ export class NearbyStopsPanel extends HTMLElement {
   private renderStops(): void {
     const list = this.querySelector('.nearby-stops__list')!;
     const query = this.querySelector('input')!.value.trim().toLowerCase();
-    this.matchingStops = this.stops.filter(({ stop, routesServingStop }) =>
-      [
+    this.matchingStops = this.stops.filter(({ stop, routesServingStop }) => {
+      const routes = routesServingStop ?? stop.routes ?? [];
+      return (!this.transfersOnly || new Set(routes).size > 1) && [
         stop.stopId,
         stop.stopName,
-        ...(routesServingStop ?? stop.routes ?? [])
-      ].some((value) => value.toLowerCase().includes(query))
-    );
+        ...routes
+      ].some((value) => value.toLowerCase().includes(query));
+    });
     this.querySelector<HTMLElement>('.nearby-stops__tools')!.hidden =
       !this.stops.length;
     this.querySelector<HTMLElement>('.nearby-stops__comparison')!.hidden =
@@ -379,12 +419,13 @@ export class NearbyStopsPanel extends HTMLElement {
     this.querySelector('.nearby-stops__status')!.textContent = !this.stops
       .length
       ? 'No stops in this range. Open Search settings to widen your search.'
-      : query
+      : query || this.transfersOnly
         ? `${this.matchingStops.length} of ${this.stops.length} stops match`
         : `${this.stops.length} ${this.stops.length === 1 ? 'stop' : 'stops'} within about ${this.minutes} minutes’ walk`;
     list.replaceChildren();
     this.matchingStops.forEach((item, index) => {
       const li = document.createElement('li');
+      li.dataset.place = item.stop.stopId;
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'nearby-stops__stop';
@@ -398,6 +439,8 @@ export class NearbyStopsPanel extends HTMLElement {
         ? `${Math.round(item.distanceMeters)} m · ~${walking} min walk`
         : 'At the starting point';
       distance.textContent = `Stop ${item.stop.stopId} · ${distance.textContent}`;
+      const bearing = nearbyBearing(this.origin, item.stop, item.distanceMeters);
+      if (bearing) distance.append(` · ${bearing} of start`);
       const routes = document.createElement('span');
       routes.className = 'nearby-stops__routes';
       const suppliedRoutes = item.routesServingStop ?? item.stop.routes ?? [];
@@ -417,7 +460,7 @@ export class NearbyStopsPanel extends HTMLElement {
       arrival.className = 'nearby-stops__arrival';
       arrival.dataset.arrivalStop = item.stop.stopId;
       arrival.textContent =
-        index < ARRIVAL_LIMIT ? 'Checking next arrival…' : 'Tap for arrivals';
+        index < this.previewLimit ? 'Checking next arrival…' : 'Tap for arrivals';
       button.append(title, distance, routes, arrival);
       button.addEventListener('click', () => {
         this.close(false);
@@ -425,7 +468,7 @@ export class NearbyStopsPanel extends HTMLElement {
           .then(() => this.context?.onSelectStop(item.stop))
           .catch(() => showToast('Could not open this stop. Try again.'));
       });
-      li.append(button);
+      li.append(button, nearbySaveButton(item.stop));
       if (routeIds.length > 5) {
         const details = document.createElement('details');
         details.className = 'nearby-stops__transfers';
@@ -440,9 +483,50 @@ export class NearbyStopsPanel extends HTMLElement {
       }
       list.append(li);
     });
+    this.updatePreviewControls();
+    this.orderRows();
   }
 
-  private async refreshArrivals(): Promise<void> {
+  private updatePreviewControls(): void {
+    const count = Math.min(this.previewLimit, this.matchingStops.length);
+    const next = Math.min(ARRIVAL_LIMIT, MAX_PREVIEWS - count, this.matchingStops.length - count);
+    const more = this.querySelector<HTMLButtonElement>('[data-preview-more]')!;
+    more.hidden = next <= 0;
+    more.disabled = this.arrivalRequest !== null;
+    more.textContent = `Check ${next} more ${next === 1 ? 'stop' : 'stops'}`;
+    this.querySelector('[data-preview-summary]')!.textContent =
+      `Arrival previews for ${count} of ${this.matchingStops.length} stops. ` +
+      (this.orderByBoarding ? 'Reachable arrivals first. ' : '') +
+      (count === MAX_PREVIEWS && count < this.matchingStops.length ? 'Filter the list to check others.' : '');
+  }
+
+  private orderRows(): void {
+    const list = this.querySelector<HTMLOListElement>('.nearby-stops__list')!;
+    list.setAttribute('aria-label', this.orderByBoarding ? 'Nearby stops ordered by earliest reachable preview' : 'Nearby stops ordered by distance');
+    const now = Date.now();
+    const reachableTime = (stop: INearbyStop): number => {
+      const threshold = now + walkMinutes(stop.distanceMeters) * 60_000;
+      let earliest = Infinity;
+      for (const p of this.previews.get(stop.stop.stopId) ?? []) {
+        if (p.predictedArrivalTime >= threshold) earliest = Math.min(earliest, p.predictedArrivalTime);
+      }
+      return earliest;
+    };
+    const desired = this.orderByBoarding
+      ? [...this.matchingStops].map(item => ({ item, time: reachableTime(item) }))
+          .sort((a,b) => a.time - b.time || a.item.distanceMeters - b.item.distanceMeters)
+          .map(value => value.item)
+      : this.matchingStops;
+    const rows = Array.from(list.children) as HTMLElement[];
+    const byId = new Map(rows.map(row => [row.dataset.place, row]));
+    const sorted = desired.map(item => byId.get(item.stop.stopId)!);
+    if (sorted.every((row, index) => row === rows[index])) return;
+    const focus = list.contains(document.activeElement) ? document.activeElement as HTMLElement : null;
+    list.append(...sorted);
+    focus?.focus({preventScroll:true});
+  }
+
+  private async refreshArrivals(start = 0): Promise<void> {
     if (
       !this.opened ||
       document.hidden ||
@@ -453,7 +537,8 @@ export class NearbyStopsPanel extends HTMLElement {
     const version = this.version;
     const request = new AbortController();
     this.arrivalRequest = request;
-    const candidates = this.matchingStops.slice(0, ARRIVAL_LIMIT);
+    this.updatePreviewControls();
+    const candidates = this.matchingStops.slice(start, this.previewLimit);
     const routeId = this.routeOnly
       ? (this.state.getState().selectedRouteId ?? undefined)
       : undefined;
@@ -475,6 +560,7 @@ export class NearbyStopsPanel extends HTMLElement {
           predictions = null;
         }
         if (!current()) return;
+        this.previews.set(stop.stopId, predictions);
         const target = [
           ...this.querySelectorAll<HTMLElement>('[data-arrival-stop]')
         ].find((element) => element.dataset.arrivalStop === stop.stopId);
@@ -494,6 +580,8 @@ export class NearbyStopsPanel extends HTMLElement {
     );
     if (this.arrivalRequest === request) {
       this.arrivalRequest = null;
+      this.updatePreviewControls();
+      this.orderRows();
       this.querySelector('[data-checked]')!.textContent =
         'Checked ' +
         new Date().toLocaleTimeString([], {

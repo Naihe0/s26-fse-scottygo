@@ -288,6 +288,17 @@ try {
     const near = page.locator('nearby-stops-panel dialog[open]');
     await near.getByRole('searchbox').fill('Forbes');
     await near.locator('[data-stop-id]').first().waitFor();
+    const save = near.locator('.nearby-stop-save').first();
+    const wasSaved = await save.getAttribute('aria-pressed');
+    await save.click();
+    assert.notEqual(await save.getAttribute('aria-pressed'),wasSaved);
+    await save.click();
+    await near.locator('.nearby-stops__settings summary').click();
+    await near.getByLabel('Order stops').selectOption('boarding');
+    await near.getByLabel('Connections').selectOption('transfer');
+    await near.locator('[data-stop-id]').first().waitFor();
+    await near.getByLabel('Connections').selectOption('all');
+    await near.getByLabel('Order stops').selectOption('distance');
     await near.getByRole('button', { name: 'Close nearby stops' }).click();
   });
   await step('UC13 Saved stops, places, history and views', async () => {
