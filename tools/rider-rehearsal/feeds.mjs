@@ -45,23 +45,71 @@ const token =
   '.fixture';
 export function apiFixture() {
   const now = Date.now();
-  const iso = minutes => new Date(now + minutes * 60_000).toISOString();
+  const iso = (minutes) => new Date(now + minutes * 60_000).toISOString();
   const subscriptions = new Set(['61C']);
-  const events = { reports: [], checks: 0, arrivalUnavailable:false };
+  const accounts = new Map([
+    [user.credentials.username, structuredClone(user)]
+  ]);
+  const events = {
+    reports: [],
+    checks: 0,
+    arrivalUnavailable: false,
+    registrations: [],
+    agreements: [],
+    accountWrites: []
+  };
   const response = (name, payload, status = 200) => ({
     status,
     json: { name, payload }
   });
   function handle(url, request) {
     const p = url.pathname;
-    if (p.startsWith('/auth/tokens/'))
-      return response('UserAuthenticated', { token, user });
-    if (p.startsWith('/users/')) return response('UserFound', user);
+    if (p === '/auth/users' && request.method() === 'POST') {
+      const body = request.postDataJSON();
+      const account = {
+        ...structuredClone(user),
+        credentials: { username: body.credentials.username },
+        email: body.email,
+        agreed: false
+      };
+      accounts.set(account.credentials.username, account);
+      events.registrations.push({
+        username: account.credentials.username,
+        email: account.email
+      });
+      return response('UserCreated', account, 201);
+    }
+    if (p.startsWith('/auth/users/') && request.method() === 'PATCH') {
+      const username = decodeURIComponent(p.split('/').at(-1));
+      const account = accounts.get(username);
+      account.agreed = true;
+      events.agreements.push(username);
+      return response('UserAgreed', account);
+    }
+    if (p.startsWith('/auth/tokens/')) {
+      const username = decodeURIComponent(p.split('/').at(-1));
+      return response('UserAuthenticated', {
+        token,
+        user: accounts.get(username) ?? user
+      });
+    }
+    if (p.startsWith('/users/'))
+      return response(
+        'UserFound',
+        accounts.get(decodeURIComponent(p.split('/').at(-1))) ?? user
+      );
     if (p === '/auth/validate' || p.includes('/validate/'))
       return response('ValidationPassed', true);
     if (p === '/account/users') return response('UsersRetrieved', ['rider']);
-    if (p.startsWith('/account/users/'))
-      return response('AccountRetrieved', user);
+    if (p.startsWith('/account/users/')) {
+      const [, , , username, field] = p.split('/');
+      const account = accounts.get(decodeURIComponent(username)) ?? user;
+      if (request.method() === 'PATCH' && field === 'email') {
+        account.email = request.postDataJSON().email;
+        events.accountWrites.push({ username, field, value: account.email });
+      }
+      return response('AccountRetrieved', account);
+    }
     if (p === '/config')
       return response('ConfigFound', {
         lat: 40.443,
@@ -131,7 +179,9 @@ export function apiFixture() {
           isDelayed: false
         }))
       );
-      result.json.metadata = {state:events.arrivalUnavailable ? 'unavailable' : 'ready'};
+      result.json.metadata = {
+        state: events.arrivalUnavailable ? 'unavailable' : 'ready'
+      };
       return result;
     }
     if (p.endsWith('/nearbystops'))
@@ -192,14 +242,32 @@ export function apiFixture() {
           headerText: 'Forbes stop relocated',
           descriptionText: 'Use Fifth Avenue.',
           routeIds: ['61C'],
-          stopIds:['7117'], effect:'STOP_MOVED',
-          activePeriods: [{start:iso(-20),end:iso(30)}],
+          stopIds: ['7117'],
+          effect: 'STOP_MOVED',
+          activePeriods: [{ start: iso(-20), end: iso(30) }],
           severityLevel: 'WARNING'
         },
-        {id:'later',headerText:'Weekend detour',descriptionText:'Use the shuttle.',routeIds:['CMU-1'],effect:'DETOUR',activePeriods:[{start:iso(120),end:''}]}
+        {
+          id: 'later',
+          headerText: 'Weekend detour',
+          descriptionText: 'Use the shuttle.',
+          routeIds: ['CMU-1'],
+          effect: 'DETOUR',
+          activePeriods: [{ start: iso(120), end: '' }]
+        }
       ]);
     if (p === '/notifications/notifications')
-      return response('NotificationsRetrieved', [{_id:'rider-seat',routeId:'61C',vid:'4100',reportId:'demo',message:'Priority seats available.',createdAt:iso(-2),changedFields:['prioritySeating']}]);
+      return response('NotificationsRetrieved', [
+        {
+          _id: 'rider-seat',
+          routeId: '61C',
+          vid: '4100',
+          reportId: 'demo',
+          message: 'Priority seats available.',
+          createdAt: iso(-2),
+          changedFields: ['prioritySeating']
+        }
+      ]);
     if (p === '/notifications/reports' && request.method() === 'POST') {
       events.reports.push(request.postDataJSON());
       return response('ReportCreated', {}, 201);

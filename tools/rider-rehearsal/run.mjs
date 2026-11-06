@@ -12,6 +12,7 @@ import { createRequire } from 'node:module';
 import { installMapFixture } from './map-fixture.mjs';
 import { apiFixture } from './feeds.mjs';
 import { socketFixture } from './socket-fixture.mjs';
+import { recordEvidence } from './evidence.mjs';
 
 const require = createRequire(import.meta.url);
 const { webkit, chromium, devices } = require(
@@ -109,20 +110,38 @@ async function activateFilter(selector) {
   }
 }
 async function step(id, action) {
-  await action();
-  assert.ok(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth
-    ),
-    'Horizontal overflow in ' + id
-  );
-  result.push(id);
-  console.log('PASS', id);
+  const flowId = id.match(/^UC\d{2}(?:-A\d+)?/)[0];
+  const outcome = {
+    flowId: flowId.includes('-') ? flowId : flowId + '-M',
+    action: id,
+    method: 'interactive-browser-with-controlled-services',
+    startedAt: new Date().toISOString(),
+    status: 'running'
+  };
+  const started = Date.now();
+  try {
+    await action();
+    assert.ok(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth
+      ),
+      'Horizontal overflow in ' + id
+    );
+    outcome.status = 'passed';
+    console.log('PASS', id);
+  } catch (error) {
+    outcome.status = 'failed';
+    outcome.error = error.message;
+    throw error;
+  } finally {
+    outcome.durationMs = Date.now() - started;
+    result.push(outcome);
+  }
 }
 try {
   await go('/auth');
   await step(
-    'UC01 Registration guidance, password reveal and terms',
+    'UC01 Create an account, review identity and accept terms',
     async () => {
       await click('#show-register-btn');
       await page.locator('#reg-username').fill('campusrider');
@@ -141,6 +160,29 @@ try {
         'text'
       );
       await reveal.click();
+      await click('#show-register-btn');
+      await page.locator('#reg-email').fill('campusrider@andrew.cmu.edu');
+      await page.locator('#reg-password').fill('Demo1!');
+      await page.locator('#reg-confirm-password').fill('Demo1!');
+      await page.locator('#reg-confirm-password').blur();
+      await page.locator('#tos').check();
+      await click('#register-btn');
+      assert.equal(
+        await page.locator('#review-username').innerText(),
+        'campusrider'
+      );
+      assert.equal(
+        fixture.events.registrations.length,
+        0,
+        'Review must not create the account'
+      );
+      await click('#confirm-yes');
+      await page.locator('#map[data-ready]').waitFor();
+      assert.equal(fixture.events.registrations.length, 1);
+      assert.deepEqual(fixture.events.agreements, ['campusrider']);
+      await click('#menu-icon');
+      await click('#menu-logout-btn');
+      await page.waitForURL(/\/auth/);
     }
   );
   await step('UC02 Sign in and open map', async () => {
@@ -167,10 +209,16 @@ try {
     await click('#transit-search-input');
     await click('[data-campus]');
     await click('#transit-search-input');
-    assert.match(await page.locator('[data-current-start]').innerText(), /CMU campus/);
+    assert.match(
+      await page.locator('[data-current-start]').innerText(),
+      /CMU campus/
+    );
     await click('[data-center]');
     await click('#transit-search-input');
-    assert.match(await page.locator('[data-current-start]').innerText(), /Map center/);
+    assert.match(
+      await page.locator('[data-current-start]').innerText(),
+      /Map center/
+    );
     await click('.location-search-custom');
     const place = page.getByRole('textbox', { name: 'Search for a location' });
     await place.fill('Campus Library');
@@ -184,16 +232,24 @@ try {
     const appearance = page.locator('.map-appearance[open]');
     await appearance.getByLabel('Base map').selectOption('satellite');
     await appearance.getByLabel('Map overlay').selectOption('transit');
-    assert.equal(await page.locator('#map').getAttribute('data-map-type'), 'hybrid');
+    assert.equal(
+      await page.locator('#map').getAttribute('data-map-type'),
+      'hybrid'
+    );
     await appearance.getByLabel('Base map').selectOption('road');
     await appearance.getByLabel('Stronger street labels').check();
-    await appearance.getByRole('button', {name:'Focus on map'}).click();
-    assert.equal(await page.locator('#transit-search-input').isVisible(), false);
+    await appearance.getByRole('button', { name: 'Focus on map' }).click();
+    assert.equal(
+      await page.locator('#transit-search-input').isVisible(),
+      false
+    );
     assert.equal(await page.locator('#recenter-btn').isVisible(), true);
     await click('.map-focus-exit');
     await click('#layers-btn');
-    await appearance.getByRole('button', {name:'Reset appearance'}).click();
-    await appearance.getByRole('button', {name:'Close map appearance'}).click();
+    await appearance.getByRole('button', { name: 'Reset appearance' }).click();
+    await appearance
+      .getByRole('button', { name: 'Close map appearance' })
+      .click();
     await click('#zoom-in-btn');
     await click('#zoom-out-btn');
     await click('#system-filter-btn');
@@ -206,96 +262,183 @@ try {
     await click('#route-filter-btn');
     await page.locator('[data-picker-order]').selectOption('name');
     await page.locator('.route-search-input').fill('McKeesport');
-    assert.match(await page.locator('.route-btn[data-route="61C"]').innerText(), /McKeesport/i);
+    assert.match(
+      await page.locator('.route-btn[data-route="61C"]').innerText(),
+      /McKeesport/i
+    );
     await page.locator('.route-search-input').press('Enter');
     await page.waitForURL(/r=61C/);
   });
-  await step('UC06 Find an overlapping platform, line or bus and zoom here', async () => {
-    // Opening the route after the keyboard Go action must keep its selection.
-    await page.getByRole('button', {name:'Explore stops and buses'}).click();
-    const explorer = page.locator('route-explorer dialog[open]');
-    await explorer.getByRole('tab', { name: /Buses/ }).click();
-    await explorer.locator('[data-buses] button').first().waitFor();
-    await explorer.getByRole('tab', { name: /Stops/ }).click();
-    await explorer.getByRole('button', { name: 'Close route explorer' }).click();
-    const routeCard = page.locator('#map-popup .map-popup__close');
-    if (await routeCard.isVisible()) await routeCard.click();
-    await page.locator('#map').click({ position: { x: 170, y: 160 } });
-    const choices = page.locator('.map-selection');
-    await choices.waitFor();
-    assert.ok((await choices.locator('.map-selection__choice').count()) >= 2);
-    const find = choices.getByRole('searchbox');
-    const visible = choices.locator('.map-selection__choice:visible');
-    await choices.getByRole('button',{name:'Stops',exact:true}).click();
-    await find.fill('7117');
-    assert.equal(await visible.count(), 1);
-    assert.match(await visible.innerText(), /Stop #7117/);
-    await find.fill('McKeesport');
-    assert.equal(await visible.count(), 0);
-    await choices.getByRole('button',{name:'Routes',exact:true}).click();
-    assert.match(await visible.innerText(), /Route 61C[\s\S]*McKeesport/i);
-    const zoom = Number(await page.locator('#map').getAttribute('data-zoom'));
-    await choices.getByRole('button',{name:'Zoom in here'}).click();
-    await choices.waitFor({state:'hidden'});
-    assert.equal(Number(await page.locator('#map').getAttribute('data-zoom')),Math.min(21,zoom+2));
-  });
+  await step(
+    'UC06 Find an overlapping platform, line or bus and zoom here',
+    async () => {
+      // Opening the route after the keyboard Go action must keep its selection.
+      await page
+        .getByRole('button', { name: 'Explore stops and buses' })
+        .click();
+      const explorer = page.locator('route-explorer dialog[open]');
+      await explorer.getByRole('tab', { name: /Buses/ }).click();
+      await explorer.locator('[data-buses] button').first().waitFor();
+      await explorer.getByRole('tab', { name: /Stops/ }).click();
+      await explorer
+        .getByRole('button', { name: 'Close route explorer' })
+        .click();
+      const routeCard = page.locator('#map-popup .map-popup__close');
+      if (await routeCard.isVisible()) await routeCard.click();
+      await page.locator('#map').click({ position: { x: 170, y: 160 } });
+      const choices = page.locator('.map-selection');
+      await choices.waitFor();
+      assert.ok((await choices.locator('.map-selection__choice').count()) >= 2);
+      const find = choices.getByRole('searchbox');
+      const visible = choices.locator('.map-selection__choice:visible');
+      await choices.getByRole('button', { name: 'Stops', exact: true }).click();
+      await find.fill('7117');
+      assert.equal(await visible.count(), 1);
+      assert.match(await visible.innerText(), /Stop #7117/);
+      await find.fill('McKeesport');
+      assert.equal(await visible.count(), 0);
+      await choices
+        .getByRole('button', { name: 'Routes', exact: true })
+        .click();
+      assert.match(await visible.innerText(), /Route 61C[\s\S]*McKeesport/i);
+      const zoom = Number(await page.locator('#map').getAttribute('data-zoom'));
+      await choices.getByRole('button', { name: 'Zoom in here' }).click();
+      await choices.waitFor({ state: 'hidden' });
+      assert.equal(
+        Number(await page.locator('#map').getAttribute('data-zoom')),
+        Math.min(21, zoom + 2)
+      );
+      await page.locator('#map').click({ position: { x: 170, y: 160 } });
+      await choices.getByRole('button', { name: 'Stops', exact: true }).click();
+      await choices.getByRole('searchbox').fill('7117');
+      await choices.locator('.map-selection__choice:visible').click();
+      await page.locator('.stop-arrival-board').waitFor();
+      assert.match(
+        await page.locator('#map-popup .map-popup__title').innerText(),
+        /Forbes/
+      );
+      await page.locator('#map-popup .map-popup__close').click();
+    }
+  );
   await step('UC07 Search and open a platform', async () => {
     await page.locator('#transit-search-input').fill('7117');
     await click('.search-result-stop[data-stop-id="7117"]');
     await page.locator('.stop-arrival-board').waitFor();
   });
-  await step('UC10+14 Stop arrivals, share, save and restore', async () => {
-    const pop = page.locator('#map-popup');
-    await pop.locator('.stop-arrival-board summary').click();
-    const view = pop.getByLabel('Show departures');
-    const boardRows = pop.locator('.stop-arrival-board [data-key]');
-    await boardRows.first().click();
-    await view.selectOption('selected');
-    assert.equal(await boardRows.count(), 1, 'Only the chosen visit should be selected');
-    await view.selectOption('first');
-    assert.equal(await boardRows.count(), 1, 'One next departure for fixture route 61C');
-    await view.selectOption('all');
-    await pop.locator('[data-clear]').click();
-    await pop.getByLabel('Time window').selectOption('15');
-    await pop.getByLabel('Time window').selectOption('0');
-    await pop.locator('[data-clock]').check();
-    const checked = fixture.events.checks;
-    await Promise.all([
-      page.waitForResponse(
-        (response) =>
-          new URL(response.url()).pathname ===
-            '/transit/stops/7117/predictions' && response.ok()
-      ),
-      pop.locator('[data-refresh]').click()
-    ]);
-    assert.ok(
-      fixture.events.checks > checked,
-      'Refresh made no predictions request'
-    );
-    await pop.locator('.map-popup__share-stop').click();
-    assert.equal(
-      await page.evaluate(() => window.sharedPublicLink),
-      origin + '/#/map?stop=7117'
-    );
-    await pop.locator('.map-popup__save-stop').click();
-    await pop.getByRole('button', { name: 'Minimize' }).click();
-    await click('.map-popup-tab[data-type="stop"]');
-    await page.locator('.stop-arrival-board').waitFor();
-  });
+  await step(
+    'UC10 Compare, select, refresh and restore stop departures',
+    async () => {
+      const pop = page.locator('#map-popup');
+      await pop.locator('.stop-arrival-board summary').click();
+      const view = pop.getByLabel('Show departures');
+      const boardRows = pop.locator('.stop-arrival-board [data-key]');
+      await boardRows.first().click();
+      await view.selectOption('selected');
+      assert.equal(
+        await boardRows.count(),
+        1,
+        'Only the chosen visit should be selected'
+      );
+      await view.selectOption('first');
+      assert.equal(
+        await boardRows.count(),
+        1,
+        'One next departure for fixture route 61C'
+      );
+      await view.selectOption('all');
+      await pop.locator('[data-clear]').click();
+      await pop.getByLabel('Time window').selectOption('15');
+      await pop.getByLabel('Time window').selectOption('0');
+      await pop.locator('[data-clock]').check();
+      const checked = fixture.events.checks;
+      await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            new URL(response.url()).pathname ===
+              '/transit/stops/7117/predictions' && response.ok()
+        ),
+        pop.locator('[data-refresh]').click()
+      ]);
+      assert.ok(
+        fixture.events.checks > checked,
+        'Refresh made no predictions request'
+      );
+      await pop.locator('.map-popup__save-stop').click();
+      await pop.getByRole('button', { name: 'Minimize' }).click();
+      await click('.map-popup-tab[data-type="stop"]');
+      await page.locator('.stop-arrival-board').waitFor();
+    }
+  );
+  await step(
+    'UC14 Share an exact platform and reopen through sign-in',
+    async () => {
+      await click('#map-popup .map-popup__share-stop');
+      const link = await page.evaluate(() => window.sharedPublicLink);
+      assert.equal(link, origin + '/#/map?stop=7117');
+      await click('#menu-icon');
+      await click('#menu-logout-btn');
+      await page.waitForURL(/\/auth/);
+      await go('/#/map?stop=7117');
+      await page.waitForURL(/\/auth#\/map\?stop=7117/);
+      await page.locator('#login-username').fill('rider');
+      await page.locator('#login-password').fill('Demo1!');
+      await click('#login-btn');
+      await page.locator('.stop-arrival-board').waitFor();
+      assert.equal(new URL(page.url()).hash, '#/map?stop=7117');
+      assert.match(
+        await page.locator('#map-popup .map-popup__title').innerText(),
+        /Forbes/
+      );
+    }
+  );
   await step('UC12 Walk to stop and exit', async () => {
-    await page.locator('#map-popup .stop-arrival-board [data-key]').first().click();
-    fixture.events.arrivalUnavailable = true;
-    await click('#map-popup [data-refresh]');
-    await page.locator('.arrival-recovery').filter({hasText:/paused/i}).waitFor();
+    await page
+      .locator('#map-popup .stop-arrival-board [data-key]')
+      .first()
+      .click();
     await click('#map-popup [data-directions-label]');
     await page
       .locator('#directions-panel .directions-panel__duration')
       .waitFor();
-    assert.match(await page.locator('.directions-panel__distance').innerText(), /210 m/);
+    assert.equal(
+      await page.locator('.directions-panel__connection').count(),
+      1
+    );
+    await click('.directions-panel__close');
+    await page.locator('#directions-panel').waitFor({ state: 'hidden' });
+    await page.locator('#transit-search-input').fill('7117');
+    await click('.search-result-stop[data-stop-id="7117"]');
+    await page
+      .locator('#map-popup .stop-arrival-board [data-key]')
+      .first()
+      .click();
+    fixture.events.arrivalUnavailable = true;
+    await click('#map-popup [data-refresh]');
+    await page
+      .locator('.arrival-recovery')
+      .filter({ hasText: /paused/i })
+      .waitFor();
+    await click('#map-popup [data-directions-label]');
+    await page
+      .locator('#directions-panel .directions-panel__duration')
+      .waitFor();
+    assert.match(
+      await page.locator('.directions-panel__distance').innerText(),
+      /210 m/
+    );
     await click('[data-walk-action="steps"]');
-    assert.match(await page.locator('#walk-details ol').innerText(), /Turn toward the platform/);
-    assert.match(await page.locator('.directions-panel__bus-list').innerText(),/ET · last known/);
-    assert.equal(await page.locator('.directions-panel__connection').count(),0);
+    assert.match(
+      await page.locator('#walk-details ol').innerText(),
+      /Turn toward the platform/
+    );
+    assert.match(
+      await page.locator('.directions-panel__bus-list').innerText(),
+      /ET · last known/
+    );
+    assert.equal(
+      await page.locator('.directions-panel__connection').count(),
+      0
+    );
     await click('[data-walk-action="compact"]');
     assert.equal(await page.locator('#walk-details').isVisible(), false);
     await click('[data-walk-action="compact"]');
@@ -311,7 +454,7 @@ try {
     const save = near.locator('.nearby-stop-save').first();
     const wasSaved = await save.getAttribute('aria-pressed');
     await save.click();
-    assert.notEqual(await save.getAttribute('aria-pressed'),wasSaved);
+    assert.notEqual(await save.getAttribute('aria-pressed'), wasSaved);
     await save.click();
     await near.locator('.nearby-stops__settings summary').click();
     await near.getByLabel('Order stops').selectOption('boarding');
@@ -319,7 +462,13 @@ try {
     await near.locator('[data-stop-id]').first().waitFor();
     await near.getByLabel('Connections').selectOption('all');
     await near.getByLabel('Order stops').selectOption('distance');
-    await near.getByRole('button', { name: 'Close nearby stops' }).click();
+    await near.locator('[data-stop-id]').first().click();
+    await page.locator('.stop-arrival-board').waitFor();
+    assert.match(
+      await page.locator('#map-popup .map-popup__title').innerText(),
+      /Forbes/
+    );
+    await page.locator('#map-popup .map-popup__close').click();
   });
   await step('UC13 Saved stops, places, history and views', async () => {
     await click('.rider-shortcuts__trigger');
@@ -334,9 +483,18 @@ try {
     await places.getByRole('tab', { name: /Views/ }).click();
     await places.getByRole('tab', { name: /Recent/ }).click();
     await places.getByLabel('Recent item type').selectOption('stop');
-    await places.getByRole('button', { name: 'Close My places' }).click();
+    await places.getByRole('tab', { name: /Saved stops/ }).click();
+    await places
+      .locator('.rider-shortcuts__primary')
+      .filter({ hasText: 'Forbes at Campus' })
+      .click();
+    await page.locator('.stop-arrival-board').waitFor();
+    assert.match(
+      await page.locator('#map-popup .map-popup__title').innerText(),
+      /Forbes/
+    );
   });
-  await step('UC09+11 Explore route and follow selected vehicle', async () => {
+  await step('UC09 Explore route stops and choose a matching bus', async () => {
     await go('/#/map?r=61C');
     await click('.route-explorer__trigger');
     const explorer = page.locator('route-explorer dialog[open]');
@@ -349,25 +507,58 @@ try {
     await explorer.getByLabel('Find bus or reported stop').fill('7117');
     await explorer.getByLabel('Recent GPS only').check();
     await explorer.getByLabel('Order buses').selectOption('near');
-    assert.match(await explorer.locator('[data-buses] li').first().innerText(), /4100[\s\S]*from start/);
+    assert.match(
+      await explorer.locator('[data-buses] li').first().innerText(),
+      /4100[\s\S]*from start/
+    );
     await explorer.locator('[data-buses] button').first().click();
+    assert.match(
+      await page.locator('#map-popup .map-popup__title').innerText(),
+      /4100/
+    );
+  });
+  await step('UC11 Inspect, minimize, restore and follow a bus', async () => {
     const busCard = page.locator('#map-popup');
-    assert.match(await busCard.locator('.map-popup__subheader').innerText(),/Inbound/);
-    assert.match(await busCard.locator('.bus-popup__route-name').innerText(),/McKeesport/);
+    assert.match(
+      await busCard.locator('.map-popup__subheader').innerText(),
+      /Inbound/
+    );
+    assert.match(
+      await busCard.locator('.bus-popup__route-name').innerText(),
+      /McKeesport/
+    );
     const next = busCard.locator('.bus-popup__next-stop');
     assert.match(await next.innerText(), /Next stop #7117.*Forbes/);
-    assert.equal(new URL(await next.getAttribute('href'),origin).hash,'#/map?stop=7117');
+    assert.equal(
+      new URL(await next.getAttribute('href'), origin).hash,
+      '#/map?stop=7117'
+    );
     await busCard.locator('summary').click();
     await busCard.getByLabel('Bus speed unit').selectOption('km/h');
-    assert.match(await busCard.locator('.bus-reported-speed').innerText(),/7\.2 km\/h/);
-    assert.match(await busCard.locator('.bus-gps-clock').innerText(),/E[DS]T/);
-    assert.match(await busCard.locator('.bus-relative-distance').innerText(),/m · straight line to reported position/);
-    await busCard.getByRole('button',{name:'Minimize'}).click();
+    assert.match(
+      await busCard.locator('.bus-reported-speed').innerText(),
+      /7\.2 km\/h/
+    );
+    assert.match(await busCard.locator('.bus-gps-clock').innerText(), /E[DS]T/);
+    assert.match(
+      await busCard.locator('.bus-relative-distance').innerText(),
+      /m · straight line to reported position/
+    );
+    await busCard.getByRole('button', { name: 'Minimize' }).click();
     await click('.map-popup-tab[data-type="bus"]');
-    assert.equal(await busCard.getByLabel('Bus speed unit').inputValue(),'km/h');
+    assert.equal(
+      await busCard.getByLabel('Bus speed unit').inputValue(),
+      'km/h'
+    );
     await busCard.getByLabel('Bus speed unit').selectOption('mph');
-    assert.match(await busCard.locator('.bus-reported-speed').innerText(),/4\.5 mph/);
-    assert.match(await busCard.locator('.bus-popup__route-link').getAttribute('href'),/r=61C/);
+    assert.match(
+      await busCard.locator('.bus-reported-speed').innerText(),
+      /4\.5 mph/
+    );
+    assert.match(
+      await busCard.locator('.bus-popup__route-link').getAttribute('href'),
+      /r=61C/
+    );
     await busCard.locator('summary').click();
     const follow = page.locator('.map-popup__action-btn--follow');
     await follow.click();
@@ -378,9 +569,15 @@ try {
     'UC18 Review, edit and send a bus report to isolated endpoint',
     async () => {
       await click('#layers-btn');
-      await page.locator('.map-appearance[open]').getByRole('button', {name:'Focus on map'}).click();
+      await page
+        .locator('.map-appearance[open]')
+        .getByRole('button', { name: 'Focus on map' })
+        .click();
       await click('.map-popup__action-btn--report');
-      assert.equal(await page.locator('#transit-search-input').isVisible(), true);
+      assert.equal(
+        await page.locator('#transit-search-input').isVisible(),
+        true
+      );
       await page.getByRole('button', { name: 'Many seats open' }).click();
       await page
         .getByLabel('Report section')
@@ -425,16 +622,23 @@ try {
     const windowChoice = page.locator('#notif-window');
     const topicChoice = page.locator('#notif-topic');
     await windowChoice.selectOption('upcoming');
-    await page.getByText('Weekend detour',{exact:true}).waitFor();
-    assert.equal(await page.locator('.notif-card').count(),1);
+    await page.getByText('Weekend detour', { exact: true }).waitFor();
+    assert.equal(await page.locator('.notif-card').count(), 1);
     await windowChoice.selectOption('');
     await topicChoice.selectOption('prioritySeating');
-    await page.getByText('Priority seats available.',{exact:true}).waitFor();
+    await page
+      .getByText('Priority seats available.', { exact: true })
+      .waitFor();
     await topicChoice.selectOption('effect:STOP_MOVED');
     await page.locator('#notif-search-input').fill('7117');
-    await page.getByText('Notice window open',{exact:true}).waitFor();
-    const stopLink=page.getByRole('link',{name:'View affected stop 7117 on map'});
-    assert.equal(new URL(await stopLink.getAttribute('href'),origin).hash,'#/map?stop=7117');
+    await page.getByText('Notice window open', { exact: true }).waitFor();
+    const stopLink = page.getByRole('link', {
+      name: 'View affected stop 7117 on map'
+    });
+    assert.equal(
+      new URL(await stopLink.getAttribute('href'), origin).hash,
+      '#/map?stop=7117'
+    );
     await click('.notif-window summary');
     await page.getByText(/Pittsburgh time\. These are the agency/).waitFor();
     await page.locator('#notif-route').selectOption('61C');
@@ -447,13 +651,26 @@ try {
     await click('#notif-undo');
     await click('#notif-reset');
   });
-  await step('UC19 Account edit and cancel', async () => {
-    await go('/account');
-    await click('#edit-btn');
-    await page.locator('#field-password').fill('NewDemo2!');
-    await click('#cancel-btn');
-    assert.equal(await page.locator('#field-password').isVisible(), false);
-  });
+  await step(
+    'UC19 Edit and persist profile then cancel a separate draft',
+    async () => {
+      await go('/account');
+      await click('#edit-btn');
+      await page.locator('#field-email').fill('rider.updated@andrew.cmu.edu');
+      await page.locator('#field-email').blur();
+      await click('#save-btn');
+      await page.getByText('Changes saved!', { exact: true }).waitFor();
+      assert.equal(fixture.events.accountWrites.length, 1);
+      await page.reload();
+      await page
+        .getByText('rider.updated@andrew.cmu.edu', { exact: true })
+        .waitFor();
+      await click('#edit-btn');
+      await page.locator('#field-password').fill('NewDemo2!');
+      await click('#cancel-btn');
+      assert.equal(await page.locator('#field-password').isVisible(), false);
+    }
+  );
   await step('UC02 Sign out', async () => {
     await click('#menu-icon');
     await click('#menu-logout-btn');
@@ -464,18 +681,28 @@ try {
     );
   });
   assert.deepEqual(failures, [], 'Uncaught browser exceptions');
-  console.log(
-    JSON.stringify({
-      engine: desktop ? 'desktop Chrome' : 'iPhone 15 WebKit',
-      assets: productionAssets ? 'published' : 'built',
-      mapPageDigest: createHash('sha256')
-        .update(assets.get('map.html'))
-        .digest('hex'),
-      steps: result.length,
-      reported: fixture.events.reports.length,
-      abortedPolls
-    })
+  const covered = new Set(
+    result.filter((r) => r.status === 'passed').map((r) => r.flowId)
   );
+  for (let n = 1; n <= 19; n++)
+    assert.ok(
+      covered.has('UC' + String(n).padStart(2, '0') + '-M'),
+      'Missing interactive primary UC' + n
+    );
+  await recordEvidence({
+    engine: desktop ? 'desktop Chrome' : 'iPhone 15 WebKit',
+    assets: productionAssets ? 'published' : 'built',
+    mapPageDigest: createHash('sha256')
+      .update(assets.get('map.html'))
+      .digest('hex'),
+    steps: result.length,
+    flows: result,
+    status: 'passed',
+    scope:
+      'Real client UI in browser; maps, GPS, feed and account writes use isolated controlled services. Native iPhone hardware and OS handoffs are not exercised.',
+    reported: fixture.events.reports.length,
+    abortedPolls
+  });
 } catch (error) {
   console.error(
     'Completed',
@@ -485,6 +712,12 @@ try {
     failures
   );
   process.exitCode = 1;
+  await recordEvidence({
+    status: 'failed',
+    engine: desktop ? 'desktop Chrome' : 'iPhone 15 WebKit',
+    flows: result,
+    error: error.message
+  });
 } finally {
   await browser.close();
   await socket.close();
