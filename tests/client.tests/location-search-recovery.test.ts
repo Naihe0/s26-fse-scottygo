@@ -3,6 +3,7 @@
 import '../../client/scripts/components/location-search';
 import type { ILocationSearchElement } from '../../client/scripts/components/location-search';
 import { MapStateManager } from '../../client/scripts/state/map-state';
+import { toggleSavedStop } from '../../client/scripts/utils/rider-shortcuts';
 
 const key = 'scottygo:planned-location:v2:user%3Alocation-search-rider';
 
@@ -36,6 +37,28 @@ function mount() {
   search.open();
   return { search, reset, selected };
 }
+
+test('using a saved platform provides a walking origin without granting GPS', () => {
+  toggleSavedStop({
+    stopId: '7117',
+    stopName: 'Forbes & Morewood',
+    lat: 40.44,
+    lon: -79.94,
+    routes: ['61C']
+  });
+  const { search, selected } = mount();
+  const select = search.querySelector<HTMLSelectElement>('[data-start-stop]')!;
+  expect(select.selectedOptions[0].textContent).toContain('#7117');
+  search.querySelector<HTMLButtonElement>('[data-use-stop]')!.click();
+  const state = MapStateManager.getInstance();
+  expect(selected).toHaveBeenCalledTimes(1);
+  expect(state.getEffectiveLocation()).toEqual({ lat: 40.44, lng: -79.94 });
+  expect(state.getState().gpsPermissionGranted).toBe(false);
+  search.open();
+  expect(search.querySelector('[data-current-start]')!.textContent).toContain(
+    'Forbes & Morewood'
+  );
+});
 
 test('Current Location requests GPS recovery instead of persisting the campus fallback', () => {
   const state = MapStateManager.getInstance();

@@ -436,6 +436,9 @@ export class TransitSearch extends HTMLElement {
   }
 
   private attachSearchEvents(): void {
+    this.searchInput?.addEventListener('click', () => {
+      if (!this.searchInput?.value.trim()) this.dispatchEvent(new CustomEvent('searchFocusEmpty', {bubbles:true}));
+    });
     this.searchInput?.addEventListener('input', () => this.handleInput());
     this.searchInput?.addEventListener('compositionstart', () => {
       this.composing = true;

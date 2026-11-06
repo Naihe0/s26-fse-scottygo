@@ -1,14 +1,15 @@
 /**
  * Location Search Component
- * Provides a dropdown with "Current Location" and "Set a different location"
- * options. When "Set a different location" is tapped, enables Google Places
- * Autocomplete for arbitrary location search.
+ * Choose between GPS, a searched place, the map center, campus or a saved
+ * platform. Planned locations never grant GPS privileges.
  *
  * Events emitted:
  * - locationSelected: { lat, lng, label } — user selected a planned location
  * - locationReset: {} — user chose "Current Location" (reset to GPS)
  */
 import { MapStateManager } from '../state/map-state';
+import { CAMPUS_CENTER } from '../utils/campus';
+import { getRiderShortcuts } from '../utils/rider-shortcuts';
 
 export interface ILocationSearchElement extends HTMLElement {
   /** Provide the Google Maps map instance for Places Autocomplete binding */
@@ -29,11 +30,21 @@ export class LocationSearch
   private autocomplete: google.maps.places.Autocomplete | null = null;
   private map: google.maps.Map | null = null;
   private stateManager = MapStateManager.getInstance();
+  private unsubscribe?: () => void;
+  private readonly outside = (e: MouseEvent) => {
+    const target = e.target as Node;
+    if (
+      !this.contains(target) &&
+      !document.querySelector('transit-search')?.contains(target)
+    )
+      this.close();
+  };
 
   connectedCallback(): void {
     this.innerHTML = `
       <div class="location-search-dropdown" hidden>
         <div class="location-search-default">
+          <header class="start-picker__header"><div><strong tabindex="-1" data-start-heading>Starting point</strong><p data-current-start></p></div><button type="button" data-close-start aria-label="Close starting points">×</button></header>
           <div class="location-search-item location-search-current" role="option" tabindex="0">
             <span class="material-icons-outlined location-search-icon">my_location</span>
             <div class="location-search-item-content">
@@ -47,6 +58,8 @@ export class LocationSearch
             <span class="location-search-label">Set a different location</span>
             <span class="material-icons-outlined location-search-arrow">chevron_right</span>
           </div>
+          <div class="start-picker__quick"><button type="button" data-campus>Use CMU campus</button><button type="button" data-center>Use map center</button></div>
+          <div class="start-picker__stops" hidden><label>Start at a saved stop<select data-start-stop></select></label><button type="button" data-use-stop>Use stop</button></div>
         </div>
         <div class="location-search-places" hidden>
           <div class="location-search-places-header">
@@ -68,14 +81,29 @@ export class LocationSearch
     this.dropdown = this.querySelector('.location-search-dropdown');
     this.searchContainer = this.querySelector('.location-search-places');
     this.placesInput = this.querySelector('.location-search-places-input');
+    this.querySelector('[data-campus]')!.addEventListener('click', () =>
+      this.choose(CAMPUS_CENTER.lat, CAMPUS_CENTER.lng, 'CMU campus')
+    );
+    this.querySelector('[data-center]')!.addEventListener('click', () => {
+      const center = this.map?.getCenter?.();
+      if (center) this.choose(center.lat(), center.lng(), 'Map center');
+    });
+    this.querySelector('[data-use-stop]')!.addEventListener('click', () => {
+      const id =
+        this.querySelector<HTMLSelectElement>('[data-start-stop]')!.value;
+      const stop = getRiderShortcuts().stops.find((s) => s.stopId === id);
+      if (stop) this.choose(stop.lat, stop.lon, stop.nickname || stop.stopName);
+    });
+    this.querySelector('[data-close-start]')!.addEventListener('click', () =>
+      this.dismissPicker()
+    );
+    this.addEventListener('keydown', this.onEscape);
     this.querySelectorAll<HTMLElement>('.location-search-item').forEach(
       (option) => {
         option.addEventListener('keydown', (event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
             option.click();
-          } else if (event.key === 'Escape') {
-            this.close();
           }
         });
       }
@@ -106,16 +134,10 @@ export class LocationSearch
     );
 
     // Close on outside click (treat transit-search as "inside" since it triggers us)
-    document.addEventListener('click', (e) => {
-      const target = e.target as Node;
-      const transitSearch = document.querySelector('transit-search');
-      if (!this.contains(target) && !transitSearch?.contains(target)) {
-        this.close();
-      }
-    });
+    document.addEventListener('click', this.outside);
 
     // Update sublabel when state changes
-    this.stateManager.subscribe((state) => {
+    this.unsubscribe = this.stateManager.subscribe((state) => {
       const sublabel = this.querySelector('#location-search-current-sublabel');
       if (sublabel) {
         if (state.gpsPermissionGranted && state.currentLocation) {
@@ -137,7 +159,74 @@ export class LocationSearch
       this.dropdown.hidden = false;
       this.hidePlacesSearch();
       this.updateCurrentLocationDisplay();
+      const state = this.stateManager.getState();
+      this.querySelector('[data-current-start]')!.textContent =
+        this.stateManager.hasCustomPlannedLocation()
+          ? 'Planning from ' + state.plannedLocationLabel
+          : state.gpsPermissionGranted && state.currentLocation
+            ? 'Planning from your GPS location'
+            : 'Browsing the campus area';
+      this.querySelector<HTMLButtonElement>('[data-center]')!.disabled =
+        !this.map?.getCenter?.();
+      const stops = getRiderShortcuts().stops;
+      const select =
+        this.querySelector<HTMLSelectElement>('[data-start-stop]')!;
+      select.replaceChildren(
+        ...stops.map(
+          (stop) =>
+            new Option(
+              (stop.nickname || stop.stopName) + ' · #' + stop.stopId,
+              stop.stopId
+            )
+        )
+      );
+      this.querySelector<HTMLElement>('.start-picker__stops')!.hidden =
+        !stops.length;
     }
+  }
+
+  disconnectedCallback(): void {
+    this.unsubscribe?.();
+    document.removeEventListener('click', this.outside);
+    this.removeEventListener('keydown', this.onEscape);
+    this.autocomplete?.unbindAll?.();
+    if (this.autocomplete && typeof google !== 'undefined')
+      google.maps.event.clearInstanceListeners?.(this.autocomplete);
+    this.autocomplete = null;
+  }
+
+  private readonly onEscape = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape' || e.isComposing || this.dropdown?.hidden) return;
+    e.stopPropagation();
+    if (this.searchContainer && !this.searchContainer.hidden) {
+      this.hidePlacesSearch();
+      this.querySelector<HTMLElement>('.location-search-custom')?.focus();
+    } else this.dismissPicker();
+  };
+
+  private dismissPicker(): void {
+    this.close();
+    document
+      .querySelector<HTMLElement>('#layers-btn')
+      ?.focus({ preventScroll: true });
+  }
+
+  private choose(lat: number, lng: number, label: string): void {
+    if (
+      !Number.isFinite(lat) ||
+      Math.abs(lat) > 90 ||
+      !Number.isFinite(lng) ||
+      Math.abs(lng) > 180
+    )
+      return;
+    this.stateManager.setPlannedLocation({ lat, lng }, label);
+    this.close();
+    this.dispatchEvent(
+      new CustomEvent('locationSelected', {
+        detail: { lat, lng, label },
+        bubbles: true
+      })
+    );
   }
 
   close(): void {
@@ -216,16 +305,7 @@ export class LocationSearch
       const label =
         place.name || place.formatted_address || 'Selected Location';
 
-      this.stateManager.setPlannedLocation({ lat, lng }, label);
-
-      this.dispatchEvent(
-        new CustomEvent('locationSelected', {
-          detail: { lat, lng, label },
-          bubbles: true
-        })
-      );
-
-      this.close();
+      this.choose(lat, lng, label);
     });
   }
 }

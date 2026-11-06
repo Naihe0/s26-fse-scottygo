@@ -165,6 +165,12 @@ try {
   await step('UC04 GPS and alternate planning origin', async () => {
     await click('#recenter-btn');
     await click('#transit-search-input');
+    await click('[data-campus]');
+    await click('#transit-search-input');
+    assert.match(await page.locator('[data-current-start]').innerText(), /CMU campus/);
+    await click('[data-center]');
+    await click('#transit-search-input');
+    assert.match(await page.locator('[data-current-start]').innerText(), /Map center/);
     await click('.location-search-custom');
     const place = page.getByRole('textbox', { name: 'Search for a location' });
     await place.fill('Campus Library');

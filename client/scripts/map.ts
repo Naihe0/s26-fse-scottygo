@@ -72,6 +72,7 @@ import { RouteRenderer } from './renderers/route-renderer';
 import { VehicleTracker } from './trackers/vehicle-tracker';
 import { getRouteTitle } from './utils/route-display';
 import { focusNearby } from './utils/map-focus';
+import { CAMPUS_CENTER as CMU_CAMPUS_DEFAULT } from './utils/campus';
 import {
   GeolocationController,
   type LocationFailure
@@ -121,9 +122,6 @@ function cancelSharedStop(): void {
 
 // Store user/initial location for recenter functionality
 let userLocation: { lat: number; lng: number } | null = null;
-
-/** CMU Pittsburgh campus center — fallback when GPS is denied */
-const CMU_CAMPUS_DEFAULT = { lat: 40.4433, lng: -79.9436 };
 
 /** Downtown Pittsburgh, shown when the rider is outside the service area. */
 const DOWNTOWN_PITTSBURGH = { lat: 40.4406, lng: -80.0112 };
