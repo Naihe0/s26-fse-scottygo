@@ -454,7 +454,11 @@ export default class TransitController extends Controller {
     const routeIdFilter =
       typeof req.query.routeId === 'string' ? req.query.routeId : undefined;
     try {
-      const predictions = TRIPSHOT_STOP_ID.test(stopId)
+      const shuttleStop = TRIPSHOT_STOP_ID.test(stopId);
+      const feed = shuttleStop ? tripshotLiveStatusService : tripUpdatesService;
+      const healthy = feed.isHealthy();
+      const lastFetched = feed.getLastFetched();
+      const predictions = shuttleStop
         ? tripshotService.getPredictions(stopId, routeIdFilter)
         : tripUpdatesService
             .getPredictions(stopId)
@@ -465,7 +469,10 @@ export default class TransitController extends Controller {
           this.success(
             'PredictionsRetrieved',
             predictions,
-            `Found ${predictions.length} predictions for stop ${stopId}`
+            `Found ${predictions.length} predictions for stop ${stopId}`,
+            { provider: shuttleStop ? 'CMU' : 'PRT',
+              state: healthy ? 'ready' : !lastFetched && !feed.getConsecutiveFailures() ? 'warming' : 'unavailable',
+              lastFetched: lastFetched?.toISOString() ?? null }
           )
         );
     } catch (error) {

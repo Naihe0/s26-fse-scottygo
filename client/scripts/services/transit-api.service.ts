@@ -46,6 +46,11 @@ export interface IVehicleResult {
   };
 }
 
+export interface IArrivalSnapshot {
+  rows: IPrediction[];
+  state: 'ready' | 'warming' | 'unavailable';
+}
+
 export interface INearbyStopsOptions {
   radiusMeters?: number;
   routeId?: string;
@@ -181,13 +186,7 @@ export class TransitApiService {
     stopId: string,
     routeId?: string
   ): Promise<IPrediction[]> {
-    return (
-      (await this.getPayload<IPrediction[]>(
-        `/transit/stops/${path(stopId)}/predictions`,
-        'PredictionsRetrieved',
-        { params: routeId ? { routeId } : undefined }
-      )) ?? []
-    );
+    return (await this.getPredictionsResult(stopId, routeId)) ?? [];
   }
 
   async getNearbyStops(
@@ -214,16 +213,26 @@ export class TransitApiService {
     routeId?: string,
     signal?: AbortSignal
   ): Promise<IPrediction[] | null> {
-    const predictions = await this.getPayload<IPrediction[]>(
-      `/transit/stops/${path(stopId)}/predictions`,
-      'PredictionsRetrieved',
-      {
-        params: routeId ? { routeId } : undefined,
-        signal,
-        timeout: REQUEST_TIMEOUT_MS
-      }
-    );
-    return Array.isArray(predictions) ? predictions : null;
+    const snapshot = await this.getArrivalSnapshot(stopId, routeId, signal);
+    return snapshot?.state === 'ready' ? snapshot.rows : null;
+  }
+
+  async getArrivalSnapshot(
+    stopId: string, routeId?: string, signal?: AbortSignal
+  ): Promise<IArrivalSnapshot | null> {
+    try {
+      const res = await axios.get(`/transit/stops/${path(stopId)}/predictions`, {
+        params: routeId ? { routeId } : undefined, signal, timeout: REQUEST_TIMEOUT_MS,
+        headers: authHeaders(), validateStatus: () => true
+      });
+      const rows = payloadOf<IPrediction[]>(res, 'PredictionsRetrieved');
+      if (!Array.isArray(rows)) return null;
+      const state = res.data.metadata?.state;
+      return { rows, state: state === 'warming' || state === 'unavailable' ? state : 'ready' };
+    } catch (error) {
+      if (!signal?.aborted) console.error('[TransitApiService] getArrivalSnapshot error:', error);
+      return null;
+    }
   }
 
   /** Detours that have geometry for a route; empty on failure. */

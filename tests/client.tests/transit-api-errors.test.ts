@@ -39,6 +39,17 @@ describe('Transit queries distinguish no service from a failed request', () => {
     });
   });
 
+  test('a paused stop snapshot keeps cached rows for the card and suppresses live nearby comparisons', async () => {
+    const rows = [{ stopId: '7117', routeId: '61C', predictedArrivalTime: 1 }];
+    http.get.mockResolvedValue({ status: 200, data: {
+      name: 'PredictionsRetrieved', payload: rows, metadata: { state: 'unavailable' }
+    } });
+    expect(await transitApiService.getArrivalSnapshot('7117')).toEqual({ rows, state: 'unavailable' });
+    expect(await transitApiService.getPredictionsResult('7117')).toBeNull();
+    http.get.mockResolvedValue({status: 200, data: {name:'PredictionsRetrieved', payload:[]}});
+    expect(await transitApiService.getPredictionsResult('7117')).toEqual([]);
+  });
+
   test.each(['stops', 'date/time'] as const)(
     '%s preserves successful empty data',
     async (kind) => {

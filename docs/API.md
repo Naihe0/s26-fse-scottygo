@@ -92,7 +92,7 @@ Filter links use `/#/map?r=61C&s=PRT&dir=IB`; supported optional fields are rout
 
 Copy-stop links contain only `stop`; Copy-view links contain only filters. On load/history restoration, the browser resolves the stop through authenticated `GET /search?q=<stopId>`, validates an exact returned ID and its coordinates, then opens the current arrival card. Resolution has a 15-second browser deadline, cancellation, session ownership and a retry path. No new stop-detail REST endpoint is introduced.
 
-Saved stops (including personal nicknames), named planning places, recent selections, read marks and filter presets are browser-local records, separate from `/notifications/subscriptions`. They have no synchronization or CRUD API. Route exploration and the nearby walking comparison reuse the existing route, stop, vehicle and prediction endpoints. A stop card treats a successful empty prediction list as no upcoming arrivals; a failed request keeps the last known arrivals on screen.
+Saved stops (including personal nicknames), named planning places, recent selections, read marks and filter presets are browser-local records, separate from `/notifications/subscriptions`. They have no synchronization or CRUD API. Route exploration and the nearby walking comparison reuse the existing route, stop, vehicle and prediction endpoints. Stop cards show **No upcoming arrivals** only for a ready feed. During startup they show a waiting message. If updates pause, the card keeps last-known arrivals in Pittsburgh clock time and offers Retry. Nearby previews also distinguish unavailable predictions from an empty stop.
 
 ## Transit
 
@@ -108,7 +108,7 @@ Transit and diagnostic endpoints are currently public. They read cached provider
 | `GET /transit/vehicles/:routeId` | Route ID | `VehiclesLocated`: measured `IVehicle[]`, with top-level `feed` health; an inactive/unknown route can return an empty list. |
 | `GET /transit/stops/:routeId` | Required `dir=INBOUND` or `OUTBOUND`, case-normalized | `StopsRetrieved`: `IStop[]`. PRT stops resolved from the loaded GTFS index include the IDs of routes serving that exact stop in `routes`. Clients accept omitted connection data. |
 | `GET /transit/stops/nearbystops` | See nearby-stop parameters below | `NearbyStopsRetrieved`: `INearbyStopsPayload`. |
-| `GET /transit/stops/:stopId/predictions` | Optional exact `routeId` filter | `PredictionsRetrieved`: `IPrediction[]`. |
+| `GET /transit/stops/:stopId/predictions` | Optional exact `routeId` filter | `PredictionsRetrieved`: `IPrediction[]`. The same response includes `metadata.provider` (PRT or CMU), `metadata.state` (ready, warming or unavailable) and nullable `metadata.lastFetched` (ISO timestamp). During an outage, the array can contain cached estimates. |
 | `GET /transit/detours/:routeId` | Route ID | `DetoursRetrieved`: `IDetour[]`. |
 | `GET /transit/detours/:routeId/geometry` | Route ID | `DetoursRetrieved`: detours having geometry. |
 

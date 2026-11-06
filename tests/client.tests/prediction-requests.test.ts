@@ -6,7 +6,10 @@ const mockPredictions = jest.fn();
 const mockStartDirections = jest.fn().mockResolvedValue(false);
 jest.mock('../../client/scripts/services/transit-api.service', () => ({
   transitApiService: {
-    getPredictionsResult: (...args: unknown[]) => mockPredictions(...args)
+    getArrivalSnapshot: async (...args: unknown[]) => {
+      const result = await mockPredictions(...args);
+      return Array.isArray(result) ? { rows: result, state: 'ready' } : result;
+    }
   }
 }));
 jest.mock('../../client/scripts/renderers/route-renderer', () => ({
@@ -65,6 +68,28 @@ describe('prediction refresh contents', () => {
     await jest.advanceTimersByTimeAsync(30000);
     expect(document.querySelectorAll('.map-popup__arrival')).toHaveLength(2);
     expect(document.querySelector('.map-popup__empty')).toBeNull();
+  });
+
+  test('the first successful prediction feed distinguishes warmup, paused cached arrivals and healthy empty service', async () => {
+    mockPredictions.mockResolvedValueOnce({state:'warming', rows:[]})
+      .mockResolvedValueOnce({state:'ready', rows:[first]})
+      .mockResolvedValueOnce({state:'unavailable', rows:[]})
+      .mockResolvedValueOnce({state:'ready', rows:[]});
+    await controller.handleStopClick(stop);
+    const notice = document.querySelector<HTMLElement>('.arrival-recovery')!;
+    expect(notice.textContent).toContain('Waiting for the first');
+    expect(document.querySelector<HTMLElement>('.map-popup__empty')!.hidden).toBe(true);
+    const retry = notice.querySelector('button')!;
+    retry.click();
+    await jest.advanceTimersByTimeAsync(1);
+    expect(notice.hidden).toBe(true);
+    await jest.advanceTimersByTimeAsync(30_000);
+    expect(notice.textContent).toContain('last known');
+    expect(document.querySelector('time')!.textContent).toContain(' ET');
+    retry.click();
+    await jest.advanceTimersByTimeAsync(1);
+    expect(notice.hidden).toBe(true);
+    expect(document.querySelector<HTMLElement>('.map-popup__empty')!.hidden).toBe(false);
   });
 
   test('failed refresh keeps the selected bus and displays a last-known time until reconnection', async () => {
@@ -272,7 +297,7 @@ describe('stop prediction request ownership', () => {
     finishFirst([]);
     await firstRequest;
     expect(show).toHaveBeenCalledTimes(1);
-    expect(show).toHaveBeenCalledWith(second, []);
+    expect(show).toHaveBeenCalledWith(second, {rows: [], state: 'ready'});
   });
 
   test('clearing the map cancels a stop popup that is still loading', async () => {

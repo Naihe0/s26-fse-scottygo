@@ -17,6 +17,7 @@ import trueTimeService from '../../../server/services/truetime.service';
 import vehiclePositionsService from '../../../server/services/vehicle-positions.service';
 import tripshotLiveStatusService from '../../../server/services/tripshot-livestatus.service';
 import tripshotService from '../../../server/services/tripshot.service';
+import tripUpdatesService from '../../../server/services/trip-updates.service';
 import {
   IDetour,
   IDetourGeometry,
@@ -47,6 +48,29 @@ describe('TUC2 – Track Bus in Real-Time unit tests', () => {
 
   beforeEach(() => {
     jest.restoreAllMocks();
+  });
+
+  test.each([
+    ['PRT', '7117', tripUpdatesService, tripshotLiveStatusService],
+    ['CMU', '11111111-0000-0000-0000-111111111111', tripshotLiveStatusService, tripUpdatesService]
+  ] as const)('%s arrivals distinguish warming, unavailable and healthy empty independently of the other feed', (provider, stopId, feed, other) => {
+    const healthy = jest.spyOn(feed, 'isHealthy').mockReturnValue(false);
+    const otherHealth = jest.spyOn(other, 'isHealthy').mockReturnValue(true);
+    jest.spyOn(feed, 'getLastFetched').mockReturnValue(null);
+    const failures = jest.spyOn(feed, 'getConsecutiveFailures').mockReturnValue(0);
+    const req = { params: { stopId }, query: {} } as unknown as Request;
+    const res = createMockResponse();
+    const read = () => {
+      controller['getPredictions'](req, res as Response);
+      return res.json.mock.lastCall?.[0];
+    };
+    expect(read()).toMatchObject({payload: [], metadata: {provider, state: 'warming', lastFetched: null}});
+    failures.mockReturnValue(1);
+    expect(read().metadata.state).toBe('unavailable');
+    healthy.mockReturnValue(true);
+    otherHealth.mockReturnValue(false);
+    expect(read()).toMatchObject({payload: [], metadata: {provider, state: 'ready'}});
+    expect(otherHealth).not.toHaveBeenCalled();
   });
 
   // ── filterDetoursByRouteIds ─────────────────────────────────────────

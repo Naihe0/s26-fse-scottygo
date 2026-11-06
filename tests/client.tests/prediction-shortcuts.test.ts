@@ -14,7 +14,10 @@ import type { IStop, IPrediction } from '../../common/transit.interface';
 const mockPredictions = jest.fn();
 jest.mock('../../client/scripts/services/transit-api.service', () => ({
   transitApiService: {
-    getPredictionsResult: (...args: unknown[]) => mockPredictions(...args)
+    getArrivalSnapshot: async (...args: unknown[]) => {
+      const result = await mockPredictions(...args);
+      return Array.isArray(result) ? { rows: result, state: 'ready' } : result;
+    }
   }
 }));
 jest.mock('../../client/scripts/renderers/route-renderer', () => ({

@@ -24,12 +24,13 @@ interface StopPopupContext {
   stop: IStop;
   board: StopArrivalBoard;
   unavailable: boolean;
+  warming: boolean;
 }
 import { MapStateManager } from '../state/map-state';
 import { RouteRenderer } from '../renderers/route-renderer';
 import { VehicleTracker } from '../trackers/vehicle-tracker';
 import { DirectionsController } from './directions-controller';
-import { transitApiService } from '../services/transit-api.service';
+import { transitApiService, type IArrivalSnapshot } from '../services/transit-api.service';
 import { copyStopLink } from '../utils/stop-link';
 import {
   isStopSaved,
@@ -200,11 +201,11 @@ export class PredictionController {
     stopId: string,
     routeId?: string,
     signal?: AbortSignal
-  ): Promise<IPrediction[] | null> {
-    return transitApiService.getPredictionsResult(stopId, routeId, signal);
+  ): Promise<IArrivalSnapshot | null> {
+    return transitApiService.getArrivalSnapshot(stopId, routeId, signal);
   }
 
-  private showStopPopup(stop: IStop, predictions: IPrediction[] | null): void {
+  private showStopPopup(stop: IStop, snapshot: IArrivalSnapshot | null): void {
     prepareForNewPopup('stop');
     this.stopPolling();
     this.minimisedStop = null;
@@ -212,11 +213,12 @@ export class PredictionController {
     const ctx: StopPopupContext = {
       stop,
       board: new StopArrivalBoard(
-        predictions ?? [],
-        predictions !== null,
+        snapshot?.rows ?? [],
+        snapshot?.state === 'ready',
         this.getRouteColor
       ),
-      unavailable: predictions === null
+      unavailable: snapshot?.state !== 'ready',
+      warming: snapshot?.state === 'warming'
     };
 
     const { popup, subheader } = createMapPopup(
@@ -380,7 +382,7 @@ export class PredictionController {
       notice.hidden = !ctx.unavailable;
       const label = ctx.board.hasPredictions
         ? 'Updates paused. Showing last known arrival times.'
-        : 'Arrival times are unavailable.';
+        : ctx.warming ? 'Waiting for the first arrival update.' : 'Arrival times are unavailable.';
       const status = notice.querySelector('span')!;
       if (status.textContent !== label) status.textContent = label;
       refreshButton.hidden = ctx.unavailable;
@@ -406,6 +408,7 @@ export class PredictionController {
       if (version !== this.requestVersion || fetching || document.hidden)
         return;
       if (navigator.onLine === false) {
+        ctx.warming = false;
         ctx.unavailable = true;
         updateNotice();
         return;
@@ -423,8 +426,9 @@ export class PredictionController {
         );
         if (version !== this.requestVersion || !popup.isConnected) return;
         const retryFocused = document.activeElement === retry;
-        ctx.unavailable = fresh === null || !navigator.onLine;
-        if (!ctx.unavailable && fresh) ctx.board.refresh(fresh);
+        ctx.unavailable = fresh?.state !== 'ready' || !navigator.onLine;
+        ctx.warming = navigator.onLine && fresh?.state === 'warming';
+        if (!ctx.unavailable && fresh) ctx.board.refresh(fresh.rows);
         updateNotice();
         if (retryFocused && !ctx.unavailable)
           popup
@@ -446,6 +450,7 @@ export class PredictionController {
     window.addEventListener(
       'offline',
       () => {
+        ctx.warming = false;
         ctx.unavailable = true;
         updateNotice();
       },
