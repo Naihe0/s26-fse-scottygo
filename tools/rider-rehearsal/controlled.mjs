@@ -147,7 +147,8 @@ try {
       '--test',
       '--test-reporter=tap',
       'tests/navigation.test.mjs',
-      'tests/content-recovery.test.mjs'
+      'tests/content-recovery.test.mjs',
+      'tests/host-chrome.test.mjs'
     ],
     join(root, 'ios/mobile')
   );
