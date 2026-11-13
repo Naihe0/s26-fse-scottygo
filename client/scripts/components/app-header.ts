@@ -1,6 +1,8 @@
 /**
  * App Header Component
  * Renders the top navigation bar with optional back button and hamburger menu.
+ * Signed-in pages also get the four primary sections: inline links in a wide
+ * header, or a bottom tab bar on phones (styled in shared.css).
  *
  * Attributes:
  *   back  - Return to the previous ScottyGo page or offer a link to the map.
@@ -21,6 +23,37 @@ function lastMapPath(): string {
   } catch {
     return '/';
   }
+}
+
+const sectionIcons = {
+  map: '<path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6zM9 3v15M15 6v15"/>',
+  saved: '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
+  alerts:
+    '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
+  account:
+    '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'
+};
+
+const sections = [
+  { path: '/', label: 'Map', icon: sectionIcons.map },
+  { path: '/subscriptions', label: 'Saved routes', icon: sectionIcons.saved },
+  { path: '/notifications', label: 'Alerts', icon: sectionIcons.alerts },
+  { path: '/account', label: 'Account', icon: sectionIcons.account }
+];
+
+/** One tap to each signed-in section. The map link reopens the last view. */
+function primaryNavigation(isCurrent: (path: string) => boolean): string {
+  const links = sections
+    .map(({ path, label, icon }) => {
+      const mapReturn = path === '/' ? ' data-map-return' : '';
+      const current = isCurrent(path) ? ' aria-current="page"' : '';
+      return `<a href="${path}"${mapReturn} class="app-primary-nav__item"${current}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg>
+          <span>${label}</span>
+        </a>`;
+    })
+    .join('');
+  return `<nav class="app-primary-nav" aria-label="ScottyGo sections">${links}</nav>`;
 }
 
 function hasPreviousAppPage(): boolean {
@@ -122,11 +155,13 @@ export class AppHeader extends HTMLElement {
       '/auth': 'Sign in'
     };
     const pageLabel = pageLabels[page] || 'Map';
+    const isCurrent = (path: string): boolean =>
+      page === path || (path === '/' && page === '/map');
     const current = (path: string): string =>
-      page === path || (path === '/' && page === '/map')
-        ? ' aria-current="page"'
-        : '';
+      isCurrent(path) ? ' aria-current="page"' : '';
     const signedIn = Boolean(getToken());
+    const sectionNav =
+      signedIn && page !== '/auth' ? primaryNavigation(isCurrent) : '';
     const showBack = this.hasAttribute('back') && (page !== '/auth' || signedIn);
     const onMap = page === '/' || page === '/map';
     const backArrow = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -150,6 +185,7 @@ export class AppHeader extends HTMLElement {
         <span>ScottyGo</span>
       </a>
       <span class="app-page-context">${pageLabel}</span>
+      ${sectionNav}
       <button type="button" class="menu-icon" id="menu-icon" aria-label="Open navigation menu" aria-expanded="false" aria-controls="dropdown-menu">
         <span aria-hidden="true"></span>
         <span aria-hidden="true"></span>
@@ -227,6 +263,23 @@ export class AppHeader extends HTMLElement {
       this.refreshMapLinks();
       window.addEventListener('pageshow', this.refreshMapLinks);
     }
+
+    // Tapping the open section returns to its top instead of reloading the
+    // page, so an open map view, draft or filter is never discarded.
+    this.querySelector('.app-primary-nav')?.addEventListener(
+      'click',
+      (event) => {
+        const link = (event.target as Element).closest('a');
+        if (link?.getAttribute('aria-current') !== 'page') return;
+        event.preventDefault();
+        const main = document.querySelector('main');
+        if (onMap || !main || typeof main.scrollTo !== 'function') return;
+        const still = window.matchMedia?.(
+          '(prefers-reduced-motion: reduce)'
+        ).matches;
+        main.scrollTo({ top: 0, behavior: still ? 'auto' : 'smooth' });
+      }
+    );
 
     backIcon?.addEventListener('click', (e) => {
       e.preventDefault();

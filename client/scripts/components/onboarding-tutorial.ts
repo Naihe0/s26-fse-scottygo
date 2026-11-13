@@ -54,9 +54,11 @@ const topics: GuideTopic[] = [
     description: 'Use the bell to save this route and find its service updates.'
   },
   {
-    target: '#menu-icon',
+    // The section bar is first in the header; the menu remains the fallback.
+    target: '.app-primary-nav [href="/notifications"], #menu-icon',
     title: 'Read transit alerts',
-    description: 'Open the menu to view Alerts, Saved routes or your account.'
+    description:
+      'Alerts lists service changes and rider reports. Saved routes and Account are always one tap away.'
   }
 ];
 

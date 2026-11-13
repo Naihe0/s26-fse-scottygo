@@ -158,7 +158,11 @@ test('returning from alerts restores the last public route, stop and filters cap
   map.remove();
   const alerts = mount('/notifications', true);
   const destinations = alerts.querySelectorAll('[data-map-return]');
-  expect(destinations).toHaveLength(3);
+  // Back, brand, the Map section tab and the menu's Map item.
+  expect(destinations).toHaveLength(4);
+  expect(
+    alerts.querySelector('.app-primary-nav [data-map-return]')
+  ).not.toBeNull();
   for (const link of destinations) {
     expect(link.getAttribute('href')).toBe(
       '/#/map?r=61C&stop=123&s=PRT&dir=IB'
@@ -207,4 +211,75 @@ test('a direct signed-out sign-in has no dead Back button; an external referral 
   jest.spyOn(window.history, 'length', 'get').mockReturnValue(3);
   const header = mount('/subscriptions', true);
   expect(header.querySelector('.back-icon')!.getAttribute('href')).toBe('/');
+});
+
+test.each([
+  ['/', '/'],
+  ['/map', '/'],
+  ['/subscriptions', '/subscriptions'],
+  ['/notifications', '/notifications'],
+  ['/account', '/account']
+])(
+  'a signed-in rider reaches every section in one tap from %s',
+  (path, currentHref) => {
+    sessionFor('rider');
+    const header = mount(path, path !== '/' && path !== '/map');
+    const nav = header.querySelector('nav.app-primary-nav')!;
+    expect(nav.getAttribute('aria-label')).toBe('ScottyGo sections');
+    const links = [...nav.querySelectorAll<HTMLAnchorElement>('a')];
+    expect(links.map((link) => link.textContent!.trim())).toEqual([
+      'Map',
+      'Saved routes',
+      'Alerts',
+      'Account'
+    ]);
+    const current = nav.querySelectorAll('[aria-current="page"]');
+    expect(current).toHaveLength(1);
+    expect(current[0].getAttribute('href')).toBe(currentHref);
+    // The menu still marks the same page for riders who open it.
+    expect(
+      header.querySelectorAll('#dropdown-menu [aria-current="page"]')
+    ).toHaveLength(1);
+    expect(header.querySelector('#menu-logout-btn')).not.toBeNull();
+  }
+);
+
+test('signed-out and sign-in pages show no section bar', () => {
+  expect(mount('/account').querySelector('.app-primary-nav')).toBeNull();
+  document.body.replaceChildren();
+  sessionFor('rider');
+  expect(mount('/auth', true).querySelector('.app-primary-nav')).toBeNull();
+});
+
+test('tapping the open section returns to its top without reloading', () => {
+  sessionFor('rider');
+  const main = document.createElement('main');
+  const scrollTo = jest.fn();
+  Object.defineProperty(main, 'scrollTo', { value: scrollTo });
+  document.body.appendChild(main);
+  const header = mount('/notifications', true);
+  const alerts = header.querySelector<HTMLAnchorElement>(
+    '.app-primary-nav [href="/notifications"]'
+  )!;
+  const tap = new MouseEvent('click', { bubbles: true, cancelable: true });
+  alerts.dispatchEvent(tap);
+  expect(tap.defaultPrevented).toBe(true);
+  expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+  const other = new MouseEvent('click', { bubbles: true, cancelable: true });
+  header
+    .querySelector('.app-primary-nav [href="/account"]')!
+    .dispatchEvent(other);
+  expect(other.defaultPrevented).toBe(false);
+});
+
+test('the Map tab on the map keeps the current view instead of reloading', () => {
+  sessionFor('rider');
+  const header = mount('/#/map?r=61C');
+  const mapTab = header.querySelector<HTMLAnchorElement>(
+    '.app-primary-nav [href="/"]'
+  )!;
+  const tap = new MouseEvent('click', { bubbles: true, cancelable: true });
+  mapTab.dispatchEvent(tap);
+  expect(tap.defaultPrevented).toBe(true);
+  expect(window.location.hash).toBe('#/map?r=61C');
 });

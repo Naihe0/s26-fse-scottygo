@@ -15,8 +15,12 @@ export async function rehearseReadingList({ page, fixture }) {
   assert.equal(await card.locator('.notif-saved-copy').count(), 0);
   if (await card.locator('.notif-window').getAttribute('open') === null)
     await card.locator('.notif-window summary').click();
+  const mapLink = card.getByRole('link', { name: 'View Route 61C on map', exact: true });
+  // On a short phone the link can sit under the section bar; measure where the
+  // rider is when they tap it, after any scroll needed to reach it.
+  await mapLink.scrollIntoViewIfNeeded();
   const offset = await card.evaluate(el => el.getBoundingClientRect().top);
-  await card.getByRole('link', { name: 'View Route 61C on map', exact: true }).click();
+  await mapLink.click();
   await page.locator('#map[data-ready]').waitFor();
   await page.goBack({ waitUntil: 'domcontentloaded' });
   await card.waitFor();

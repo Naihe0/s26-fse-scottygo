@@ -12,6 +12,21 @@
   --app-radius: 18px;
   --app-shadow: 0 3px 18px rgb(29 36 51 / 5%);
   --app-focus: #315fa7;
+  /* Space taken by the phone section bar, and the bottom inset that content
+     still has to clear itself. The bar owns the home-indicator inset. */
+  --app-tabbar-height: 0px;
+  --app-safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@media (max-width: 768px) {
+  :root:has(.app-primary-nav) {
+    --app-tabbar-height: calc(58px + env(safe-area-inset-bottom, 0px));
+    --app-safe-bottom: 0px;
+  }
+
+  body:has(.app-primary-nav) {
+    padding-bottom: var(--app-tabbar-height);
+  }
 }
 
 * {
@@ -154,6 +169,153 @@ body {
 
 .menu-icon.is-active span:nth-child(3) {
   transform: translateY(-9px) rotate(-45deg);
+}
+
+/* Primary sections: inline in a wide header, a bottom tab bar on phones. */
+.app-primary-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.app-primary-nav + .menu-icon {
+  margin-left: 4px;
+}
+
+.app-primary-nav__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  color: rgb(255 255 255 / 86%);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 0.18s ease;
+}
+
+.app-primary-nav__item svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.app-primary-nav__item:hover {
+  background: rgb(255 255 255 / 12%);
+  color: white;
+}
+
+.app-primary-nav__item[aria-current='page'] {
+  background: rgb(255 255 255 / 18%);
+  color: white;
+}
+
+.app-primary-nav__item:focus-visible {
+  outline-color: white;
+  outline-offset: 1px;
+}
+
+@media (max-width: 768px) {
+  .app-primary-nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 900;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0;
+    height: var(--app-tabbar-height);
+    margin: 0;
+    padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px)
+      env(safe-area-inset-left, 0px);
+    border-top: 1px solid var(--app-border);
+    background: rgb(255 255 255 / 97%);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    box-shadow: 0 -2px 14px rgb(29 36 51 / 7%);
+  }
+
+  .app-primary-nav + .menu-icon {
+    margin-left: auto;
+  }
+
+  .app-primary-nav__item {
+    position: relative;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    min-height: 0;
+    height: 58px;
+    padding: 0 2px;
+    border-radius: 0;
+    color: var(--app-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .app-primary-nav__item svg {
+    width: 23px;
+    height: 23px;
+  }
+
+  .app-primary-nav__item span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .app-primary-nav__item:hover {
+    background: transparent;
+    color: var(--app-text);
+  }
+
+  .app-primary-nav__item[aria-current='page'] {
+    background: transparent;
+    color: var(--app-brand);
+  }
+
+  .app-primary-nav__item[aria-current='page']::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 28px;
+    height: 3px;
+    border-radius: 0 0 3px 3px;
+    background: currentColor;
+    transform: translateX(-50%);
+  }
+
+  .app-primary-nav__item:focus-visible {
+    outline-color: var(--app-focus);
+    outline-offset: -4px;
+  }
+}
+
+/* Small phones held sideways: a compact bar, as iOS does in landscape. */
+@media (max-width: 768px) and (max-height: 500px) {
+  :root:has(.app-primary-nav) {
+    --app-tabbar-height: calc(44px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .app-primary-nav__item {
+    flex-direction: row;
+    gap: 6px;
+    height: 44px;
+    font-size: 12px;
+  }
+
+  .app-primary-nav__item svg {
+    width: 20px;
+    height: 20px;
+  }
 }
 
 /* Dropdown menu */
@@ -472,7 +634,7 @@ body {
 @media (max-width: 600px) {
   .live-notif-container {
     top: auto;
-    bottom: max(16px, env(safe-area-inset-bottom, 0px));
+    bottom: calc(var(--app-tabbar-height) + max(16px, var(--app-safe-bottom)));
     max-height: 44dvh;
   }
 }
@@ -486,7 +648,7 @@ body {
 
 .toast-notification {
   position: fixed;
-  bottom: max(20px, env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--app-tabbar-height) + max(20px, var(--app-safe-bottom)));
   left: 50%;
   transform: translateX(-50%);
   z-index: 10000;

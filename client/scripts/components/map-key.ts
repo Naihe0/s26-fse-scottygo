@@ -9,6 +9,22 @@ export class MapKey extends HTMLElement {
     if (event.target instanceof Node && !this.contains(event.target))
       this.close(false);
   };
+  // The panel opens upward from its toggle. Stop it below the search bar so
+  // the heading and first symbol are never hidden on a short phone screen.
+  private readonly fitPanel = (): void => {
+    const panel = this.querySelector<HTMLElement>('.map-key__panel');
+    const toggle = this.querySelector<HTMLElement>('.map-key__toggle');
+    if (!panel || !toggle || panel.hidden) return;
+    const container = this.closest('.map-container');
+    const search = container?.querySelector('.search-bar');
+    const ceiling =
+      Math.max(
+        container?.getBoundingClientRect().top ?? 0,
+        search?.getBoundingClientRect().bottom ?? 0
+      ) + 10;
+    const panelBottom = toggle.getBoundingClientRect().top - 10;
+    panel.style.maxHeight = `${Math.max(160, Math.floor(panelBottom - ceiling))}px`;
+  };
   private readonly onEscape = (event: KeyboardEvent) => {
     if (event.key === 'Escape' && this.isOpen()) {
       event.preventDefault();
@@ -59,6 +75,10 @@ export class MapKey extends HTMLElement {
       const open = !this.isOpen();
       this.querySelector('button')!.setAttribute('aria-expanded', String(open));
       this.querySelector<HTMLElement>('.map-key__panel')!.hidden = !open;
+      if (open) {
+        this.fitPanel();
+        window.addEventListener('resize', this.fitPanel);
+      } else window.removeEventListener('resize', this.fitPanel);
     });
     document.addEventListener('pointerdown', this.onOutside);
     this.querySelector('.map-key__guide')!.addEventListener('click', () => {
@@ -72,6 +92,7 @@ export class MapKey extends HTMLElement {
   disconnectedCallback(): void {
     document.removeEventListener('pointerdown', this.onOutside);
     document.removeEventListener('keydown', this.onEscape);
+    window.removeEventListener('resize', this.fitPanel);
   }
 
   private isOpen(): boolean {
@@ -84,6 +105,7 @@ export class MapKey extends HTMLElement {
     if (!this.isOpen()) return;
     this.querySelector('button')!.setAttribute('aria-expanded', 'false');
     this.querySelector<HTMLElement>('.map-key__panel')!.hidden = true;
+    window.removeEventListener('resize', this.fitPanel);
     if (restoreFocus) this.querySelector('button')!.focus();
   }
 }

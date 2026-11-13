@@ -13,6 +13,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { ContentRecovery } from './contentRecovery';
+import { CANVAS_COLOR, HEADER_COLOR, statusBarStyle } from './hostChrome';
 import {
   APP_URL,
   isAppURL,
@@ -20,7 +21,7 @@ import {
   navigationDecision
 } from './navigationPolicy';
 
-const accent = '#861535';
+const accent = HEADER_COLOR;
 
 export default function App() {
   const [source, setSource] = useState({ uri: APP_URL });
@@ -49,9 +50,14 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.screen}>
-        <StatusBar barStyle="dark-content" />
-        {failure === null ? (
+      <StatusBar
+        barStyle={statusBarStyle(failure === null ? 'page' : 'error')}
+      />
+      {failure === null ? (
+        // The page pads itself with env(safe-area-inset-*) at the top and
+        // bottom, so its header and section bar reach the screen edges.
+        // Landscape side insets stay native to keep controls off the notch.
+        <SafeAreaView edges={['left', 'right']} style={styles.page}>
           <WebView<object>
             testID="scottygo-web"
             ref={webView}
@@ -113,17 +119,21 @@ export default function App() {
             automaticallyAdjustContentInsets={false}
             contentInsetAdjustmentBehavior="never"
             startInLoadingState
+            style={styles.web}
             renderLoading={() => (
               <View style={styles.loading}>
+                <Text style={styles.wordmark}>ScottyGo</Text>
                 <ActivityIndicator
                   size="large"
-                  color={accent}
+                  color="#fff"
                   accessibilityLabel="Opening ScottyGo"
                 />
               </View>
             )}
           />
-        ) : (
+        </SafeAreaView>
+      ) : (
+        <SafeAreaView style={styles.screen}>
           <View style={styles.error}>
             <Text accessibilityRole="header" style={styles.title}>
               Couldn’t open ScottyGo
@@ -138,19 +148,28 @@ export default function App() {
               <Text style={styles.buttonText}>Try again</Text>
             </Pressable>
           </View>
-        )}
-      </SafeAreaView>
+        </SafeAreaView>
+      )}
     </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#fff' },
+  page: { flex: 1, backgroundColor: CANVAS_COLOR },
+  web: { backgroundColor: CANVAS_COLOR },
   loading: {
     ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fff'
+    gap: 20,
+    backgroundColor: HEADER_COLOR
+  },
+  wordmark: {
+    color: '#fff',
+    fontSize: 30,
+    fontWeight: '700',
+    letterSpacing: -0.8
   },
   error: {
     flex: 1,

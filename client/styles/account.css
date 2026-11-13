@@ -9,8 +9,7 @@ body {
   flex-direction: column;
   align-items: center;
   padding: clamp(28px, 6vh, 48px) max(20px, env(safe-area-inset-right, 0px))
-    max(32px, env(safe-area-inset-bottom, 0px))
-    max(20px, env(safe-area-inset-left, 0px));
+    max(32px, var(--app-safe-bottom)) max(20px, env(safe-area-inset-left, 0px));
   overflow-y: auto;
 }
 

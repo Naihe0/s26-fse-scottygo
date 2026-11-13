@@ -135,6 +135,48 @@ app-header {
   color: #dc2626;
 }
 
+.circle-btn[hidden] {
+  display: none;
+}
+
+/* Filter buttons read their committed value, e.g. "61C", "In" or "PRT". */
+.map-filter-btn {
+  position: relative;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1;
+}
+
+.map-filter-btn .material-icons-outlined {
+  font-size: 20px;
+}
+
+.map-filter-btn__value {
+  max-width: 40px;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-filter-btn .system-icon .system-text:only-child {
+  font-size: 12px;
+}
+
+.map-filter-btn.is-filtered {
+  color: var(--app-brand-strong, #86142b);
+  background: var(--app-brand-soft, #fbecf0);
+  box-shadow:
+    0 0 0 2px var(--app-brand, #a71936),
+    0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+#clear-filters-btn .material-icons-outlined {
+  font-size: 18px;
+}
+
 /* Transit Search Component */
 .search-bar {
   display: flex;
@@ -378,10 +420,9 @@ route-bell {
   z-index: 20;
 }
 
-route-bell.is-disabled .bell-btn {
-  opacity: 0.35;
-  pointer-events: none;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+/* The follow bell only appears once there is a route to follow. */
+route-bell.is-disabled {
+  display: none;
 }
 
 .bell-btn.bell-subscribed {
@@ -803,14 +844,15 @@ input:checked + .slider:before {
     left: 16px;
   }
 
+  /* The section bar below the map already separates these from the edge. */
   .zoom-panel {
     right: 16px;
-    bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(16px + var(--app-safe-bottom));
   }
 
   route-bell {
     right: 16px;
-    bottom: calc(200px + env(safe-area-inset-bottom, 0px)); /* 32 + 160 + 8 */
+    bottom: calc(184px + var(--app-safe-bottom)); /* 16 + 160 + 8 */
   }
 
   .system-panel {
@@ -829,7 +871,9 @@ input:checked + .slider:before {
   .map-popup {
     position: fixed;
     top: auto;
-    bottom: calc(100vh - 100dvh + env(safe-area-inset-bottom, 0px));
+    bottom: calc(
+      100vh - 100dvh + var(--app-tabbar-height) + var(--app-safe-bottom)
+    );
     left: 0;
     transform: none;
     border-radius: 16px 16px 0 0;
@@ -837,7 +881,7 @@ input:checked + .slider:before {
     max-width: 100%;
     max-height: 40dvh;
     overflow: hidden;
-    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(14px + var(--app-safe-bottom));
   }
 }
 @media (max-width: 768px) and (max-height: 650px) {
@@ -1022,12 +1066,12 @@ input:checked + .slider:before {
 
 .map-popup {
   position: absolute;
-  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(24px + var(--app-safe-bottom));
   left: 50%;
   transform: translateX(-50%);
   z-index: 500;
   width: min(380px, calc(100% - 32px));
-  max-height: calc(50vh - env(safe-area-inset-bottom, 0px));
+  max-height: calc(50vh - var(--app-safe-bottom));
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1114,7 +1158,8 @@ input:checked + .slider:before {
 /* ── Stop-specific content ─── */
 
 .map-popup:has(.stop-arrival-board) {
-  max-height: min(68dvh, 600px);
+  /* Stay below the search bar inside a map shortened by the section bar. */
+  max-height: min(68dvh, 600px, calc(100% - 100px));
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -2276,7 +2321,7 @@ location-search {
 
 #map-popup-tabs {
   position: absolute;
-  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(16px + var(--app-safe-bottom));
   left: 50%;
   transform: translateX(-50%);
   z-index: 500;
@@ -2594,7 +2639,7 @@ location-search {
 .rider-tools {
   position: absolute;
   z-index: 110;
-  bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(88px + var(--app-safe-bottom));
   left: 90px;
   right: 84px;
   display: flex;
@@ -2622,7 +2667,7 @@ location-search {
   .rider-tools { bottom: 36px; left: 150px; right: 100px; }
 }
 @media (max-width: 768px) {
-  .rider-tools { bottom: calc(32px + env(safe-area-inset-bottom, 0px)); left: 14px; right: 84px; }
+  .rider-tools { bottom: calc(16px + var(--app-safe-bottom)); left: 14px; right: 84px; }
   .rider-tools > * { flex: 1; min-width: 0; }
   .rider-tools > * > button {
     width: 100%;
@@ -2635,7 +2680,20 @@ location-search {
     white-space: nowrap;
   }
   .map-container:not(:has(#map-popup, #directions-panel)) map-key {
-    bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(80px + var(--app-safe-bottom));
+  }
+}
+
+/* Short phone maps: a tighter filter column leaves the map and dock clear. */
+@media (max-width: 768px) and (max-height: 760px) {
+  .control-panel {
+    padding: 8px;
+    gap: 8px;
+    border-radius: 18px;
+  }
+  .control-panel .circle-btn {
+    width: 44px;
+    height: 44px;
   }
 }
 
@@ -2647,3 +2705,35 @@ location-search {
 }
 .bus-popup__units { display: flex; justify-content: space-between; align-items: center; min-height: 44px; gap: 8px; }
 .bus-popup__units select { min-height: 44px; font: inherit; font-size: 16px; border: 1px solid #b4c1cf; border-radius: 8px; background: #fff; color: #17283c; }
+
+/* Small phones held sideways leave a map about 275 px tall: filters form a
+   row under the search bar and the right-hand column compacts, so no control
+   covers another. Filter panels open as bottom sheets (route-controls.css). */
+@media (max-width: 768px) and (max-height: 500px) {
+  .control-panel {
+    top: 68px;
+    left: 12px;
+    flex-direction: row;
+    transform: none;
+    padding: 6px;
+    gap: 6px;
+    border-radius: 16px;
+  }
+  .control-panel .circle-btn,
+  .zoom-panel .circle-btn,
+  route-bell .circle-btn {
+    width: 44px;
+    height: 44px;
+  }
+  .zoom-panel {
+    gap: 6px;
+  }
+  route-bell {
+    bottom: calc(168px + var(--app-safe-bottom)); /* 16 + 3×44 + 2×6 + 8 */
+  }
+  .live-tracking-status {
+    left: auto;
+    right: 76px;
+    transform: none;
+  }
+}

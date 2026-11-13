@@ -70,3 +70,42 @@ test('a removed map key no longer handles document keyboard events', () => {
   document.body.appendChild(key);
   expect(key.querySelector('section')!.hidden).toBe(true);
 });
+
+test('an open key stops below the search bar instead of sliding under it', () => {
+  document.body.innerHTML =
+    '<div class="map-container"><div class="search-bar"></div><map-key></map-key></div>';
+  const rect = (top: number, bottom: number) =>
+    ({
+      top,
+      bottom,
+      left: 0,
+      right: 0,
+      width: 0,
+      height: bottom - top
+    }) as DOMRect;
+  const container = document.querySelector('.map-container')!;
+  const search = document.querySelector('.search-bar')!;
+  const fitted = document.querySelector('map-key')!;
+  const button = fitted.querySelector<HTMLButtonElement>('.map-key__toggle')!;
+  const section = fitted.querySelector<HTMLElement>('.map-key__panel')!;
+  jest.spyOn(container, 'getBoundingClientRect').mockReturnValue(rect(56, 510));
+  jest.spyOn(search, 'getBoundingClientRect').mockReturnValue(rect(68, 116));
+  const toggleRect = jest
+    .spyOn(button, 'getBoundingClientRect')
+    .mockReturnValue(rect(400, 444));
+  button.click();
+  // Toggle top 400 − 10 px gap, below the search bar's 116 + 10 px.
+  expect(section.style.maxHeight).toBe('264px');
+  toggleRect.mockReturnValue(rect(300, 344));
+  window.dispatchEvent(new Event('resize'));
+  expect(section.style.maxHeight).toBe('164px');
+  // A very short screen keeps a readable minimum and scrolls inside it.
+  toggleRect.mockReturnValue(rect(200, 244));
+  window.dispatchEvent(new Event('resize'));
+  expect(section.style.maxHeight).toBe('160px');
+  button.click();
+  toggleRect.mockReturnValue(rect(500, 544));
+  window.dispatchEvent(new Event('resize'));
+  expect(section.style.maxHeight).toBe('160px');
+  jest.restoreAllMocks();
+});

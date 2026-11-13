@@ -1,7 +1,7 @@
 map-key {
   position: absolute;
   left: 20px;
-  bottom: calc(36px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(36px + var(--app-safe-bottom));
   z-index: 24;
   color: #334155;
 }
@@ -104,7 +104,7 @@ map-key {
 @media (max-width: 600px) {
   map-key {
     left: 16px;
-    bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(16px + var(--app-safe-bottom));
   }
 }
 @media (max-height: 600px) {

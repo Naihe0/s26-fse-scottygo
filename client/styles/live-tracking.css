@@ -76,7 +76,7 @@
 }
 .map-container:has(#directions-panel) .live-tracking-status {
   top: auto;
-  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(72px + var(--app-safe-bottom));
 }
 
 .bus-position-state {
